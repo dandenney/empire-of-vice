@@ -18,7 +18,7 @@ This file is a map. Read the linked doc for the area you're touching before chan
 2. Domain types, commands, events, and snapshots come from `packages/contracts`. Don't invent parallel types. If the contract is missing something, stop and say so in the PR rather than changing it. Contract changes need human review.
 3. Gameplay numbers (prices, wages, rates, thresholds) live in `packages/game-data`. Never hardcode them in simulation logic or UI.
 4. Money is integer cents. No floats for money.
-5. The simulation is deterministic: seeded RNG only, no `Date.now()`, no `Math.random()`, no transcendental `Math.*` functions in simulation code (see architecture §10).
+5. The simulation is deterministic: seeded RNG only, no `Date.now()`, no `Math.random()`, no transcendental `Math.*` functions in simulation code (see architecture §8).
 6. A command is applied atomically or rejected with a typed reason. It never partially mutates state.
 7. UI holds no copies of authoritative game state. It renders read-only snapshots.
 8. Stay inside the files your issue says you own. If you need something outside them, note it in the PR instead of doing it.
