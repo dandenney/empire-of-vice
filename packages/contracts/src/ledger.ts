@@ -61,15 +61,27 @@ export type TransactionKind =
   | "TRANSFER"
   | "CARGO_LOSS"
   | "DAILY_SETTLEMENT"
-  | "CONTRACT_PENALTY"
+  /** Settling one installment, including any penalty. */
+  | "INSTALLMENT_SETTLEMENT"
+  | "RESERVATION"
   | "ASSET_SALE";
 
+/**
+ * One committed coordinator transaction (ADR 0010). The ledger log doubles as the
+ * coordinator's record of what has been applied, so its idempotency keys are how
+ * duplicates are caught.
+ */
 export interface LedgerTransaction {
   readonly id: TransactionId;
   readonly tick: Tick;
   readonly kind: TransactionKind;
-  /** Balanced: debits = credits. At least two entries. */
+  /** Unique per real-world operation, e.g. "SALE:delivery-3". A second commit with the same key is a no-op. */
+  readonly idempotencyKey: string;
+  /**
+   * Balanced (debits = credits) with at least two entries, or empty for an
+   * operation that moves no money (e.g. reserving inventory, a fully fulfilled installment).
+   */
   readonly entries: readonly LedgerEntry[];
-  /** The event that reported this transaction. */
-  readonly eventId: EventId;
+  /** Events emitted by this transaction, in order. */
+  readonly eventIds: readonly EventId[];
 }

@@ -128,7 +128,7 @@ export type ProductionFailedEvent = GameEventOf<
     readonly reason: "DISRUPTION";
     /** Cost of consumed inputs written off, if any. */
     readonly writtenOff: Money;
-    readonly transactionId: TransactionId | null;
+    readonly transactionId: TransactionId;
   }
 >;
 
@@ -310,7 +310,7 @@ export type InstallmentSettledEvent = GameEventOf<
     readonly outcome: InstallmentOutcome;
     /** 20% of the contracted value of missing cases. Unpaid penalties become a liability. */
     readonly penalty: Money;
-    readonly transactionId: TransactionId | null;
+    readonly transactionId: TransactionId;
   }
 >;
 

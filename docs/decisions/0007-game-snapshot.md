@@ -31,7 +31,7 @@ Architecture §4: the UI holds no authoritative state and renders read-only snap
 
 - `cash`, `netWorth`, and per-period **profit** (`IncomeStatement`) and **cash flow** (`CashFlowStatement`) are separate fields, for today, the previous day, and to date. Buying a still uses cash but isn't an expense; producing goods costs cash but isn't a loss. Showing them separately is the point.
 - `balanceSheet.equity` equals `netWorth`, and assets = liabilities + equity is a tested invariant (T02b).
-- `recentTransactions` holds the latest balanced ledger transactions, each linked to its event. With ADR 0006's transaction IDs, that's what answers "why did cash drop?"
+- `recentTransactions` holds the latest balanced ledger transactions, each linked to its events. With ADR 0006's transaction IDs, that's what answers "why did cash drop?"
 - The ledger types (`ledger.ts`) are defined here, because the snapshot and the coordinator both use them. The chart of accounts has a receivables account (unused in M001, per ADR 0005) and an explicit `LOSSES` account for write-offs (FIN-001).
 
 ### Map
