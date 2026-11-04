@@ -49,7 +49,7 @@ describe("immediate commands", () => {
     ]);
   });
 
-  it("are rejected atomically: nothing but the command counters changes", () => {
+  it("are rejected atomically: nothing changes, not even the counters", () => {
     const sim = fakeSimulation(day0State, (registry) =>
       registry.onCommand("PURCHASE_EQUIPMENT", {
         apply: (state, command, ctx) => {
@@ -65,32 +65,67 @@ describe("immediate commands", () => {
       }),
     );
     const before = sim.state;
+    const hash = sim.stateHash();
     const result = sim.dispatch({ command: { type: "PURCHASE_EQUIPMENT", facilityId: ids.distillery, equipmentId: ids.copperStill } });
     expect(result).toEqual({
       status: "rejected",
       commandId: "cmd-3",
       reason: { code: "NO_EQUIPMENT_SLOT", facilityId: ids.distillery, equipmentId: ids.copperStill },
     });
-    expect(sim.state).toEqual({
-      ...before,
-      counters: { ...before.counters, nextCommandSequence: 4, nextId: { ...before.counters.nextId, Command: 4 } },
-    });
+    expect(sim.state).toBe(before);
+    expect(sim.stateHash()).toBe(hash);
     expect(sim.takeEvents()).toEqual([]);
   });
 
-  it("get unique IDs even when rejected", () => {
+  it("leave stateHash unchanged for every kind of dispatch-time rejection", () => {
+    const sim = fakeSimulation();
+    sim.advance(10);
+    sim.dispatch({ command: setWorkforce(ids.barn, 1), scheduledTick: tick(700) }); // queued, due later
+    const hash = sim.stateHash();
+    const rejected = [
+      sim.dispatch({ command: setWorkforce(unknownFacility, 1) }), // handler rejects (eager path)
+      sim.dispatch({ command: buyCorn(1_000) }), // handler rejects (eager path)
+      sim.dispatch({ command: buyCorn(0), scheduledTick: tick(900) }), // validate rejects (queued path)
+      sim.dispatch({ command: buyCorn(1), scheduledTick: tick(5) }), // SCHEDULED_IN_PAST
+      sim.dispatch({ command: buyCorn(1), scheduledTick: 650.5 as never }), // non-integer tick
+    ];
+    expect(rejected.map((r) => r.status)).toEqual(Array(5).fill("rejected"));
+    expect(sim.stateHash()).toBe(hash);
+    expect(sim.takeEvents()).toEqual([]);
+  });
+
+  it("an eager rejection also discards the queued commands it drained; they still apply on time", () => {
+    const sim = fakeSimulation();
+    sim.dispatch({ command: setWorkforce(ids.barn, 6), scheduledTick: tick(602) });
+    sim.advance(1); // tick 601
+    sim.takeEvents();
+    const hash = sim.stateHash();
+    expect(sim.dispatch({ command: setWorkforce(unknownFacility, 1) }).status).toBe("rejected");
+    expect(sim.stateHash()).toBe(hash);
+    sim.advance(1); // tick 602: the queued command applies at step 1
+    expect(sim.state.facilities.find((f) => f.id === ids.barn)!.workerCount).toBe(6);
+    expect(sim.takeEvents().map((e) => [e.tick, e.causedBy])).toEqual([[602, "cmd-3"]]);
+  });
+
+  it("return a provisional ID: the one the next accepted command will get", () => {
     const sim = fakeSimulation();
     const results = [
       sim.dispatch({ command: setWorkforce(unknownFacility, 1) }),
       sim.dispatch({ command: buyCorn(1_000) }),
       sim.dispatch({ command: buyCorn(1) }),
+      sim.dispatch({ command: buyCorn(1) }),
     ];
     expect(results.map((r) => [r.status, r.commandId])).toEqual([
       ["rejected", "cmd-3"],
-      ["rejected", "cmd-4"],
-      ["applied", "cmd-5"],
+      ["rejected", "cmd-3"],
+      ["applied", "cmd-3"],
+      ["applied", "cmd-4"],
     ]);
     expect(results[1]).toMatchObject({ reason: { code: "SUPPLIER_STOCK_LOW", requested: 1_000, available: 160 } });
+    expect(sim.state.commandLog.slice(-2).map((e) => [e.id, e.sequence])).toEqual([
+      ["cmd-3", 3],
+      ["cmd-4", 4],
+    ]);
   });
 });
 
@@ -205,6 +240,25 @@ describe("replay (ADR 0004)", () => {
     expect(log.map((e) => e.id)).toEqual(["cmd-1", "cmd-3", "cmd-4", "cmd-5", "cmd-6", "cmd-2"]);
     const results = log.map((envelope) => replayed.replay(envelope).status);
     expect(results).toEqual(["duplicate", "applied", "queued", "queued", "queued", "duplicate"]);
+    replayed.advance(2_400);
+    expect(replayed.stateHash()).toBe(original.stateHash());
+  });
+
+  it("replaying the command log reproduces the hash even when the run had dispatch-time rejections", () => {
+    const original = fakeSimulation();
+    original.dispatch({ command: setWorkforce(unknownFacility, 1) }); // rejected
+    original.dispatch({ command: setWorkforce(ids.distillery, 6) });
+    original.dispatch({ command: buyCorn(0), scheduledTick: tick(900) }); // rejected by validate
+    original.dispatch({ command: buyCorn(10), scheduledTick: tick(900) });
+    original.dispatch({ command: buyCorn(1), scheduledTick: tick(1) }); // rejected: past
+    original.advance(400);
+    original.dispatch({ command: buyCorn(10_000) }); // rejected
+    original.dispatch({ command: setWorkforce(ids.barn, 2) });
+    original.dispatch({ command: setWorkforce(ids.barn, -1), scheduledTick: tick(1_500) }); // rejected by validate
+    original.advance(2_000);
+
+    const replayed = fakeSimulation();
+    for (const envelope of original.state.commandLog) replayed.replay(envelope);
     replayed.advance(2_400);
     expect(replayed.stateHash()).toBe(original.stateHash());
   });

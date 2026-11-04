@@ -4,6 +4,9 @@
 //
 // Scenario: day0Save (seed 1920, tick 600 = 10:00 on January 17, 1920) with the
 // fake systems in fakes.ts, this command script, then 10 game days.
+//
+// History: fnv1a64:e473f4f783ba20b5 (PR #23 initial) → fnv1a64:cfdf13437433feb0
+// (review round 1: dispatch-time rejections no longer advance the command counters).
 
 import { tick } from "@eov/contracts";
 import { ids } from "@eov/contracts/fixtures";
@@ -35,6 +38,6 @@ describe("reference scenario", () => {
   });
 
   it("has a pinned state hash", () => {
-    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:e473f4f783ba20b5"`);
+    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:cfdf13437433feb0"`);
   });
 });

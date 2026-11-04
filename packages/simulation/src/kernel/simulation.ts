@@ -102,8 +102,8 @@ export class KernelSimulation implements Simulation {
   /**
    * Re-submits an envelope from a command log (ADR 0004 replay). An envelope
    * whose sequence or ID was already applied or is already queued is a no-op.
-   * Otherwise it's placed exactly like a dispatch with its original identity, and
-   * the counters move past it so later dispatches can't collide.
+   * Otherwise it's placed exactly like a dispatch with its original identity, and,
+   * if accepted, the counters move past it so later dispatches can't collide.
    */
   replay(envelope: CommandEnvelope): ReplayResult {
     const before = this.#state;
@@ -126,14 +126,22 @@ export class KernelSimulation implements Simulation {
     return this.#place(before, advanced, envelope, handler);
   }
 
-  /** Applies now, queues, or rejects an envelope whose identity is already reflected in `s`'s counters. */
+  /**
+   * Applies now, queues, or rejects an envelope. `s` is `before` with the
+   * envelope's identity reserved in the counters; it's only committed if the
+   * command is accepted.
+   *
+   * A rejection commits nothing: no counter moves, no event is emitted, and
+   * `stateHash()` is unchanged ("Nothing changed", CommandResult). The rejected
+   * result's `commandId` is therefore PROVISIONAL: it's the ID the next accepted
+   * command will get, computed from the counters without writing them. The UI
+   * uses it only to match a response to its request; it never identifies a
+   * journaled command, and consecutive rejections return the same ID.
+   */
   #place(before: GameState, s: GameState, envelope: CommandEnvelope, handler: CommandHandler): CommandResult {
     const current = before.tick;
     const target: number = envelope.scheduledTick;
-    const reject = (reason: RejectionReason): CommandResult => {
-      this.#commit(before, s);
-      return { status: "rejected", commandId: envelope.id, reason };
-    };
+    const reject = (reason: RejectionReason): CommandResult => ({ status: "rejected", commandId: envelope.id, reason });
 
     if (!Number.isSafeInteger(target)) {
       return reject({ code: "INVALID_QUANTITY", field: "scheduledTick", value: target });
@@ -155,10 +163,10 @@ export class KernelSimulation implements Simulation {
     const ctx = this.#tickContext(tick(target));
     const drained = this.#applyDue(s, envelope, ctx);
     const applied = this.#applyEnvelope(drained, envelope, ctx);
-    if (applied.status === "rejected") {
-      this.#commit(before, drained);
-      return { status: "rejected", commandId: envelope.id, reason: applied.reason };
-    }
+    // On rejection the drained commands are discarded too. They're still queued,
+    // so they apply at step 1 of the same tick (or before the next eager command)
+    // with the same IDs and the same result.
+    if (applied.status === "rejected") return reject(applied.reason);
     this.#commit(before, applied.state);
     return { status: "applied", commandId: envelope.id, tick: ctx.tick, eventIds: applied.eventIds };
   }
