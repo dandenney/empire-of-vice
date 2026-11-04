@@ -23,6 +23,7 @@ export type IdKind =
   | "Character"
   | "Family"
   | "Unlock"
+  | "Tier"
   // Dynamic: assigned by the simulation during play.
   | "Command"
   | "Event"
@@ -48,6 +49,7 @@ export type EquipmentId = Id<"Equipment">;
 export type CharacterId = Id<"Character">;
 export type FamilyId = Id<"Family">;
 export type UnlockId = Id<"Unlock">;
+export type TierId = Id<"Tier">;
 export type CommandId = Id<"Command">;
 export type EventId = Id<"Event">;
 export type TransactionId = Id<"Transaction">;
