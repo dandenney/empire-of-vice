@@ -66,7 +66,15 @@ export interface GameState {
 
   /** Commands waiting for a future tick, in (scheduledTick, sequence) order (ADR 0004). */
   readonly queuedCommands: readonly CommandEnvelope[];
-  /** Every applied command, in order. Used for replay and debugging, not for loading. */
+  /**
+   * Every command accepted at dispatch whose tick has been processed, as its
+   * original envelope, in (scheduledTick, sequence) order (ADR 0004, amended by
+   * T01b). That covers commands that applied immediately, queued commands that
+   * applied when their tick arrived, and queued commands that were rejected then
+   * (each also reported by a COMMAND_REJECTED event). The outcome isn't stored:
+   * replaying the log from the same start state derives it again. Commands
+   * rejected at dispatch never appear. Used for replay and debugging, not for loading.
+   */
   readonly commandLog: readonly CommandEnvelope[];
   /** World happenings with no owning entity, in (tick, sequence) order. */
   readonly scheduledEvents: readonly ScheduledWorldEvent[];

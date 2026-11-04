@@ -6,7 +6,9 @@
 // fake systems in fakes.ts, this command script, then 10 game days.
 //
 // History: fnv1a64:e473f4f783ba20b5 (PR #23 initial) → fnv1a64:cfdf13437433feb0
-// (review round 1: dispatch-time rejections no longer advance the command counters).
+// (review round 1: dispatch-time rejections no longer advance the command counters)
+// → fnv1a64:0f3c258a09c81be8 (T01b, #25: the command log also holds queued commands
+// rejected when their tick arrives, here the buyCorn(500) at tick 3000).
 
 import { tick } from "@eov/contracts";
 import { ids } from "@eov/contracts/fixtures";
@@ -38,6 +40,14 @@ describe("reference scenario", () => {
   });
 
   it("has a pinned state hash", () => {
-    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:cfdf13437433feb0"`);
+    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:0f3c258a09c81be8"`);
+  });
+
+  it("replays from its command log to the same hash", () => {
+    const original = runReferenceScenario();
+    const replayed = fakeSimulation();
+    for (const envelope of original.state.commandLog) replayed.replay(envelope);
+    replayed.advance(original.state.tick - replayed.state.tick);
+    expect(replayed.stateHash()).toBe(original.stateHash());
   });
 });
