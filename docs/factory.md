@@ -46,9 +46,9 @@ Edit the issue in place, and list what changed in a comment, so the agent and th
 1. `pnpm typecheck`
 2. `pnpm lint`, including package-boundary rules
 3. `pnpm test`: unit and property tests for touched packages
-4. Review agent: did the PR stay within its owned files and scope? Do the acceptance criteria have evidence?
-5. CI: full test suite, 50-seed headless smoke run, Playwright (once T04 exists)
-6. Human review and merge
+4. CI: full test suite, 50-seed headless smoke run, Playwright (once T04 exists)
+5. Review agent (§7.4): scope, acceptance evidence, contract adherence, and the `CLAUDE.md` rules
+6. Merge: automatic when §5 allows it, otherwise human
 
 The full 1,000-seed balance run happens nightly, not on every PR.
 
@@ -64,7 +64,25 @@ Every PR includes:
 
 ## 5. Merge gate
 
-A human merges every PR during Milestone 001. `packages/contracts` additionally requires the CODEOWNER's review. Revisit auto-merge for mechanical changes only after the metrics below justify it.
+**Agent task PRs auto-merge** when every one of these holds for the PR's latest commit:
+
+- CI is green.
+- The review agent approved this commit, not an earlier one.
+- Every changed file is in the issue's owned files.
+- No `// @locked` test changed.
+- The PR touches none of the **protected paths** below.
+- The branch is up to date with `main`, or rebases cleanly and CI passes again after the rebase.
+
+**Protected paths always need a human merge:**
+
+- `packages/contracts/**` (also needs the CODEOWNER's review)
+- `CLAUDE.md`, `docs/factory.md`, and existing files in `docs/decisions/` (new ADR files are fine)
+- `.github/**`, root `package.json`, `eslint.config.js`, and `tsconfig.base.json`
+- The milestone doc, except a PR that only appends rows to the factory metrics table (§7.6)
+
+Everything that fails a criterion gets `needs-human` (§7.7) rather than merging.
+
+**Tightening rule:** if an auto-merged PR has to be reverted or causes a regression, the orchestrator pauses auto-merge (all merges become human) until the cause is understood and the criteria are changed in this file.
 
 ## 6. Factory metrics
 
@@ -73,5 +91,86 @@ Track these per merged task in the milestone doc:
 - Merged without rework? (y/n)
 - Number of review rounds
 - What a check or reviewer caught
+- Merged by: `auto` or `human`
+- Human touches: how many times a human had to act (decisions, `needs-human` escalations, contract reviews)
 
-These numbers decide when to add parallelism or loosen the merge gate.
+These numbers decide when to add parallelism or loosen the merge gate further.
+
+## 7. Orchestration
+
+The orchestrator moves work through the factory without a human starting each step. It runs as a loop: first in a Claude Code session (`/loop`), later as GitHub Actions triggered by events. Each run reads the current GitHub state (issues, labels, PRs, CI, reviews) and takes every action the rules below allow. Runs are **idempotent**: any action that already happened is detected from GitHub state and skipped, so running the loop twice is harmless.
+
+**The orchestrator never edits product code itself.** It refreshes issues, starts agents, labels, merges, files follow-ups, and records metrics. Implementation and review are done by separate agents, and **an agent never reviews its own work**.
+
+### 7.1 Labels as state
+
+| Label | Meaning |
+|---|---|
+| (none) | Planned. Not yet considered. |
+| `agent-ready` | Refreshed and ready to start. |
+| `in-progress` | An implementing agent is working on it, or its PR is open. |
+| `needs-design` | Blocked on a human decision. |
+| `needs-human` | The loop gave up on something and a human has to look. Says why in a comment. |
+| `human-paired` | Never started automatically. Done with a human. |
+
+### 7.2 Refresh
+
+When an open issue has every dependency merged and carries none of `agent-ready`, `in-progress`, `needs-design`, `needs-human`, or `human-paired`, run the refresh check from §1 on it:
+
+- **Mechanical fixes** (paths, dependency lists, test commands, links to merged ADRs, semantics an ADR has already settled) are made in place, and listed in a comment. The issue then gets `agent-ready`.
+- **Real decisions** (a choice between designs, a new contract type, a gameplay call the GDD doesn't settle) get `needs-design`, with a comment that states the question, the options, and a recommendation. The human is notified.
+- **Oversized issues** (bigger than `size:M`) get `needs-design`, with a proposed split.
+
+### 7.3 Dispatch
+
+Start an implementing agent for an `agent-ready` issue when:
+
+- every dependency is merged,
+- its owned files don't overlap the owned files of any `in-progress` issue (if they do, it waits), and
+- fewer than **3** agents are running (the concurrency cap for M001).
+
+When several issues qualify, start them in issue-number order.
+
+The agent runs in its own git worktree, on a branch named after the issue (`t01b-command-log`), with the standard prompt: read the issue, `CLAUDE.md`, this file, and the referenced docs; stay inside owned files; report contract gaps instead of editing contracts; open a PR with the §4 evidence; never merge. The issue gets `in-progress`.
+
+If the agent stops with a question instead of a PR, it comments the question on the issue, the issue gets `needs-design`, and `in-progress` comes off.
+
+### 7.4 Review
+
+When an agent PR's CI finishes:
+
+- **CI failed:** the implementing agent fixes it and pushes a new commit. This counts as a review round.
+- **CI passed:** a **fresh review agent** reviews the latest commit. It checks:
+  - every changed file is in the owned files
+  - each acceptance criterion has evidence (a test, output, or screenshot)
+  - contract types are used as defined, with no parallel types and no edits to contracts
+  - the `CLAUDE.md` rules (determinism, money, game-data, atomic commands, UI state)
+  - tests exercise the behavior, rather than only executing it
+  - any "contract gaps" or "left out" items are real gaps, not shortcuts
+
+  It posts a PR review: **approve**, or **request changes** with each finding as a concrete, checkable comment.
+
+### 7.5 Fix rounds
+
+When the review requests changes, the implementing agent addresses every finding in a **new commit** (no force-push), and adds a "Review round N" note to the PR description. CI and review run again.
+
+**Cap: 3 rounds.** After the third request for changes, the PR gets `needs-human` with a summary of what's still disputed.
+
+### 7.6 After merge
+
+- The linked issue closes (`Closes #N`), and `in-progress` comes off.
+- **Metrics:** the orchestrator appends the task's row to the metrics table, in a PR that changes only that table. Such PRs auto-merge (§5).
+- **Contract gaps** the PR listed become new issues: `needs-design` if they need a contract change, otherwise planned issues with the affected task named.
+- **Follow-ups:** each item under "left out" that names an owner task is copied to that task's issue as a comment, so its refresh picks it up.
+- The loop runs again immediately, because the merge may have unblocked other issues.
+
+### 7.7 Escalation
+
+The human is notified (push notification, and a comment that mentions them) when:
+
+- an issue gets `needs-design` (a decision, a split, or an agent question),
+- a PR touches protected paths and is otherwise ready (a contract or policy review),
+- a PR gets `needs-human`: round cap reached, CI failed twice in a row with the same error after a fix attempt, a rebase conflict the agent couldn't resolve, or a review finding the implementing agent disputes, or
+- auto-merge was paused by the tightening rule (§5).
+
+Everything else proceeds without asking. A human resolves an escalation by answering on the issue or PR and removing the label. The next loop run picks it up from there.
