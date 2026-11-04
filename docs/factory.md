@@ -80,11 +80,13 @@ Every PR includes:
 - `.github/**`, root `package.json`, `eslint.config.js`, and `tsconfig.base.json`
 - The milestone doc, except a PR that only appends rows to the factory metrics table (§7.6)
 
-Everything that fails a criterion gets `needs-human` (§7.7) rather than merging.
+A PR that meets every criterion except the protected-path one goes to `ready-for-human` (below), not `needs-human`. A PR that fails any other criterion doesn't merge: it goes back for a fix round (§7.5), or gets `needs-human` when §7.7 says so.
 
-**Protected-path PRs reach the human only after review.** When a PR touching protected paths has green CI and a review-agent approval of its latest commit, the orchestrator adds `ready-for-human` and notifies the human. **Humans merge only PRs labelled `ready-for-human`** (or the human's own PRs). A new commit removes the label until it's reviewed again.
+**Protected-path PRs reach the human only after review.** When a PR touching protected paths has green CI and a review-agent approval of its latest commit, the orchestrator adds `ready-for-human` and notifies the human. **Humans merge only PRs labelled `ready-for-human`**, or PRs that aren't agent PRs (below). When a PR's head SHA no longer matches the SHA in its latest APPROVE verdict, the orchestrator removes the label, and the PR is reviewed again.
 
-**If a PR merges before review anyway,** the orchestrator still runs the review on the merged commit. Any findings become a follow-up issue linked to the PR, and the metrics row records "merged before review".
+**An agent PR** is one whose body has `Closes #N`, where issue #N is (or was) dispatched by the orchestrator: it has the orchestrator's dispatch comment. Every PR comes from the same GitHub account, so the orchestrator tells them apart this way. Every other PR is a human PR, and the orchestrator neither reviews nor merges it unless asked.
+
+**If a PR merges before review anyway,** the orchestrator still runs the review on the merged commit. Any findings become a follow-up issue linked to the PR, and the metrics row records it under "Merged before review" (§6).
 
 **Tightening rule:** if an auto-merged PR has to be reverted or causes a regression, the orchestrator pauses auto-merge (all merges become human) until the cause is understood and the criteria are changed in this file.
 
@@ -96,6 +98,7 @@ Track these per merged task in the milestone doc:
 - Number of review rounds
 - What a check or reviewer caught
 - Merged by: `auto` or `human`
+- Merged before review? (y/n), with a link to the follow-up issue if the review found something
 - Human touches: how many times a human had to act (decisions, `needs-human` escalations, contract reviews)
 
 Because every agent uses the human's account, GitHub's "merged by" can't tell a human merge from an automatic one. The orchestrator records `auto` when it merged the PR itself, and `human` otherwise.
@@ -162,7 +165,7 @@ When an agent PR's CI finishes:
   Review agent verdict: REQUEST_CHANGES @ <full commit SHA>
   ```
 
-  A verdict counts only for the SHA it names. For REQUEST_CHANGES, each finding is concrete and checkable: file and line, what's wrong, and what would fix it. Preferences go under a separate "Non-blocking" heading.
+  A verdict counts only for the SHA it names. The orchestrator reads verdicts **only from PR reviews**, never from issue comments, PR comments, or the PR body. If one SHA has several verdicts, the latest one wins. Implementing agents never post reviews, only review agents do. For REQUEST_CHANGES, each finding is concrete and checkable: file and line, what's wrong, and what would fix it. Preferences go under a separate "Non-blocking" heading.
 
 ### 7.5 Fix rounds
 
@@ -183,7 +186,7 @@ When the review requests changes, the implementing agent addresses every finding
 The human is notified (push notification, and a comment that mentions them) when:
 
 - an issue gets `needs-design` (a decision, a split, or an agent question),
-- a PR touches protected paths and is otherwise ready (a contract or policy review),
+- a PR gets `ready-for-human` (a contract or policy review),
 - a PR gets `needs-human`: round cap reached, CI failed twice in a row with the same error after a fix attempt, a rebase conflict the agent couldn't resolve, or a review finding the implementing agent disputes, or
 - auto-merge was paused by the tightening rule (§5).
 
