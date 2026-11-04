@@ -1,3 +1,16 @@
 // @eov/contracts: shared domain types, commands, events, snapshots, and schemas.
-// Skeleton from T00a. Contents arrive in T00b.
-export {};
+// Changes here need CODEOWNER review (docs/factory.md §5).
+export * from "./money.ts";
+export * from "./ids.ts";
+export * from "./time.ts";
+export * from "./geometry.ts";
+export * from "./goods.ts";
+export * from "./commands.ts";
+export * from "./events.ts";
+export * from "./ledger.ts";
+export * from "./snapshot.ts";
+export * from "./state.ts";
+export * from "./save.ts";
+export * from "./coordinator.ts";
+export * from "./engine.ts";
+export * from "./schemas.ts";
