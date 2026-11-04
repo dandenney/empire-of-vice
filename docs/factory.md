@@ -82,9 +82,15 @@ Every PR includes:
 
 A PR that meets every criterion except the protected-path one goes to `ready-for-human` (below), not `needs-human`. A PR that fails any other criterion doesn't merge: it goes back for a fix round (§7.5), or gets `needs-human` when §7.7 says so.
 
-**Protected-path PRs reach the human only after review.** When a PR touching protected paths has green CI and a review-agent approval of its latest commit, the orchestrator adds `ready-for-human` and notifies the human. **Humans merge only PRs labelled `ready-for-human`**, or PRs that aren't agent PRs (below). When a PR's head SHA no longer matches the SHA in its latest APPROVE verdict, the orchestrator removes the label, and the PR is reviewed again.
+**Protected-path PRs reach the human only after review.** When a PR touching protected paths has green CI and a review-agent approval of its latest commit, the orchestrator adds `ready-for-human` and notifies the human. **Humans merge only PRs labelled `ready-for-human`**, or PRs that aren't agent PRs (below). The label stays only while the **latest verdict on the head SHA is APPROVE**. A new commit, or a later REQUEST_CHANGES on the same SHA, removes it. If the branch falls behind `main`, the orchestrator merges `main` into it (a merge commit, no force-push) and CI runs again. If the merge changes none of the files in the PR's diff, the approval carries over to the new SHA. Otherwise the PR is reviewed again.
 
-**An agent PR** is one whose body has `Closes #N`, where issue #N is (or was) dispatched by the orchestrator: it has the orchestrator's dispatch comment. Every PR comes from the same GitHub account, so the orchestrator tells them apart this way. Every other PR is a human PR, and the orchestrator neither reviews nor merges it unless asked.
+Every PR comes from the same GitHub account, so the orchestrator tells PRs apart by **markers it writes itself**:
+
+- **Agent PR:** its body has `Closes #N`, and issue #N has a comment whose first line starts with `Orchestrator: dispatched` (§7.3).
+- **Orchestrator PR:** a PR the orchestrator opened itself (metrics updates, rule changes, contract-change PRs). Its body's first line is `Orchestrator PR`.
+- **Human PR:** anything else. The orchestrator neither reviews nor merges it unless asked.
+
+Agent PRs and orchestrator PRs follow the same review and merge rules: review, then auto-merge or `ready-for-human`. The one exception is metrics-only PRs (§7.6), which auto-merge on green CI without a review.
 
 **If a PR merges before review anyway,** the orchestrator still runs the review on the merged commit. Any findings become a follow-up issue linked to the PR, and the metrics row records it under "Merged before review" (§6).
 
@@ -141,7 +147,7 @@ Start an implementing agent for an `agent-ready` issue when:
 
 When several issues qualify, start them in issue-number order.
 
-The agent runs in its own git worktree, on a branch named after the issue (`t01b-command-log`), with the standard prompt: read the issue, `CLAUDE.md`, this file, and the referenced docs; stay inside owned files; report contract gaps instead of editing contracts; open a PR with the §4 evidence; never merge. The issue gets `in-progress`.
+The orchestrator posts a comment on the issue whose **first line is** `Orchestrator: dispatched <branch>`. That marker is how the agent's PR is recognized later (§5). The agent runs in its own git worktree, on a branch named after the issue (`t01b-command-log`), with the standard prompt: read the issue, `CLAUDE.md`, this file, and the referenced docs; stay inside owned files; report contract gaps instead of editing contracts; open a PR with the §4 evidence; never merge. The issue gets `in-progress`.
 
 If the agent stops with a question instead of a PR, it comments the question on the issue, the issue gets `needs-design`, and `in-progress` comes off.
 
@@ -165,7 +171,7 @@ When an agent PR's CI finishes:
   Review agent verdict: REQUEST_CHANGES @ <full commit SHA>
   ```
 
-  A verdict counts only for the SHA it names. The orchestrator reads verdicts **only from PR reviews**, never from issue comments, PR comments, or the PR body. If one SHA has several verdicts, the latest one wins. Implementing agents never post reviews, only review agents do. For REQUEST_CHANGES, each finding is concrete and checkable: file and line, what's wrong, and what would fix it. Preferences go under a separate "Non-blocking" heading.
+  A verdict counts only for the SHA it names. The orchestrator reads verdicts **only from PR reviews**, never from issue comments, PR comments, or the PR body. If one SHA has several verdicts, the latest one wins. By instruction, only review agents post reviews: implementing agents are told never to. This can't be checked from GitHub, because every agent shares the account, so a verdict also counts only if it names the PR's current head SHA. For REQUEST_CHANGES, each finding is concrete and checkable: file and line, what's wrong, and what would fix it. Preferences go under a separate "Non-blocking" heading.
 
 ### 7.5 Fix rounds
 
@@ -176,7 +182,7 @@ When the review requests changes, the implementing agent addresses every finding
 ### 7.6 After merge
 
 - The linked issue closes (`Closes #N`), and `in-progress` comes off.
-- **Metrics:** the orchestrator appends the task's row to the metrics table, in a PR that changes only that table. Such PRs auto-merge (§5).
+- **Metrics:** the orchestrator appends the task's row to the metrics table, in an orchestrator PR (§5) that changes only that table. Such PRs auto-merge on green CI.
 - **Contract gaps** the PR listed become new issues: `needs-design` if they need a contract change, otherwise planned issues with the affected task named.
 - **Follow-ups:** each item under "left out" that names an owner task is copied to that task's issue as a comment, so its refresh picks it up.
 - The loop runs again immediately, because the merge may have unblocked other issues.
