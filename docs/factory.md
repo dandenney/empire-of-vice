@@ -24,6 +24,17 @@ Labels:
 | `size:S` / `size:M` | Rough size. Anything bigger gets split before it's `agent-ready` |
 | `area:*` | `sim`, `ui`, `contracts`, `data`, `infra`, `lab` |
 
+### Refresh before `agent-ready`
+
+Issues are written ahead of time, and the decisions merged after them can make them stale. Before adding `agent-ready`, re-read the issue against what's on `main` now:
+
+- **Contracts and decision records.** Does it name the current types, commands, and ADRs? Does any criterion contradict a decision merged since it was written? Link the relevant ADRs under Design references.
+- **Owned files.** Do the paths match the real layout, including test folders the test runner actually picks up? Does the task need a file it can't touch, such as a `package.json` dependency or the lockfile? If so, add it.
+- **Test command.** Does it run in the current workspace?
+- **Scope.** Does it now overlap work another task owns, or depend on something that isn't built yet? Say which task owns what under Out of scope.
+
+Edit the issue in place, and list what changed in a comment, so the agent and the reviewer both see why the issue differs from the original plan.
+
 ## 2. Execution
 
 - One issue → one branch (`t02a-inventory`) → one PR. Parallel tasks run in separate git worktrees.
