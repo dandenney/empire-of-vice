@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Tests run in Node under Vitest, so they may use Node APIs.
+    "types": ["node"]
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}
