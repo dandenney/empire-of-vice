@@ -215,6 +215,10 @@ importers:
   packages/persistence: {}
 
   packages/simulation:
+    dependencies:
+      '@eov/contracts':
+        specifier: workspace:*
+        version: link:../contracts
     devDependencies:
       '@types/node':
         specifier: ^24.19.2
