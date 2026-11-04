@@ -82,6 +82,10 @@ Every PR includes:
 
 Everything that fails a criterion gets `needs-human` (§7.7) rather than merging.
 
+**Protected-path PRs reach the human only after review.** When a PR touching protected paths has green CI and a review-agent approval of its latest commit, the orchestrator adds `ready-for-human` and notifies the human. **Humans merge only PRs labelled `ready-for-human`** (or the human's own PRs). A new commit removes the label until it's reviewed again.
+
+**If a PR merges before review anyway,** the orchestrator still runs the review on the merged commit. Any findings become a follow-up issue linked to the PR, and the metrics row records "merged before review".
+
 **Tightening rule:** if an auto-merged PR has to be reverted or causes a regression, the orchestrator pauses auto-merge (all merges become human) until the cause is understood and the criteria are changed in this file.
 
 ## 6. Factory metrics
@@ -93,6 +97,8 @@ Track these per merged task in the milestone doc:
 - What a check or reviewer caught
 - Merged by: `auto` or `human`
 - Human touches: how many times a human had to act (decisions, `needs-human` escalations, contract reviews)
+
+Because every agent uses the human's account, GitHub's "merged by" can't tell a human merge from an automatic one. The orchestrator records `auto` when it merged the PR itself, and `human` otherwise.
 
 These numbers decide when to add parallelism or loosen the merge gate further.
 
@@ -111,6 +117,7 @@ The orchestrator moves work through the factory without a human starting each st
 | `in-progress` | An implementing agent is working on it, or its PR is open. |
 | `needs-design` | Blocked on a human decision. |
 | `needs-human` | The loop gave up on something and a human has to look. Says why in a comment. |
+| `ready-for-human` | A protected-path PR that has passed CI and review, and is waiting for a human merge. |
 | `human-paired` | Never started automatically. Done with a human. |
 
 ### 7.2 Refresh
@@ -148,7 +155,14 @@ When an agent PR's CI finishes:
   - tests exercise the behavior, rather than only executing it
   - any "contract gaps" or "left out" items are real gaps, not shortcuts
 
-  It posts a PR review: **approve**, or **request changes** with each finding as a concrete, checkable comment.
+  It posts a single PR review. All agents act through the human's GitHub account, and GitHub doesn't let an account approve its own PR, so the review is posted as a **comment** (`gh pr review --comment`). Its **first line** is the verdict, which the orchestrator reads:
+
+  ```
+  Review agent verdict: APPROVE @ <full commit SHA>
+  Review agent verdict: REQUEST_CHANGES @ <full commit SHA>
+  ```
+
+  A verdict counts only for the SHA it names. For REQUEST_CHANGES, each finding is concrete and checkable: file and line, what's wrong, and what would fix it. Preferences go under a separate "Non-blocking" heading.
 
 ### 7.5 Fix rounds
 
