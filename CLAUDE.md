@@ -26,4 +26,25 @@ This file is a map. Read the linked doc for the area you're touching before chan
 
 ## Commands
 
-(Filled in by T00a.)
+Node 24+ and pnpm (version pinned in root `package.json` `packageManager`; `corepack enable` picks it up). Tooling choices: `docs/decisions/0001-workspace-tooling.md`.
+
+Root (run from the repo root):
+
+- `pnpm install`: install all workspace packages
+- `pnpm typecheck`: `tsc` in every package
+- `pnpm lint`: ESLint over the whole repo, including the package-boundary rules in `eslint.config.js`
+- `pnpm test`: every package's `test` script (currently Vitest in `@eov/simulation`)
+- `pnpm check`: typecheck → lint → test, the same sequence CI runs on every PR
+
+Per package (`pnpm --filter <name> <script>`):
+
+| Package | Path | Scripts |
+|---|---|---|
+| `@eov/simulation` | `packages/simulation` | `typecheck`, `test` (Vitest + fast-check), `test:watch` |
+| `@eov/contracts` | `packages/contracts` | `typecheck` |
+| `@eov/game-data` | `packages/game-data` | `typecheck` |
+| `@eov/persistence` | `packages/persistence` | `typecheck` |
+| `@eov/game` | `apps/game` | `dev`, `build`, `preview` (Vite), `typecheck`, `test:e2e` (Playwright) |
+| `@eov/economy-lab` | `tools/economy-lab` | `typecheck` |
+
+Examples: `pnpm --filter @eov/simulation test`, `pnpm --filter @eov/game dev`, `pnpm exec eslint packages/simulation`. Playwright browsers aren't installed by `pnpm install`; run `pnpm --filter @eov/game exec playwright install` before the first `test:e2e`.

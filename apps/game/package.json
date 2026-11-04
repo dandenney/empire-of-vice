@@ -1,0 +1,19 @@
+{
+  "name": "@eov/game",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Browser game: React management UI and PixiJS map.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
+    "test:e2e": "playwright test --pass-with-no-tests"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^24.19.2",
+    "vite": "^8.3.5"
+  }
+}
