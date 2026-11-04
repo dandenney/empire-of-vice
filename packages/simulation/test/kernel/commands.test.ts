@@ -166,7 +166,7 @@ describe("scheduled commands", () => {
     expect(sim.state.facilities.find((f) => f.id === ids.barn)!.workerCount).toBe(3);
   });
 
-  it("are checked again when they apply; failure emits COMMAND_REJECTED and changes nothing else", () => {
+  it("are checked again when they apply; failure emits COMMAND_REJECTED and is logged, but changes nothing else", () => {
     const sim = fakeSimulation();
     expect(sim.dispatch({ command: buyCorn(150), scheduledTick: tick(800) }).status).toBe("queued");
     sim.dispatch({ command: buyCorn(100) }); // leaves 60, so the queued order will fail
@@ -184,8 +184,34 @@ describe("scheduled commands", () => {
         reason: { code: "SUPPLIER_STOCK_LOW", materialId: ids.corn, requested: 150, available: 60 },
       },
     ]);
-    expect(sim.state.commandLog.map((e) => e.id)).not.toContain("cmd-3");
+    // It was accepted at dispatch, so it's in the log (T01b), as the original envelope, after cmd-4.
+    expect(sim.state.commandLog.map((e) => e.id)).toEqual(["cmd-1", "cmd-4", "cmd-3"]);
+    expect(sim.state.commandLog.at(-1)).toEqual({ id: "cmd-3", scheduledTick: 800, sequence: 3, command: buyCorn(150) });
     expect(sim.state.queuedCommands.map((e) => e.id)).not.toContain("cmd-3");
+    const cornStock = sim.state.suppliers.flatMap((s) => s.stock).find((st) => st.materialId === ids.corn)!;
+    expect(cornStock.available).toBe(60); // only cmd-4's purchase happened
+  });
+
+  it("are logged in (scheduledTick, sequence) order, whether they applied or were rejected", () => {
+    const sim = fakeSimulation();
+    sim.dispatch({ command: setWorkforce(unknownFacility, 1), scheduledTick: tick(700) }); // cmd-3: fails at 700
+    sim.dispatch({ command: setWorkforce(ids.barn, 4), scheduledTick: tick(650) }); // cmd-4
+    sim.dispatch({ command: buyCorn(1_000), scheduledTick: tick(700) }); // cmd-5: fails at 700
+    sim.dispatch({ command: buyCorn(1), scheduledTick: tick(700) }); // cmd-6
+    sim.dispatch({ command: setWorkforce(unknownFacility, 1) }); // rejected at dispatch: never logged
+    sim.advance(99); // through tick 699: cmd-3, cmd-5, cmd-6 not processed yet
+    expect(sim.state.commandLog.map((e) => e.id)).toEqual(["cmd-1", "cmd-4"]);
+    sim.advance(1); // tick 700
+    const log = sim.state.commandLog;
+    expect(log.map((e) => e.id)).toEqual(["cmd-1", "cmd-4", "cmd-3", "cmd-5", "cmd-6"]);
+    expect(log.slice(1).map((e) => [e.scheduledTick, e.sequence])).toEqual([
+      [650, 4],
+      [700, 3],
+      [700, 5],
+      [700, 6],
+    ]);
+    const rejected = sim.takeEvents().filter((e) => e.type === "COMMAND_REJECTED");
+    expect(rejected.map((e) => e.causedBy)).toEqual(["cmd-3", "cmd-5"]);
   });
 
   it("run the handler's dispatch-time validation for queued commands", () => {
@@ -260,6 +286,79 @@ describe("replay (ADR 0004)", () => {
     const replayed = fakeSimulation();
     for (const envelope of original.state.commandLog) replayed.replay(envelope);
     replayed.advance(2_400);
+    expect(replayed.stateHash()).toBe(original.stateHash());
+  });
+
+  it("replaying the command log reproduces the hash and the COMMAND_REJECTED events when the run had apply-time rejections", () => {
+    const original = fakeSimulation();
+    original.dispatch({ command: buyCorn(150), scheduledTick: tick(800) }); // cmd-3: fails at 800
+    original.dispatch({ command: buyCorn(100) }); // cmd-4
+    original.dispatch({ command: setWorkforce(unknownFacility, 1), scheduledTick: tick(900) }); // cmd-5: fails at 900
+    original.advance(400);
+    original.dispatch({ command: setWorkforce(ids.barn, 2) }); // cmd-6
+    original.advance(2_000);
+    const originalEvents = original.takeEvents();
+    expect(originalEvents.filter((e) => e.type === "COMMAND_REJECTED").map((e) => e.causedBy)).toEqual(["cmd-3", "cmd-5"]);
+    expect(original.state.commandLog.map((e) => e.id)).toEqual(["cmd-1", "cmd-4", "cmd-3", "cmd-5", "cmd-6", "cmd-2"]);
+
+    const replayed = fakeSimulation();
+    const results = original.state.commandLog.map((envelope) => replayed.replay(envelope).status);
+    expect(results).toEqual(["duplicate", "applied", "queued", "queued", "queued", "duplicate"]);
+    replayed.advance(2_400);
+    expect(replayed.stateHash()).toBe(original.stateHash());
+    expect(replayed.takeEvents()).toEqual(originalEvents);
+  });
+
+  it("an envelope from the log that fails as it applies on the next tick is an apply-time rejection, not a dispatch-time one", () => {
+    const original = fakeSimulation();
+    original.dispatch({ command: buyCorn(150), scheduledTick: tick(800) }); // cmd-3
+    original.dispatch({ command: buyCorn(100) }); // cmd-4, leaves 60
+    original.advance(200);
+    const failed = original.state.commandLog.find((e) => e.id === "cmd-3")!;
+    const rejection = original.takeEvents().find((e) => e.type === "COMMAND_REJECTED");
+    if (rejection?.type !== "COMMAND_REJECTED") throw new Error("expected cmd-3 to fail when it applied");
+
+    // Replay the log tick by tick, so cmd-3 is due on the very next tick when it's replayed.
+    const replayed = fakeSimulation();
+    expect(replayed.replay(original.state.commandLog[1]!).status).toBe("applied"); // cmd-4 at 601
+    replayed.advance(800 - 1 - 600);
+    replayed.takeEvents();
+    const result = replayed.replay(failed);
+    expect(result).toEqual({ status: "rejected-on-apply", commandId: "cmd-3", tick: 800, reason: rejection.reason, eventIds: [rejection.id] });
+    expect(replayed.takeEvents()).toEqual([rejection]);
+    expect(replayed.state.commandLog.at(-1)).toEqual(failed);
+    expect(replayed.replay(failed)).toEqual({ status: "duplicate", commandId: "cmd-3" });
+    replayed.advance(1);
+    expect(replayed.stateHash()).toBe(original.stateHash());
+  });
+
+  it("queues a future envelope from the log without re-running dispatch-time validation against the replaying state", () => {
+    // A validate that depends on state: only allowed once the barn has workers.
+    const strict = (registry: Parameters<NonNullable<Parameters<typeof fakeSimulation>[1]>>[0]) =>
+      registry.onCommand("PURCHASE_EQUIPMENT", {
+        validate: (state, command) =>
+          state.facilities.find((f) => f.id === ids.barn)!.workerCount > 0
+            ? null
+            : { code: "NO_EQUIPMENT_SLOT", facilityId: command.facilityId, equipmentId: command.equipmentId },
+        apply: (state) => ({ status: "applied", state }),
+      });
+    const buyStill = { type: "PURCHASE_EQUIPMENT", facilityId: ids.distillery, equipmentId: ids.copperStill } as const;
+
+    const original = fakeSimulation(day0State, strict);
+    original.dispatch({ command: setWorkforce(ids.barn, 0) }); // cmd-3
+    expect(original.dispatch({ command: buyStill, scheduledTick: tick(700) }).status).toBe("rejected");
+    original.advance(10);
+    original.dispatch({ command: setWorkforce(ids.barn, 1) }); // cmd-4
+    expect(original.dispatch({ command: buyStill, scheduledTick: tick(700) }).status).toBe("queued"); // cmd-5
+    original.dispatch({ command: setWorkforce(ids.barn, 0) }); // cmd-6
+    original.advance(200);
+    expect(original.state.commandLog.map((e) => e.id)).toEqual(["cmd-1", "cmd-3", "cmd-4", "cmd-6", "cmd-5"]);
+
+    // Replayed up front, cmd-5 is placed while the barn has no workers. It must still be queued.
+    const replayed = fakeSimulation(day0State, strict);
+    const results = original.state.commandLog.map((envelope) => replayed.replay(envelope).status);
+    expect(results).toEqual(["duplicate", "applied", "queued", "queued", "queued"]);
+    replayed.advance(210);
     expect(replayed.stateHash()).toBe(original.stateHash());
   });
 

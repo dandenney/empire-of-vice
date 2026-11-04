@@ -52,6 +52,16 @@ Changes from earlier drafts:
 - A `scheduledTick` in the past is rejected with `SCHEDULED_IN_PAST`.
 - Queued commands are saved (SaveGame), and so are applied commands, in the journal used for replay.
 
+#### Amendment, 2026-11-04 (T01b, issue #25): the journal covers apply-time rejections
+
+A queued command that fails when its tick arrives was still accepted at dispatch: it used up a command ID and a sequence. Leaving it out of the journal meant replaying the journal gave a different state hash. So:
+
+- **`commandLog` holds every command accepted at dispatch, once its tick has been processed,** in `(scheduledTick, sequence)` order: commands that applied immediately, queued commands that applied when their tick arrived, and queued commands that were rejected then. The entry is the original envelope. The outcome isn't stored, because replay derives it again deterministically.
+- Commands rejected at dispatch still never reach the journal, and still change nothing.
+- **Replay treats a journaled envelope as already accepted.** A future envelope is queued without the handler's dispatch-time validation, since that would judge it against the replaying state, not the state the original dispatch saw. An envelope due on the next tick applies at once, and if it fails, that's an apply-time rejection: it's journaled and a `COMMAND_REJECTED` event carries the reason, as in the original run. Only a `scheduledTick` already in the past is still rejected outright.
+- Replaying the journal on a fresh simulation from the same start state reproduces the original state hash and the same events, including the `COMMAND_REJECTED` events and their IDs.
+- The bullet above about saved commands now reads "applied **or apply-time rejected** commands". This changes what the journal means, not its shape, so the save schema version stays 1.
+
 ### Results and rejections
 
 - `CommandResult` is `applied` (with the event IDs it emitted), `queued`, or `rejected` (with a reason).
