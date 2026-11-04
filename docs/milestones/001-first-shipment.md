@@ -66,4 +66,4 @@ GDD §12: before parallelizing, build one complete path, *create game → buy in
 
 | Task | PR | Merged without rework? | Review rounds | Caught by |
 |---|---|---|---|---|
-| | | | | |
+| T00a | #18 | y | 0 (merged with no review comments) | Nothing caught by checks or review. The agent flagged its own open questions: TS 7 vs typescript-eslint, `.nvmrc`, and the wrong `CLAUDE.md` section number |
