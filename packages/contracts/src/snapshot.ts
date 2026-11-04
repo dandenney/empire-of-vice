@@ -36,6 +36,7 @@ import type {
 } from "./ids.ts";
 import type { LedgerTransaction } from "./ledger.ts";
 import type { Money } from "./money.ts";
+import type { ContractTermsData } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 export interface GameSnapshot {
@@ -422,19 +423,10 @@ export interface ContractsSnapshot {
   readonly closed: readonly ContractSnapshot[];
 }
 
-export interface ContractTerms {
-  readonly buyerId: BuyerId;
+/** Stored terms (ContractTermsData) plus display names. */
+export interface ContractTerms extends ContractTermsData {
   readonly buyerName: string;
-  readonly productId: ProductId;
   readonly productName: string;
-  readonly minimumQuality: QualityTier;
-  readonly quantityPerInstallment: number;
-  /** Fixed when signed (95% of spot, GDD §7). */
-  readonly unitPrice: Money;
-  readonly installmentCount: number;
-  readonly intervalTicks: number;
-  /** 20% of the contracted value of missing cases, in parts per million. */
-  readonly penaltyRatePpm: number;
 }
 
 export interface ContractOfferSnapshot extends ContractTerms {

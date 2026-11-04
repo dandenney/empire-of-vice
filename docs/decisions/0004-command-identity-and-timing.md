@@ -22,7 +22,7 @@ There are eight commands, covering every GDD §4 player action:
 |---|---|
 | `PURCHASE_MATERIALS` | 1. Buy raw materials |
 | `START_PRODUCTION` | 2. Schedule production |
-| `DISPATCH_DELIVERY` | 4. Assign inventory and a truck, and 8. route around a disruption (optional `routeId`) |
+| `DISPATCH_DELIVERY` | 4. Assign inventory and a truck, and 8. route around a disruption (`routeId`, or `null` for the default route) |
 | `ACCEPT_CONTRACT` | 7. Take a recurring contract |
 | `PURCHASE_EQUIPMENT` | 6. Reinvest in equipment, including storage expansion |
 | `SET_WORKFORCE` | 6. Hire workers, and lay them off during recovery (GDD §9) |

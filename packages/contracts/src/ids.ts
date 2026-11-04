@@ -24,6 +24,7 @@ export type IdKind =
   | "Family"
   | "Unlock"
   | "Tier"
+  | "Scenario"
   // Dynamic: assigned by the simulation during play.
   | "Command"
   | "Event"
@@ -33,6 +34,19 @@ export type IdKind =
   | "ContractOffer"
   | "Contract"
   | "Reservation";
+
+/** Kinds whose IDs the simulation assigns from counters in state (ADR 0003). */
+export const DYNAMIC_ID_KINDS = [
+  "Command",
+  "Event",
+  "Transaction",
+  "ProductionJob",
+  "Delivery",
+  "ContractOffer",
+  "Contract",
+  "Reservation",
+] as const satisfies readonly IdKind[];
+export type DynamicIdKind = (typeof DYNAMIC_ID_KINDS)[number];
 
 export type Id<K extends IdKind> = string & { readonly [idBrand]: K };
 
@@ -50,6 +64,7 @@ export type CharacterId = Id<"Character">;
 export type FamilyId = Id<"Family">;
 export type UnlockId = Id<"Unlock">;
 export type TierId = Id<"Tier">;
+export type ScenarioId = Id<"Scenario">;
 export type CommandId = Id<"Command">;
 export type EventId = Id<"Event">;
 export type TransactionId = Id<"Transaction">;

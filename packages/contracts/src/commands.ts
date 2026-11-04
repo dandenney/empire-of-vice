@@ -80,8 +80,11 @@ export interface DispatchDeliveryCommand {
   readonly vehicleId: VehicleId;
   readonly cargo: readonly CargoLine[];
   readonly purpose: DeliveryPurpose;
-  /** Optional, so the player can route around a disruption. Omitted: the default route. */
-  readonly routeId?: RouteId;
+  /**
+   * Lets the player route around a disruption. null: the default route.
+   * Explicit null, not optional, because commands are stored in state (ADR 0008).
+   */
+  readonly routeId: RouteId | null;
 }
 
 /** GDD §4 action 7. Reserves contract inventory and funds as GDD §7 requires. */
