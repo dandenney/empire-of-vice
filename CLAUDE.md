@@ -15,7 +15,7 @@ This file is a map. Read the linked doc for the area you're touching before chan
 ## Non-negotiable rules
 
 1. `packages/simulation` never imports React, PixiJS, DOM/browser storage APIs, or anything from `apps/`. It must run identically in a Web Worker and in Node.
-2. Domain types, commands, events, and snapshots come from `packages/contracts`. Don't invent parallel types. If the contract is missing something, stop and say so in the PR rather than changing it. Contract changes need human review.
+2. Domain types, commands, events, and snapshots come from `packages/contracts`. Don't invent parallel types. If the contract is missing something, stop and say so in the PR rather than changing it. Contract changes need human review. Exception: `packages/game-data` defines the types for its own static definitions (recipes, buyers, routes, scenario), built from contract primitives (ADR 0012).
 3. Gameplay numbers (prices, wages, rates, thresholds) live in `packages/game-data`. Never hardcode them in simulation logic or UI.
 4. Money is integer cents. No floats for money.
 5. The simulation is deterministic: seeded RNG only, no `Date.now()`, no `Math.random()`, no transcendental `Math.*` functions in simulation code (see architecture §8).
