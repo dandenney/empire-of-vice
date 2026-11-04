@@ -1,0 +1,18 @@
+{
+  "id": "first-shipment",
+  "name": "The First Shipment",
+  "notes": "S0 stub: T05 owns the real scenario (GDD §14.1, §14.2). Every value here is a PLACEHOLDER.",
+  "seed": 1920,
+  "startDate": { "year": 1920, "month": 1, "day": 17 },
+  "openingBalance": { "cash": 100000, "buildings": 80000 },
+  "family": {
+    "id": "kerrigan",
+    "reputation": 0,
+    "tierId": "starting-operation",
+    "unlocked": ["spot-sales"]
+  },
+  "facilities": [{ "id": "distillery-main", "equipmentIds": ["copper-still"], "workerCount": 3 }],
+  "vehicleIds": ["model-tt-truck"],
+  "supplierIds": ["millers-feed"],
+  "buyerIds": ["crossroads-roadhouse", "kesslers-back-room", "lakeview-hotel"]
+}

@@ -5,7 +5,8 @@
   "description": "Deterministic simulation engine. Runs identically in a Web Worker and in Node.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./game": "./src/game/index.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
@@ -19,6 +20,7 @@
     "vitest": "^5.1.0"
   },
   "dependencies": {
-    "@eov/contracts": "workspace:*"
+    "@eov/contracts": "workspace:*",
+    "@eov/game-data": "workspace:*"
   }
 }

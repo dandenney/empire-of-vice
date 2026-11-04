@@ -210,15 +210,46 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2))
 
-  packages/game-data: {}
+  packages/game-data:
+    dependencies:
+      '@eov/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+      vitest:
+        specifier: ^5.1.0
+        version: 5.1.0(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2))
 
-  packages/persistence: {}
+  packages/persistence:
+    dependencies:
+      '@eov/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eov/simulation':
+        specifier: workspace:*
+        version: link:../simulation
+    devDependencies:
+      '@eov/game-data':
+        specifier: workspace:*
+        version: link:../game-data
+      '@types/node':
+        specifier: ^24.19.2
+        version: 24.19.2
+      vitest:
+        specifier: ^5.1.0
+        version: 5.1.0(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2))
 
   packages/simulation:
     dependencies:
       '@eov/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@eov/game-data':
+        specifier: workspace:*
+        version: link:../game-data
     devDependencies:
       '@types/node':
         specifier: ^24.19.2
@@ -234,10 +265,26 @@ importers:
         version: 5.1.0(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2))
 
   tools/economy-lab:
+    dependencies:
+      '@eov/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@eov/game-data':
+        specifier: workspace:*
+        version: link:../../packages/game-data
+      '@eov/persistence':
+        specifier: workspace:*
+        version: link:../../packages/persistence
+      '@eov/simulation':
+        specifier: workspace:*
+        version: link:../../packages/simulation
     devDependencies:
       '@types/node':
         specifier: ^24.19.2
         version: 24.19.2
+      vitest:
+        specifier: ^5.1.0
+        version: 5.1.0(@types/node@24.19.2)(vite@8.3.5(@types/node@24.19.2))
 
 packages:
 
