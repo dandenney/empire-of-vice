@@ -1,0 +1,13 @@
+{
+  "name": "@eov/persistence",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local save/load: versioned saves and migrations stored in IndexedDB.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

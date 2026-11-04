@@ -1,0 +1,16 @@
+{
+  "name": "@eov/economy-lab",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Headless runner: seeded playthroughs, agents, scenarios, and balance reports.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2"
+  }
+}

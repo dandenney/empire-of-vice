@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // No DOM and no Node globals: simulation source must run in a Worker and in Node.
+    "lib": ["ES2022"],
+    "types": []
+  },
+  "include": ["src"]
+}
