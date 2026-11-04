@@ -47,8 +47,23 @@ export interface SimulationOptions {
   readonly gameDataVersion: string;
 }
 
-/** `replay` result: a CommandResult, or a no-op because the envelope was already applied or queued. */
-export type ReplayResult = CommandResult | { readonly status: "duplicate"; readonly commandId: CommandEnvelope["id"] };
+/**
+ * `replay` result: a CommandResult; a no-op because the envelope is already in
+ * the log or the queue; or `rejected-on-apply`, when an envelope due on the next
+ * tick fails as it applies. That last case is an apply-time rejection, as in the
+ * original run: the envelope is logged and a COMMAND_REJECTED event (listed in
+ * `eventIds`) carries the reason. Unlike a `rejected` result, state did change.
+ */
+export type ReplayResult =
+  | CommandResult
+  | { readonly status: "duplicate"; readonly commandId: CommandEnvelope["id"] }
+  | {
+      readonly status: "rejected-on-apply";
+      readonly commandId: CommandEnvelope["id"];
+      readonly tick: Tick;
+      readonly reason: RejectionReason;
+      readonly eventIds: readonly EventId[];
+    };
 
 export class KernelError extends Error {
   override readonly name = "KernelError";
@@ -96,14 +111,26 @@ export class KernelSimulation implements Simulation {
       sequence: identity.sequence,
       command: request.command,
     };
-    return this.#place(before, identity.state, envelope, handler);
+    // "dispatch" mode never returns `duplicate` or `rejected-on-apply`.
+    return this.#place(before, identity.state, envelope, handler, "dispatch") as CommandResult;
   }
 
   /**
    * Re-submits an envelope from a command log (ADR 0004 replay). An envelope
-   * whose sequence or ID was already applied or is already queued is a no-op.
-   * Otherwise it's placed exactly like a dispatch with its original identity, and,
-   * if accepted, the counters move past it so later dispatches can't collide.
+   * whose sequence or ID is already in the log or the queue is a no-op.
+   * Otherwise it's placed with its original identity, and the counters move past
+   * it so later dispatches can't collide.
+   *
+   * Every logged envelope was accepted at dispatch (ADR 0004 amendment, T01b), so
+   * replay doesn't judge it again at placement time:
+   * - a future envelope is queued without the handler's dispatch-time `validate`,
+   *   which would otherwise run against the replaying state instead of the state
+   *   the original dispatch saw;
+   * - an envelope due on the next tick applies now, and if it fails that's an
+   *   apply-time rejection (`rejected-on-apply`), logged with a COMMAND_REJECTED
+   *   event, exactly as when the original run reached its tick.
+   * Whether it applies or fails is derived again, deterministically, by the same
+   * handlers. Only a tick that's already past is still rejected outright.
    */
   replay(envelope: CommandEnvelope): ReplayResult {
     const before = this.#state;
@@ -123,7 +150,7 @@ export class KernelSimulation implements Simulation {
         nextId: { ...counters.nextId, Command: Math.max(counters.nextId.Command, idN + 1) },
       },
     };
-    return this.#place(before, advanced, envelope, handler);
+    return this.#place(before, advanced, envelope, handler, "replay");
   }
 
   /**
@@ -137,8 +164,18 @@ export class KernelSimulation implements Simulation {
    * command will get, computed from the counters without writing them. The UI
    * uses it only to match a response to its request; it never identifies a
    * journaled command, and consecutive rejections return the same ID.
+   *
+   * In "replay" mode the envelope was already accepted once; see `replay` for
+   * how handler rejections are treated then. Only "replay" mode can return
+   * `rejected-on-apply`.
    */
-  #place(before: GameState, s: GameState, envelope: CommandEnvelope, handler: CommandHandler): CommandResult {
+  #place(
+    before: GameState,
+    s: GameState,
+    envelope: CommandEnvelope,
+    handler: CommandHandler,
+    mode: "dispatch" | "replay",
+  ): ReplayResult {
     const current = before.tick;
     const target: number = envelope.scheduledTick;
     const reject = (reason: RejectionReason): CommandResult => ({ status: "rejected", commandId: envelope.id, reason });
@@ -151,7 +188,7 @@ export class KernelSimulation implements Simulation {
     }
 
     if (target > current + 1) {
-      const reason = handler.validate?.(s, envelope.command as never) ?? null;
+      const reason = mode === "dispatch" ? (handler.validate?.(s, envelope.command as never) ?? null) : null;
       if (reason) return reject(reason);
       this.#commit(before, enqueue(s, envelope));
       return { status: "queued", commandId: envelope.id, scheduledTick: envelope.scheduledTick };
@@ -166,32 +203,48 @@ export class KernelSimulation implements Simulation {
     // On rejection the drained commands are discarded too. They're still queued,
     // so they apply at step 1 of the same tick (or before the next eager command)
     // with the same IDs and the same result.
-    if (applied.status === "rejected") return reject(applied.reason);
+    if (applied.status === "rejected") {
+      if (mode === "dispatch") return reject(applied.reason);
+      const logged = this.#logRejection(drained, envelope, applied.reason, ctx);
+      this.#commit(before, logged.state);
+      return { status: "rejected-on-apply", commandId: envelope.id, tick: ctx.tick, reason: applied.reason, eventIds: [logged.eventId] };
+    }
     this.#commit(before, applied.state);
     return { status: "applied", commandId: envelope.id, tick: ctx.tick, eventIds: applied.eventIds };
   }
 
-  /** Applies queued envelopes ordered before `limit`. Failures become COMMAND_REJECTED events. */
+  /**
+   * Applies queued envelopes ordered before `limit`. Every one ends up in the
+   * command log; failures as apply-time rejections (`#logRejection`).
+   */
   #applyDue(state: GameState, limit: Limit, ctx: TickContext): GameState {
     let s = state;
     for (let due = shiftDue(s, limit); due; due = shiftDue(s, limit)) {
       const result = this.#applyEnvelope(due.state, due.envelope, ctx);
-      if (result.status === "applied") {
-        s = result.state;
-      } else {
-        s = emitEvent(
-          result.state,
-          {
-            type: "COMMAND_REJECTED",
-            commandId: due.envelope.id,
-            commandType: due.envelope.command.type,
-            reason: result.reason,
-          },
-          { tick: ctx.tick, causedBy: due.envelope.id },
-        ).state;
-      }
+      s = result.status === "applied" ? result.state : this.#logRejection(result.state, due.envelope, result.reason, ctx).state;
     }
     return s;
+  }
+
+  /**
+   * An apply-time rejection of a command that was accepted at dispatch: a
+   * COMMAND_REJECTED event carries the reason, and the envelope goes into the
+   * command log anyway. It used up an ID and a sequence when it was accepted, so
+   * a replay needs it to reproduce the run (ADR 0004 amendment, T01b). The
+   * outcome isn't stored; replay derives it again.
+   */
+  #logRejection(
+    state: GameState,
+    envelope: CommandEnvelope,
+    reason: RejectionReason,
+    ctx: TickContext,
+  ): { readonly state: GameState; readonly eventId: EventId } {
+    const emitted = emitEvent(
+      state,
+      { type: "COMMAND_REJECTED", commandId: envelope.id, commandType: envelope.command.type, reason },
+      { tick: ctx.tick, causedBy: envelope.id },
+    );
+    return { state: { ...emitted.state, commandLog: [...emitted.state.commandLog, envelope] }, eventId: emitted.eventId };
   }
 
   /**
