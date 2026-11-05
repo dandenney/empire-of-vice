@@ -1,7 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"]
+    // Tests and configs run in Node (Vitest, Playwright). Specs also type
+    // `window.__eov` and the page code they evaluate, so the DOM lib is included.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node", "vite/client"]
   },
-  "include": ["playwright.config.ts"]
+  "include": ["playwright.config.ts", "vite.config.ts", "vitest.config.ts", "tests"]
 }
