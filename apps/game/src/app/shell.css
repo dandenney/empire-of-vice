@@ -51,9 +51,9 @@ button[aria-pressed="true"] {
   gap: 16px;
 }
 
+/* Never narrower than its tables, so nothing is clipped; the map wraps below instead. */
 .panel {
   flex: 1 1 480px;
-  min-width: 0;
 }
 
 .map-slot {
