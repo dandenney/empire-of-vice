@@ -12,6 +12,7 @@
 import {
   addMoney,
   cents,
+  compareById,
   qualityRank,
   roundHalfUpToCent,
   subtractMoney,
@@ -153,14 +154,15 @@ function sumReserved(reservations: readonly ReservationState[], match: (r: Reser
   return total;
 }
 
-/**
- * Adds a reservation. Reservation IDs are minted in increasing order, so appending
- * keeps the list in ID-number order (see the PR's contract-gap note on ID ordering).
- */
+/** Adds a reservation, keeping the list in `compareIds` order (ADR 0008). */
 export function addReservation(state: GameState, reservation: ReservationState): GameState {
-  return { ...state, reservations: [...state.reservations, reservation] };
+  return { ...state, reservations: [...state.reservations, reservation].sort(compareById) };
 }
 
+/**
+ * Removes reservations from state. Doesn't report them: the caller emits
+ * RESERVATION_RELEASED (with its reason) in the same transaction.
+ */
 export function removeReservations(state: GameState, ids: readonly string[]): GameState {
   const remove = new Set(ids);
   return { ...state, reservations: state.reservations.filter((r) => !remove.has(r.id)) };

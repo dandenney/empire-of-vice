@@ -86,9 +86,16 @@ describe("Sprint Zero: one case of moonshine", () => {
     expect(afterProduction.revenue).toBe(0);
     expect(afterProduction.netIncome).toBe(0);
     expect(afterProduction.netWorth).toBe(openingNetWorth);
+    // Each consumed reservation is reported (issue #33), in the completion transaction.
     const completed = sim.takeEvents();
-    expect(typesOf(completed)).toEqual(["PRODUCTION_COMPLETED"]);
-    expect(completed[0]).toMatchObject({ costBasis: caseCost, quantity: 1, causedBy: null });
+    expect(typesOf(completed)).toEqual([...job.reservationIds.map(() => "RESERVATION_RELEASED"), "PRODUCTION_COMPLETED"]);
+    expect(completed.slice(0, -1)).toEqual(
+      job.reservationIds.map((reservationId) => expect.objectContaining({ reservationId, reason: "CONSUMED", causedBy: null })),
+    );
+    expect(completed.at(-1)).toMatchObject({ costBasis: caseCost, quantity: 1, causedBy: null });
+    const productionTx = sim.state.ledger.transactions.at(-1)!;
+    expect(productionTx.kind).toBe("PRODUCTION");
+    expect(productionTx.eventIds).toEqual(completed.map((e) => e.id));
 
     // 4. Dispatch the truck: a deal struck at dispatch (ADR 0005). Cost moves to goods in transit.
     const price = roadhouseQuote(sim.state);
@@ -146,7 +153,15 @@ describe("Sprint Zero: one case of moonshine", () => {
     advanceTo(resumed, returnAt + 60);
     expect(resumed.stateHash()).toBe(sim.stateHash());
     expect(sim.state.vehicles[0]!.trip).toBeNull();
-    expect(typesOf(resumed.takeEvents())).toEqual(["VEHICLE_RETURNED"]);
+    const returned = resumed.takeEvents();
+    expect(typesOf(returned)).toEqual(["VEHICLE_RETURNED"]);
+
+    // The return goes through the coordinator (issue #32): one VEHICLE_RETURN
+    // transaction, no ledger entries, keyed by the delivery.
+    const returnTx = resumed.state.ledger.transactions.at(-1)!;
+    expect(returnTx).toMatchObject({ kind: "VEHICLE_RETURN", idempotencyKey: "VEHICLE_RETURN:delivery-1", entries: [] });
+    expect(returnTx.eventIds).toEqual(returned.map((e) => e.id));
+    expectBalanced(resumed.state);
 
     // The resumed game keeps playing: the truck is free for a second sale.
     expectApplied(resumed.dispatch({ command: buyCorn(qtyOf(CORN)) }));

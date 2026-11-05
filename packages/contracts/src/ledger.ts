@@ -64,7 +64,9 @@ export type TransactionKind =
   /** Settling one installment, including any penalty. */
   | "INSTALLMENT_SETTLEMENT"
   | "RESERVATION"
-  | "ASSET_SALE";
+  | "ASSET_SALE"
+  /** A truck back at its home facility. Moves no money: an empty-entries transaction (ADR 0010). */
+  | "VEHICLE_RETURN";
 
 /**
  * One committed coordinator transaction (ADR 0010). The ledger log doubles as the

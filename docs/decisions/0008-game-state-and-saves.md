@@ -43,3 +43,9 @@ Balances and every report are derived from the log. An M001 campaign produces a 
 - This is the largest part of the contract, and the part most likely to have gaps. S0a and S0b are expected to find some. Their PRs list gaps, and fixes go through contract-change review, never inline (milestone 001).
 - Any change to `GameState` bumps `SAVE_SCHEMA_VERSION` and needs a migration (ADR 0009).
 - Snapshots are built from state plus game-data. `ContractTerms` in the snapshot extends the stored `ContractTermsData`, so the two can't diverge.
+
+#### Amendment, 2026-11-04 (issue #36, from #34): what "sorted by ID" means
+
+"Arrays sorted by ID" in state means sorted with **`compareIds`** from contracts, the same rule as the snapshot (see the ADR 0007 amendment): fixed-data IDs sort as text, and simulation-created IDs sort by prefix, then by numeric suffix (`res-9` before `res-10`). Lists of simulation-created records (reservations, production jobs, deliveries, contract offers, contracts) are kept in this order whenever a record is added.
+
+The order feeds the state hash, which is why it's defined once in contracts rather than by each system. For simulation-created IDs it matches creation order, which is what S0a already produced, so existing saves already follow it and the save schema version stays 1. Lists in `(tick, sequence)` order are unchanged.

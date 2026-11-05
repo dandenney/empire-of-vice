@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { day0Save, midGameSnapshot, opening, startOfGameSnapshot } from "../fixtures/index.ts";
-import { addMoney, gameEventSchema, ledgerTransactionSchema, subtractMoney, sumMoney, type GameSnapshot, type PeriodReport } from "../src/index.ts";
+import { addMoney, compareIds, gameEventSchema, ledgerTransactionSchema, subtractMoney, sumMoney, type GameSnapshot, type PeriodReport } from "../src/index.ts";
 
 const snapshots = [
   ["start of game", startOfGameSnapshot],
@@ -18,7 +18,7 @@ function checkPeriod(report: PeriodReport) {
 
 const sortedById = (items: readonly { id: string }[]) => {
   const ids = items.map((i) => i.id);
-  expect(ids).toEqual([...ids].sort());
+  expect(ids).toEqual([...ids].sort(compareIds));
 };
 
 describe.each(snapshots)("%s snapshot", (_name, snapshot: GameSnapshot) => {
@@ -62,6 +62,8 @@ describe.each(snapshots)("%s snapshot", (_name, snapshot: GameSnapshot) => {
     sortedById(snapshot.vehicles);
     sortedById(snapshot.market.suppliers);
     sortedById(snapshot.market.buyers);
+    sortedById(snapshot.contracts.offers);
+    sortedById(snapshot.contracts.active);
   });
 
   it("every location, route endpoint, and facility location exists", () => {

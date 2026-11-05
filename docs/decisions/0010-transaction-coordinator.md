@@ -69,3 +69,13 @@ Defining it here means T01 and S0b don't each invent one.
 - T02b implements the coordinator and its invariant checks, with property tests. Until then, S0a uses a thin stub with the same interface.
 - Systems never write the ledger or emit events directly. A reviewer can check this by looking for state changes outside `tx.update`.
 - A system that needs a new invariant or transaction kind requests a contract change.
+
+#### Amendment, 2026-11-04 (issue #36, from #32 and #33): a truck's return is a coordinated operation
+
+A vehicle getting home moves no money, and S0a cleared the trip and emitted `VEHICLE_RETURNED` outside the coordinator because no transaction kind fit. That broke the single path above. `VEHICLE_RETURN` is now a `TransactionKind`, and it's another example of an operation that moves no money but still commits through the coordinator:
+
+- The logistics system commits a `VEHICLE_RETURN` transaction with **no ledger entries**, keyed `VEHICLE_RETURN:<deliveryId>`, so a return applies once. The trip is cleared with `tx.update`, and `VEHICLE_RETURNED` is staged with `tx.emit`.
+- No system emits events outside the coordinator any more. Only the coordinator, and the kernel for its own command events, write to the event journal.
+- The kind is specific rather than a general "state change" kind, so the finance panel's transaction list can say what happened.
+
+In the same change (#33), `RESERVATION_RELEASED.reason` gained `CONSUMED`. A completing production job emits one `RESERVATION_RELEASED { reason: "CONSUMED" }` per reservation it uses up, in its `PRODUCTION` transaction, before `PRODUCTION_COMPLETED`. Removing reservations in state and reporting them as events now always happen together.

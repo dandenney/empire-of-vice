@@ -324,7 +324,8 @@ export type ReservationReleasedEvent = GameEventOf<
   "RESERVATION_RELEASED",
   {
     readonly reservationId: ReservationId;
-    readonly reason: "PLAYER" | "CONTRACT_ENDED" | "PRODUCTION_FAILED" | "DELIVERY_FAILED";
+    /** `CONSUMED`: the holder used the goods up (a production job completing). Emitted in the holder's transaction. */
+    readonly reason: "PLAYER" | "CONTRACT_ENDED" | "PRODUCTION_FAILED" | "DELIVERY_FAILED" | "CONSUMED";
   }
 >;
 
