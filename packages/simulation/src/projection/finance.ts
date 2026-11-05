@@ -1,9 +1,9 @@
-// S0 stub: extended by T02b (FIN-001 ledger and reports).
+// FIN-001 finance reports (T02b, issue #6).
 //
 // The finance section of the snapshot, derived from the ledger log on every
 // projection (ADR 0008: reports are computed, never stored). Profit comes from
 // revenue, COGS, expense, and gain accounts; cash flow from CASH entries,
-// categorized by the transaction's kind.
+// attributed per transaction by ADR 0015 (below).
 //
 // Periods (SIM-001): a game day runs from just after one midnight tick through
 // the next, so a midnight settlement belongs to the day it closes. A period
@@ -13,9 +13,12 @@
 // included in the open periods (today and to date) so the money it moved shows
 // up at once.
 //
-// Stub limits (T02b): production's labor and overhead are booked as one cash
-// payment, so its cash flow is all WAGES; cash flow categories come from the
-// transaction kind, not from a split of mixed transactions.
+// Cash flow attribution (ADR 0015): a transaction's net cash movement is filed
+// under the category of its non-cash accounts when they all map to one category
+// (ACCOUNT_CATEGORY); otherwise, including when any non-cash account has no
+// category, under the kind's default (CASH_FLOW_CATEGORY). Never split, so no
+// rounding. Production's capitalized conversion cost (Dr FINISHED_GOODS, which
+// has no category) stays under the PRODUCTION default, WAGES.
 
 import {
   addMoney,
@@ -39,7 +42,7 @@ import {
   type Tick,
   type TransactionKind,
 } from "@eov/contracts";
-import { accountBalances, type AccountBalances } from "../economy/ledger/ledger.ts";
+import { accountBalances, ledgerBalances, type AccountBalances } from "../economy/ledger/ledger.ts";
 
 /**
  * Ledger transactions included per snapshot. A UI payload size, not a gameplay
@@ -67,7 +70,26 @@ const CASH_FLOW_ORDER: readonly CashFlowCategory[] = [
   "PENALTIES",
 ];
 
-/** Where each kind of transaction's cash movement is reported. null: it never moves cash in a period. */
+/** ADR 0015: the cash flow category of each non-cash account that has one. */
+const ACCOUNT_CATEGORY: Readonly<Partial<Record<LedgerAccount, CashFlowCategory>>> = {
+  WAGES_EXPENSE: "WAGES",
+  WAGES_PAYABLE: "WAGES",
+  OVERHEAD_EXPENSE: "OVERHEAD",
+  PENALTY_EXPENSE: "PENALTIES",
+  PENALTIES_PAYABLE: "PENALTIES",
+  TRANSPORT_EXPENSE: "TRANSPORT",
+  SALES_REVENUE: "SALES",
+  RAW_MATERIALS: "MATERIALS",
+  EQUIPMENT: "EQUIPMENT",
+  VEHICLES: "EQUIPMENT",
+  FACILITIES: "EQUIPMENT",
+  GAIN_ON_ASSET_SALE: "ASSET_SALES",
+};
+
+/**
+ * The kind's default category, used when a transaction's non-cash accounts don't
+ * agree on one (ADR 0015). null: the kind never moves cash in a period.
+ */
 const CASH_FLOW_CATEGORY: Readonly<Record<TransactionKind, CashFlowCategory | null>> = {
   OPENING_BALANCE: null,
   MATERIAL_PURCHASE: "MATERIALS",
@@ -99,6 +121,18 @@ function cashMovement(transaction: LedgerTransaction): Money {
   return net;
 }
 
+/** ADR 0015: the one category all non-cash accounts share, else the kind's default. */
+function cashFlowCategoryOf(transaction: LedgerTransaction): CashFlowCategory | null {
+  let shared: CashFlowCategory | null = null;
+  for (const e of transaction.entries) {
+    if (e.account === "CASH") continue;
+    const category = ACCOUNT_CATEGORY[e.account];
+    if (category === undefined || (shared !== null && shared !== category)) return CASH_FLOW_CATEGORY[transaction.kind];
+    shared = category;
+  }
+  return shared ?? CASH_FLOW_CATEGORY[transaction.kind];
+}
+
 export function incomeStatement(balances: AccountBalances): IncomeStatement {
   const revenue = balances.SALES_REVENUE;
   const costOfGoodsSold = balances.COST_OF_GOODS_SOLD;
@@ -114,7 +148,7 @@ export function cashFlowStatement(openingCash: Money, transactions: readonly Led
   for (const t of transactions) {
     const moved = cashMovement(t);
     if (moved === 0) continue;
-    const category = CASH_FLOW_CATEGORY[t.kind];
+    const category = cashFlowCategoryOf(t);
     if (category === null) throw new FinanceProjectionError(`${t.id} (${t.kind}) moved cash in a reporting period`);
     totals.set(category, addMoney(totals.get(category)!, moved));
   }
@@ -154,7 +188,7 @@ export function balanceSheetOf(balances: AccountBalances): BalanceSheet {
 
 export function projectFinance(state: GameState): FinanceSnapshot {
   const all = state.ledger.transactions;
-  const sheet = balanceSheetOf(accountBalances(all));
+  const sheet = balanceSheetOf(ledgerBalances(all));
   const now = state.tick;
   const today = dayIndex(now);
   const dayStart = tick(today * TICKS_PER_DAY);

@@ -1,10 +1,30 @@
-// S0 stub: extended by T02b.
+// FIN-001 ledger (T02b): balances, the balance sheet, and the standard postings.
 export {
   accountBalances,
+  appendTransaction,
   balanceSheet,
+  balanceSheetOfBalances,
   cashBalance,
   entryTotals,
   isDebitNormal,
+  ledgerBalances,
   type AccountBalances,
   type BalanceSheet,
 } from "./ledger.ts";
+export {
+  cargoLossEntries,
+  dispatchEntries,
+  equipmentPurchaseEntries,
+  impairmentEntries,
+  materialPurchaseEntries,
+  payDownEntries,
+  payOrAccrueEntries,
+  productionEntries,
+  productionWriteOffEntries,
+  returnFromTransitEntries,
+  saleEntries,
+  type ExpenseAccount,
+  type PayOrAccrueCharge,
+  type ProductionCosts,
+  type SaleAmounts,
+} from "./postings.ts";
