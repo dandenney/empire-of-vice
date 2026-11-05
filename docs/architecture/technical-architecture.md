@@ -150,14 +150,14 @@ If any step fails validation, none commit.
 
 ## 6. Factory operating rules
 
-1. **Contracts first.** Agents don't invent domain types or command payloads. Contract changes need CODEOWNER review.
+1. **Contracts first.** Agents don't invent domain types or command payloads. Contract changes need review-agent approval.
 2. **One task, one owner.** Parallel tasks use separate worktrees and declared file ownership.
 3. **Tests are deliverables.** Compiling isn't done.
 4. **Continuous integration.** Merge small vertical increments, not giant branches at the end.
 5. **Centralized configuration.** Gameplay values live in `game-data`.
 6. **No silent scope expansion.** Agents propose. They don't implement unrelated systems.
 
-A human merges every PR at first. See [`docs/factory.md`](../factory.md).
+PRs auto-merge after CI and review-agent approval. The human decides story and visual direction. See [`docs/factory.md`](../factory.md) §5 and §8.
 
 ## 7. Milestone 001 release gate
 
