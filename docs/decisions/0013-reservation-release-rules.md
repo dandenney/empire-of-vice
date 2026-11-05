@@ -40,4 +40,4 @@ Removal for a sale or a transfer (`takeProduct`, `takeMaterial`) takes unreserve
 
 #### Amendment, 2026-11-05 (ADR 0017, issue #7): a failed job's write-off includes its conversion cost
 
-Rule 4 still applies to the inputs, which are consumed at weighted-average cost and reported with `PRODUCTION_FAILED`. A failed job is also charged its labor and overhead, as a completed one would be, and the whole amount is written off to `LOSSES`. `ProductionFailedEvent.writtenOff` is therefore materials plus conversion: the `LOSSES` debit of the `PRODUCTION_WRITE_OFF` transaction.
+This replaces rule 4's last clause, the write-off amount. The rest of rule 4 is unchanged: the inputs are consumed at weighted-average cost and reported with `PRODUCTION_FAILED`. A failed job is also charged its labor and overhead, as a completed one would be, and the whole amount is written off to `LOSSES`. `ProductionFailedEvent.writtenOff` is therefore materials plus conversion: the `LOSSES` debit of the `PRODUCTION_WRITE_OFF` transaction.
