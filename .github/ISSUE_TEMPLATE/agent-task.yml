@@ -1,6 +1,6 @@
 name: Agent task
 description: A scoped implementation task for the software factory
-labels: ["needs-design"]
+labels: []
 body:
   - type: input
     id: task-id

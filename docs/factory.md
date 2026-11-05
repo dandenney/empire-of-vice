@@ -75,23 +75,23 @@ Every PR includes:
 
 There are no protected paths. Contracts, decision records, CI config, `CLAUDE.md`, and this file all merge the same way, after review-agent approval.
 
-**Story and visual-direction PRs go to the human.** A PR whose main purpose is a story or visual-direction decision (§8), such as player-facing text, names, setting, tone, or the look of the UI and map, gets `ready-for-human` once it has green CI and a review-agent approval of its latest commit. The orchestrator notifies the human. **Humans merge only PRs labelled `ready-for-human`**, or human PRs (below). The label stays only while the **latest verdict on the head SHA is APPROVE**. A new commit, or a later REQUEST_CHANGES on the same SHA, removes it.
+**Story and visual-direction PRs go to the human.** A PR whose main purpose, as the orchestrator judges it, is a story or visual-direction decision (§8), such as player-facing text, names, setting, tone, or the look of the UI and map, gets `ready-for-human` once it has green CI and a review-agent approval of its latest commit. The orchestrator notifies the human. **Humans merge only PRs labelled `ready-for-human`**, or human PRs (below). The label stays only while the **latest verdict on the head SHA is APPROVE**. A new commit, or a later REQUEST_CHANGES on the same SHA, removes it.
 
-A PR that fails any other criterion doesn't merge: it goes back for a fix round (§7.5), or gets `needs-human` when §7.7 says so.
+A PR that fails any auto-merge criterion above doesn't merge: it goes back for a fix round (§7.5), or gets `needs-human` when §7.7 says so.
 
 **Approval carry-over (the one exception to "approved this commit").** When the orchestrator merges `main` into a PR branch and the merge changes none of the files in the PR's diff, the approval carries over to the new SHA, and the orchestrator records that in a PR comment. If the merge touches any file in the PR's diff, the PR is reviewed again.
 
 Every PR comes from the same GitHub account, so the orchestrator tells PRs apart by **markers it writes itself**:
 
 - **Agent PR:** its body has `Closes #N`, and issue #N has a comment whose first line starts with `Orchestrator: dispatched` (§7.3).
-- **Orchestrator PR:** a PR the orchestrator opened itself (metrics updates, rule changes, contract-change PRs). Its body's first line is `Orchestrator PR`.
+- **Orchestrator PR:** a PR the orchestrator opened itself (metrics updates, rule changes). Its body's first line is `Orchestrator PR`.
 - **Human PR:** anything else. The orchestrator neither reviews nor merges it unless asked.
 
 Agent PRs and orchestrator PRs follow the same review and merge rules: review, then auto-merge, or `ready-for-human` for story and visual-direction PRs. The one exception is metrics-only PRs (§7.6), which auto-merge on green CI without a review.
 
 **If a PR merges before review anyway,** the orchestrator still runs the review on the merged commit. Any findings become a follow-up issue linked to the PR, and the metrics row records it under "Merged before review" (§6).
 
-**Tightening rule:** if an auto-merged PR has to be reverted or causes a regression, the orchestrator pauses auto-merge (all merges become human) until the cause is understood and the criteria are changed in this file.
+**Tightening rule:** if an auto-merged PR has to be reverted or causes a regression, the orchestrator pauses auto-merge (every PR then waits for a human merge, as if it carried `ready-for-human`) until the cause is understood and the criteria are changed in this file.
 
 ## 6. Factory metrics
 
@@ -144,7 +144,11 @@ Start an implementing agent for an `agent-ready` issue when:
 
 When several issues qualify, start them in issue-number order.
 
-The orchestrator posts a comment on the issue whose **first line is** `Orchestrator: dispatched <branch>`. That marker is how the agent's PR is recognized later (§5). The agent runs in its own git worktree, on a branch named after the issue (`t01b-command-log`), with the standard prompt: read the issue, `CLAUDE.md`, this file, and the referenced docs; stay inside owned files; report contract gaps instead of editing contracts; open a PR with the §4 evidence; never merge. The issue gets `in-progress`.
+The orchestrator posts a comment on the issue whose **first line is** `Orchestrator: dispatched <branch>`. That marker is how the agent's PR is recognized later (§5). The agent runs in its own git worktree, on a branch named after the issue (`t01b-command-log`), with the standard prompt: read the issue, `CLAUDE.md`, this file, and the referenced docs; stay inside owned files; report contract gaps instead of editing contracts, unless the issue owns contract files (below); open a PR with the §4 evidence; never merge. The issue gets `in-progress`.
+
+**Contract changes are ordinary agent tasks.** The orchestrator decides the change first (§8), in an ADR when it shapes more than one task, then writes an issue that lists the affected `packages/contracts/**` files under owned files. The agent dispatched for that issue may edit those files; every other agent still may not. The PR follows the normal review and auto-merge rules.
+
+When `main` has moved and a PR branch needs it, the implementing agent merges `main` into its branch and resolves any conflicts (§5).
 
 If the agent stops with a question instead of a PR, it comments the question on the issue and `in-progress` comes off. The orchestrator answers it under §8 and the issue goes back to `agent-ready`, or, for a story or visual-direction question, it gets `needs-design`.
 
@@ -156,7 +160,7 @@ When an agent PR's or orchestrator PR's CI finishes:
 - **CI passed:** a **fresh review agent** reviews the latest commit. The orchestrator starts it for agent PRs and orchestrator PRs alike, so the orchestrator never reviews its own PRs. It checks:
   - every changed file is in the owned files
   - each acceptance criterion has evidence (a test, output, or screenshot)
-  - contract types are used as defined, with no parallel types and no edits to contracts
+  - contract types are used as defined, with no parallel types, and no edits to contracts unless the issue owns those contract files
   - the `CLAUDE.md` rules (determinism, money, game-data, atomic commands, UI state)
   - tests exercise the behavior, rather than only executing it
   - any "contract gaps" or "left out" items are real gaps, not shortcuts
@@ -180,7 +184,7 @@ When the review requests changes, the implementing agent (the orchestrator, for 
 
 - The linked issue closes (`Closes #N`), and `in-progress` comes off.
 - **Metrics:** the orchestrator appends the task's row to the metrics table, in an orchestrator PR (§5) that changes only that table. Such PRs auto-merge on green CI.
-- **Contract gaps** the PR listed become new issues: a contract-change task if they need one, otherwise planned issues with the affected task named.
+- **Contract gaps** the PR listed become new issues: a contract-change task (§7.3) if they need one, otherwise planned issues with the affected task named.
 - **Follow-ups:** each item under "left out" that names an owner task is copied to that task's issue as a comment, so its refresh picks it up.
 - The loop runs again immediately, because the merge may have unblocked other issues.
 
@@ -190,7 +194,7 @@ The human is notified (push notification, and a comment that mentions them) when
 
 - an issue gets `needs-design` (a story or visual-direction question, or stuck work),
 - a PR gets `ready-for-human` (a story or visual-direction PR),
-- a PR gets `needs-human`: round cap reached, CI failed twice in a row with the same error after a fix attempt, a rebase conflict the agent couldn't resolve, or a review finding the implementing agent disputes, or
+- a PR gets `needs-human`: round cap reached, CI failed twice in a row with the same error after a fix attempt, a conflict from merging `main` that the implementing agent couldn't resolve, or a review finding the implementing agent disputes, or
 - auto-merge was paused by the tightening rule (§5).
 
 Everything else proceeds without asking. A human resolves an escalation by answering on the issue or PR and removing the label. The next loop run picks it up from there.
