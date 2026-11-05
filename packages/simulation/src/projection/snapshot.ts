@@ -167,8 +167,7 @@ function recipeOption(state: GameState, facility: FacilityState, recipe: RecipeD
     productId: recipe.productId,
     quality: recipe.quality,
     inputsPerCase: recipe.inputsPerCase.map((i) => ({ materialId: i.materialId, quantity: i.quantity })),
-    // S0 stub (T02c): recipes are timed per case; a "batch" here is one case.
-    ticksPerBatch: recipe.ticksPerCase,
+    ticksPerCase: recipe.ticksPerCase,
     maxStartableQuantity,
     blockedBy,
   };
