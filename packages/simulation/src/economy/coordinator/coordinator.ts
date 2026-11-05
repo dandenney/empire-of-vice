@@ -1,4 +1,4 @@
-// S0 stub: extended by T02b (ADR 0010, FIN-001 atomic economic operations).
+// Transaction coordinator (ADR 0010, FIN-001 atomic economic operations; T02b, issue #6).
 //
 // Implements `TransactionCoordinator` from contracts. A draft stages changes on a
 // private copy of the state; nothing reaches the caller until `commit` returns
@@ -12,7 +12,10 @@
 // - Idempotency: the ledger log is the record of applied operations. A key that's
 //   already in it makes `begin` return `duplicate`.
 // - Invariants: checked on the staged state at commit. A violation throws
-//   InvariantViolationError: it's a bug, not a gameplay outcome.
+//   InvariantViolationError: it's a bug, not a gameplay outcome. The staged log
+//   is built with `appendTransaction`, so the balances the checks read are the
+//   previous log's memoized balances extended by this transaction (O(entries)),
+//   never a recompute of the whole log.
 
 import {
   InvariantViolationError,
@@ -33,6 +36,7 @@ import {
 } from "@eov/contracts";
 import { emitEvent } from "../../events/journal.ts";
 import { allocateId, formatId } from "../../kernel/ids.ts";
+import { appendTransaction } from "../ledger/ledger.ts";
 import { checkInvariants } from "./invariants.ts";
 
 export class CoordinatorError extends Error {
@@ -101,9 +105,11 @@ class Draft implements TransactionDraft {
       entries: [...this.#entries],
       eventIds: [...this.#eventIds],
     };
+    // Incremental (issue #6, decision 2): the new log's balances are the staged
+    // log's memoized balances plus this transaction's entries, not a recompute.
     const state: GameState = {
       ...this.#state,
-      ledger: { ...this.#state.ledger, transactions: [...this.#state.ledger.transactions, transaction] },
+      ledger: { ...this.#state.ledger, transactions: appendTransaction(this.#state.ledger.transactions, transaction) },
     };
     return { state, transaction };
   }
