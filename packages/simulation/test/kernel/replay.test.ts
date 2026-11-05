@@ -169,9 +169,61 @@ function checkRun(steps: readonly Step[], tail: number, catchUp: readonly boolea
   return trailing.length;
 }
 
+/** The start state's envelopes: they head the replayed log, ahead of anything a run dispatches. */
+const startEnvelopes = day0State.commandLog.length + day0State.queuedCommands.length;
+
+interface FixedRun {
+  readonly steps: readonly Step[];
+  readonly tail: number;
+  readonly catchUp: readonly boolean[];
+}
+
+/**
+ * Fixed runs that reach every path counted in `Seen` (issue #64), so the coverage
+ * check doesn't depend on what the unseeded random runs happen to generate.
+ */
+const coverageRuns: Readonly<Record<string, FixedRun>> = {
+  // A dispatch-time rejection, an immediate apply, and a queued command.
+  dispatchKinds: {
+    steps: [
+      { kind: "dispatch", command: setWorkforce(FACILITIES[0]!, -1), when: { kind: "now" } },
+      { kind: "dispatch", command: setWorkforce(FACILITIES[0]!, 2), when: { kind: "now" } },
+      { kind: "dispatch", command: setWorkforce(FACILITIES[1]!, 3), when: { kind: "offset", n: 10 } },
+    ],
+    tail: 0,
+    catchUp: [],
+  },
+  // Two commands queued for tick 2,500 (after the start state's queue): a valid one,
+  // then one for an unknown facility, which the original run rejects when it
+  // applies. They're the last two envelopes in the log. The incremental replay
+  // queues the first and catches up only for the second, so the second applies at
+  // once, drains its queued sibling ahead of itself, and is `rejected-on-apply`.
+  applyRejectedAfterDrain: {
+    steps: [
+      { kind: "dispatch", command: setWorkforce(FACILITIES[0]!, 4), when: { kind: "at", tick: 2_500 } },
+      { kind: "dispatch", command: setWorkforce(unknownFacility, 1), when: { kind: "at", tick: 2_500 } },
+    ],
+    tail: 0,
+    catchUp: [...Array<boolean>(startEnvelopes + 1).fill(false), true],
+  },
+};
+
+function runCoverageRuns(seen: Seen): void {
+  for (const { steps, tail, catchUp } of Object.values(coverageRuns)) checkRun(steps, tail, catchUp, seen);
+}
+
 describe("command log replay (T01b)", () => {
-  it("holds every command accepted at dispatch, and replaying it reproduces the hash and the events", () => {
+  it("reaches every counted path with the fixed coverage runs alone (issue #64)", () => {
     const seen = newSeen();
+    runCoverageRuns(seen);
+    for (const [path, count] of Object.entries(seen)) expect(count, path).toBeGreaterThan(0);
+  });
+
+  it("holds every command accepted at dispatch, and replaying it reproduces the hash and the events", () => {
+    // The fixed coverage runs count too, so every path is reached whatever the
+    // random runs generate (issue #64). The random runs stay unseeded.
+    const seen = newSeen();
+    runCoverageRuns(seen);
 
     fc.assert(
       fc.property(
@@ -186,10 +238,10 @@ describe("command log replay (T01b)", () => {
       { numRuns: 200 },
     );
 
-    // The generator really did mix every kind of command, and the incremental
-    // replay really did reach the eager `rejected-on-apply` path, including with
+    // Together, the fixed and random runs mixed every kind of command, and the
+    // incremental replay reached the eager `rejected-on-apply` path, including with
     // queued commands drained ahead of the failing envelope.
-    for (const count of Object.values(seen)) expect(count).toBeGreaterThan(0);
+    for (const [path, count] of Object.entries(seen)) expect(count, path).toBeGreaterThan(0);
   });
 
   // Issue #66, found by fast-check seed 1715386024, path "171:2:0:3:2:51:50:50:50".

@@ -23,7 +23,7 @@ describe("game-data definitions", () => {
     const d = GAME_DATA;
     for (const r of d.recipes) {
       expect(has(d.products, r.productId)).toBe(true);
-      expect(has(d.equipment, r.requiredEquipmentId)).toBe(true);
+      for (const e of r.requiredEquipmentIds) expect(has(d.equipment, e)).toBe(true);
       for (const input of r.inputsPerCase) expect(has(d.materials, input.materialId)).toBe(true);
     }
     for (const m of d.markets) expect(has(d.products, m.productId)).toBe(true);
