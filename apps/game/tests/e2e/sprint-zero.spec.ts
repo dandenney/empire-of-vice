@@ -1,13 +1,15 @@
-// Sprint Zero in a real browser (S0b, issue #16): the S0a path through the
-// worker gateway, driven by the placeholder buttons.
+// Sprint Zero in a real browser (S0b #16, ported to the React shell in T04a #11):
+// the S0a path through the worker gateway.
 //
 //   Create game → Buy ingredients → Produce one case → Dispatch truck →
 //   Deliver → Sell → Record profit → Save → Reload → continue
 //
-// Tick counts for "Advance N ticks" are read from the snapshot on
-// `window.__eov`, the same way a player reads the job and trip timings. The
-// commands and ticks match tools/economy-lab/src/sprint-zero.ts, so the final
-// state hash must equal the headless run's.
+// The game starts paused and stays paused. Commands go through
+// `window.__eov.dispatchRaw` and ticks through `window.__eov.advance`, which
+// runs exactly the ticks asked for (ADR 0014 decision 7). The commands and
+// ticks match tools/economy-lab/src/sprint-zero.ts, so the final state hash
+// must equal the headless run's. New game, Save, and Reload save are the
+// shell's buttons; the figures are checked in the Dashboard.
 
 import { expect, test, type Page } from "@playwright/test";
 import type { EovTestHook } from "../../src/app/test-hook.ts";
@@ -28,18 +30,28 @@ async function snapshot(page: Page): Promise<Snapshot> {
 
 const stateHash = (page: Page) => page.evaluate(() => window.__eov?.stateHash ?? null);
 
-/** Clicks a button and waits until the UI is idle again (buttons are disabled while a request runs). */
+/** Clicks a shell button and waits until the shell is idle again (its buttons are disabled while a request runs). */
 async function press(page: Page, testId: string): Promise<void> {
   await page.getByTestId(testId).click();
   await expect(page.getByTestId("new-game")).toBeEnabled();
 }
 
+async function dispatch(page: Page, request: unknown): Promise<void> {
+  const outcome = await page.evaluate((r) => window.__eov!.dispatchRaw(r), request);
+  expect(outcome, JSON.stringify(request)).toMatchObject({ kind: "result", result: { status: "applied" } });
+}
+
 async function advanceTo(page: Page, target: number): Promise<void> {
   const ticks = target - (await snapshot(page)).clock.tick;
   expect(ticks).toBeGreaterThan(0);
-  await page.getByTestId("ticks").fill(String(ticks));
-  await press(page, "advance");
+  await page.evaluate((n) => window.__eov!.advance(n), ticks);
   expect((await snapshot(page)).clock.tick).toBe(target);
+}
+
+/** The truck's drawn position, once the map has drawn the latest snapshot. */
+async function truckPosition(page: Page, tick: number) {
+  await expect.poll(() => page.getByTestId("map").getAttribute("data-tick")).toBe(String(tick));
+  return page.evaluate(() => window.__eov!.scene.find((s) => s.kind === "VEHICLE")!.position);
 }
 
 test("plays the Sprint Zero path through the worker and matches the headless hash after save → reload", async ({ page }) => {
@@ -47,29 +59,35 @@ test("plays the Sprint Zero path through the worker and matches the headless has
   await expect(page.getByTestId("new-game")).toBeEnabled();
   expect(await page.evaluate(() => window.__eov?.snapshot ?? null)).toBeNull();
 
-  // Create game
+  // Create game: paused, at tick 0.
   await press(page, "new-game");
   const start = await snapshot(page);
   expect(start.clock.tick).toBe(0);
-  await expect(page.getByTestId("cash")).toHaveText("$1,000.00");
+  expect(await page.evaluate(() => window.__eov!.scheduler)).toEqual({ speed: 0, autoPaused: false });
+  await expect(page.getByTestId("dashboard-cash")).toHaveText("$1,000.00");
   const distillery = start.facilities.find((f) => f.kind === "DISTILLERY")!;
-  expect(distillery.recipes[0]!.blockedBy).not.toBeNull();
-  await expect(page.getByTestId("produce")).toBeDisabled();
+  const recipe = distillery.recipes[0]!;
+  expect(recipe.blockedBy).not.toBeNull();
 
-  // Placeholder shapes: the distillery, the supplier, the buyers, and the truck.
+  // Placeholder shapes in the map slot: the distillery, the supplier, the buyers, and the truck.
   for (const shape of ["facility", "supplier", "buyer", "vehicle"]) {
     await expect(page.locator(`[data-testid=map] [data-shape=${shape}]`).first()).toBeVisible();
   }
   await expect(page.locator("[data-testid=map] [data-shape=buyer]")).toHaveCount(start.market.buyers.length);
 
-  // Buy ingredients
-  await press(page, "buy");
+  // Buy ingredients: one case's worth of each input, from the supplier that sells it.
+  for (const input of recipe.inputsPerCase) {
+    const supplier = start.market.suppliers.find((s) => s.materials.some((m) => m.materialId === input.materialId))!;
+    await dispatch(page, {
+      command: { type: "PURCHASE_MATERIALS", supplierId: supplier.id, materialId: input.materialId, quantity: input.quantity, facilityId: distillery.id },
+    });
+  }
   const bought = await snapshot(page);
-  expect(bought.facilities[0]!.materials.map((m) => m.quantity)).toEqual(distillery.recipes[0]!.inputsPerCase.map((i) => i.quantity));
+  expect(bought.facilities[0]!.materials.map((m) => m.quantity)).toEqual(recipe.inputsPerCase.map((i) => i.quantity));
   expect(bought.facilities[0]!.recipes[0]!.blockedBy).toBeNull();
 
   // Produce one case
-  await press(page, "produce");
+  await dispatch(page, { command: { type: "START_PRODUCTION", facilityId: distillery.id, recipeId: recipe.recipeId, quantity: 1 } });
   const producing = await snapshot(page);
   expect(producing.productionJobs).toHaveLength(1);
   await advanceTo(page, producing.productionJobs[0]!.completesAt);
@@ -79,18 +97,26 @@ test("plays the Sprint Zero path through the worker and matches the headless has
 
   // Dispatch the truck to the first buyer (the headless run's), at today's quote.
   const buyer = produced.market.buyers[0]!;
-  await page.getByTestId("buyer").selectOption(buyer.id);
-  await press(page, "dispatch");
+  const pool = produced.facilities[0]!.products[0]!;
+  await dispatch(page, {
+    command: {
+      type: "DISPATCH_DELIVERY",
+      vehicleId: produced.vehicles[0]!.id,
+      cargo: [{ productId: pool.productId, quality: pool.quality, quantity: 1 }],
+      purpose: { kind: "SALE", buyerId: buyer.id, agreedUnitPrice: buyer.wants[0]!.unitPrice },
+      routeId: null,
+    },
+  });
   const dispatched = await snapshot(page);
   const outbound = dispatched.vehicles[0]!.trip!;
   expect(outbound.leg).toBe("OUTBOUND");
   expect(outbound.purpose).toEqual({ kind: "SALE", buyerId: buyer.id, agreedUnitPrice: buyer.wants[0]!.unitPrice });
-  const parked = await page.evaluate(() => window.__eov!.scene.find((s) => s.kind === "VEHICLE")!.position);
+  const parked = await truckPosition(page, dispatched.clock.tick);
 
   // Deliver and sell: halfway there, the truck is drawn between home and the buyer.
-  await advanceTo(page, outbound.departedAt + Math.floor((outbound.arrivesAt - outbound.departedAt) / 2));
-  const moving = await page.evaluate(() => window.__eov!.scene.find((s) => s.kind === "VEHICLE")!.position);
-  expect(moving).not.toEqual(parked);
+  const halfway = outbound.departedAt + Math.floor((outbound.arrivesAt - outbound.departedAt) / 2);
+  await advanceTo(page, halfway);
+  expect(await truckPosition(page, halfway)).not.toEqual(parked);
   await advanceTo(page, outbound.arrivesAt);
   const sold = await snapshot(page);
   expect(sold.vehicles[0]!.trip!.leg).toBe("RETURN");
@@ -98,8 +124,8 @@ test("plays the Sprint Zero path through the worker and matches the headless has
 
   // Record profit: $14.00 revenue − $11.00 cost of goods = $3.00.
   expect(sold.finance.toDate.profit).toMatchObject({ revenue: 1_400, costOfGoodsSold: 1_100, netProfit: 300 });
-  await expect(page.getByTestId("revenue")).toHaveText("$14.00");
-  await expect(page.getByTestId("profit")).toHaveText("$3.00");
+  await expect(page.getByTestId("dashboard-revenue-toDate")).toHaveText("$14.00");
+  await expect(page.getByTestId("dashboard-profit-toDate")).toHaveText("$3.00");
 
   // Save, reload the page, and reload the save.
   await press(page, "save");
@@ -113,13 +139,14 @@ test("plays the Sprint Zero path through the worker and matches the headless has
   expect(reloaded.clock.tick).toBe(sold.clock.tick);
   expect(await stateHash(page)).toBe(savedHash);
   expect(reloaded).toEqual(sold);
+  expect(await page.evaluate(() => window.__eov!.scheduler.speed)).toBe(0);
 
   // Continue until the truck is home: the same tick and commands as the headless run.
   await advanceTo(page, reloaded.vehicles[0]!.trip!.arrivesAt);
   const home = await snapshot(page);
   expect(home.vehicles[0]!.trip).toBeNull();
   expect(home.finance.toDate.profit.netProfit).toBe(300);
-  await expect(page.getByTestId("profit")).toHaveText("$3.00");
+  await expect(page.getByTestId("dashboard-profit-toDate")).toHaveText("$3.00");
   expect(await stateHash(page)).toBe(HEADLESS_HASH);
   await expect(page.getByTestId("state-hash")).toHaveText(HEADLESS_HASH);
 });

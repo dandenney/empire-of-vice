@@ -1,0 +1,116 @@
+/*
+ * PLACEHOLDER: visual direction pending #48.
+ * Only what's needed to be usable: system font, browser defaults, a two-column
+ * body. No palette, typeface, or layout style has been chosen.
+ */
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: #fff;
+  color: #000;
+}
+
+.shell {
+  padding: 8px 16px;
+}
+
+.shell-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.shell-header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.speed,
+.game-buttons,
+.panel-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.panel-nav {
+  margin: 8px 0;
+}
+
+button[aria-pressed="true"] {
+  font-weight: bold;
+}
+
+.shell-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+/* Never narrower than its tables, so nothing is clipped; the map wraps below instead. */
+.panel {
+  flex: 1 1 480px;
+}
+
+.map-slot {
+  flex: 0 1 640px;
+  max-width: 100%;
+}
+
+.map-slot svg {
+  max-width: 100%;
+  height: auto;
+}
+
+table {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+caption {
+  text-align: left;
+  font-weight: bold;
+}
+
+th,
+td {
+  border: 1px solid #ccc;
+  padding: 2px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+td {
+  font-variant-numeric: tabular-nums;
+}
+
+tr.total th,
+tr.total td {
+  font-weight: bold;
+}
+
+td ul,
+td p {
+  margin: 0;
+  padding-left: 16px;
+}
+
+/* Map clicks select locations; a parked truck or a label mustn't swallow them. */
+.map-slot [data-shape] {
+  cursor: pointer;
+}
+
+.map-slot [data-shape="vehicle"],
+.map-slot text {
+  pointer-events: none;
+}
+
+.statements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
