@@ -3,6 +3,8 @@
 //
 // It keeps the latest snapshot only to render it (architecture §4: read-only
 // projections). It never edits it, and nothing here computes game values.
+// React reads `view` through `subscribe` (useSyncExternalStore), not through a
+// store of its own (CLAUDE.md rule 7, ADR 0014 decision 10).
 // Saves go through @eov/persistence: the worker serializes, persistence wraps,
 // hashes, and stores the SaveFile; on load, persistence checks schema and hash
 // before the SaveGame goes back to the worker.
@@ -10,6 +12,7 @@
 import type { CommandResult, GameEvent, GameSnapshot, SaveLoadError, SaveMeta } from "@eov/contracts";
 import { readSave, writeSave, type StorageAdapter } from "@eov/persistence";
 import type { RequestId, WorkerMessage, WorkerRequest, WorkerResponse } from "../workers/protocol.ts";
+import { PAUSED_STATUS, type SchedulerStatus, type Speed } from "../workers/scheduler.ts";
 
 export type DispatchOutcome =
   | { readonly kind: "result"; readonly result: CommandResult }
@@ -20,6 +23,10 @@ export type LoadOutcome = { readonly ok: true } | { readonly ok: false; readonly
 export interface GatewayView {
   readonly snapshot: GameSnapshot | null;
   readonly stateHash: string | null;
+  /** The worker's speed scheduler, as of the last snapshot. */
+  readonly scheduler: SchedulerStatus;
+  /** The last scheduler fault (the game paused itself), or null. */
+  readonly fault: string | null;
 }
 
 type Distribute<T> = T extends unknown ? Omit<T, "requestId"> : never;
@@ -38,7 +45,7 @@ export class GatewayClient {
   readonly #snapshotListeners = new Set<(view: GatewayView) => void>();
   readonly #eventListeners = new Set<(events: readonly GameEvent[], importance: "notify" | "log") => void>();
   #nextRequestId: RequestId = 1;
-  #view: GatewayView = { snapshot: null, stateHash: null };
+  #view: GatewayView = { snapshot: null, stateHash: null, scheduler: PAUSED_STATUS, fault: null };
 
   constructor(worker: Worker, storage: StorageAdapter) {
     this.#worker = worker;
@@ -49,6 +56,11 @@ export class GatewayClient {
   get view(): GatewayView {
     return this.#view;
   }
+
+  /** For useSyncExternalStore: `view` is a new object only when something changed. */
+  readonly subscribe = (listener: () => void): (() => void) => this.onSnapshot(listener);
+
+  readonly getView = (): GatewayView => this.#view;
 
   onSnapshot(listener: (view: GatewayView) => void): () => void {
     this.#snapshotListeners.add(listener);
@@ -62,6 +74,7 @@ export class GatewayClient {
 
   async newGame(): Promise<void> {
     await this.#expect("READY", { type: "NEW_GAME" });
+    this.#clearFault();
   }
 
   /** `request` is sent as-is; the worker validates it with `commandRequestSchema`. */
@@ -72,7 +85,15 @@ export class GatewayClient {
     throw this.#unexpected(response);
   }
 
-  /** S0 stub: replaced by T04a (the speed scheduler calls advance on a timer). */
+  async setSpeed(speed: Speed): Promise<void> {
+    await this.#expect("READY", { type: "SET_SPEED", speed });
+  }
+
+  async setVisibility(visible: boolean): Promise<void> {
+    await this.#expect("READY", { type: "SET_VISIBILITY", visible });
+  }
+
+  /** Test hook only: pauses, then runs exactly `ticks` ticks (ADR 0014 decision 7). */
   async advance(ticks: number): Promise<void> {
     await this.#expect("READY", { type: "ADVANCE", ticks });
   }
@@ -87,14 +108,17 @@ export class GatewayClient {
     const loaded = await readSave(this.#storage, slot);
     if (!loaded.ok) return { ok: false, error: loaded.error };
     await this.#expect("READY", { type: "LOAD_GAME", save: loaded.file.save });
+    this.#clearFault();
     return { ok: true };
   }
 
   #receive(message: WorkerMessage): void {
     switch (message.type) {
       case "SNAPSHOT":
-        this.#view = { snapshot: message.snapshot, stateHash: message.stateHash };
-        for (const listener of this.#snapshotListeners) listener(this.#view);
+        this.#setView({ ...this.#view, snapshot: message.snapshot, stateHash: message.stateHash, scheduler: message.scheduler });
+        return;
+      case "FAULT":
+        this.#setView({ ...this.#view, fault: message.message });
         return;
       case "EVENTS":
         for (const listener of this.#eventListeners) listener(message.events, message.importance);
@@ -105,6 +129,15 @@ export class GatewayClient {
         resolve?.(message);
       }
     }
+  }
+
+  #clearFault(): void {
+    if (this.#view.fault !== null) this.#setView({ ...this.#view, fault: null });
+  }
+
+  #setView(view: GatewayView): void {
+    this.#view = view;
+    for (const listener of this.#snapshotListeners) listener(view);
   }
 
   #send(body: RequestBody): Promise<WorkerResponse> {
