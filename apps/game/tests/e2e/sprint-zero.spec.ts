@@ -12,8 +12,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { EovTestHook } from "../../src/app/test-hook.ts";
 
-/** The headless S0a run's hash once the truck is home (tools/economy-lab/test/sprint-zero.test.ts). */
-const HEADLESS_HASH = "fnv1a64:ac5215124cd58562";
+/**
+ * The headless Sprint Zero run's hash once the truck is home. Must equal the
+ * hash pinned in tools/economy-lab/test/sprint-zero.test.ts; update both together.
+ */
+const HEADLESS_HASH = "fnv1a64:356d462e35305432";
 
 type Snapshot = NonNullable<EovTestHook["snapshot"]>;
 

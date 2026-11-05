@@ -209,6 +209,19 @@ describe("snapshot projection", () => {
     expect(snapshots.home!.finance.netWorth).toBe(cents(250_300));
   });
 
+  it("reports a vehicle return as a transaction that moves no money", () => {
+    const { snapshots } = playPath();
+    const sold = snapshots.sold!.finance;
+    const home = snapshots.home!.finance;
+    const returned = home.recentTransactions.at(-1)!;
+    expect(returned).toMatchObject({ kind: "VEHICLE_RETURN", entries: [] });
+    expect(sold.recentTransactions.map((t) => t.kind)).not.toContain("VEHICLE_RETURN");
+    // It lands in today's and to-date periods without changing cash, profit, or the balance sheet.
+    expect(home.toDate.cashFlow).toEqual(sold.toDate.cashFlow);
+    expect(home.toDate.profit).toEqual(sold.toDate.profit);
+    expect(home.balanceSheet).toEqual(sold.balanceSheet);
+  });
+
   it("reconciles: equity = net worth = assets − liabilities, and net worth − profit = opening equity", () => {
     const { snapshots } = playPath();
     for (const [step, s] of Object.entries(snapshots)) {
@@ -247,6 +260,9 @@ describe("snapshot projection", () => {
       "MATERIALS_PURCHASED",
       "MATERIALS_PURCHASED",
       "PRODUCTION_STARTED",
+      // One per consumed reservation (corn, sugar), before the completion (ADR 0010).
+      "RESERVATION_RELEASED",
+      "RESERVATION_RELEASED",
       "PRODUCTION_COMPLETED",
       "DELIVERY_DISPATCHED",
       "SALE_COMPLETED",
