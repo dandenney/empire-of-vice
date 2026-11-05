@@ -7,6 +7,7 @@ import { asId, cents, SNAPSHOT_RECENT_EVENTS, tick, type GameCommand, type GameS
 import { BASIC_MOONSHINE_RECIPE, DISTILLERY_MAIN, GAME_DATA, type GameData, type RecipeDefinition } from "@eov/game-data";
 import { describe, expect, it } from "vitest";
 import { newGame } from "../../src/index.ts";
+import { storageCapacity } from "../../src/production/index.ts";
 import { formatId } from "../../src/kernel/ids.ts";
 import { cashFlowStatement, FinanceProjectionError } from "../../src/projection/index.ts";
 import { advanceTo, buyCorn, buySugar, expectApplied, produce } from "../sprint-zero/helpers.ts";
@@ -60,9 +61,14 @@ describe("blockedBy dry run goes through dispatch", () => {
 
 describe("recipes with no inputs", () => {
   const SPRING_WATER = asId("Recipe", "spring-water");
-  const dataWith = (recipe: Partial<RecipeDefinition>): GameData => ({
+  // Storage bounds every start since T02c1 (#7). These fixtures give the
+  // distillery all the room a safe integer allows, so the bound under test binds,
+  // unless a test passes the default data's storage.
+  const dataWith = (recipe: Partial<RecipeDefinition>, baseStorage: number | null = Number.MAX_SAFE_INTEGER): GameData => ({
     ...GAME_DATA,
     recipes: [...GAME_DATA.recipes, { ...BASIC, id: SPRING_WATER, name: "Spring water", inputsPerCase: [], ...recipe }],
+    facilityProduction:
+      baseStorage === null ? GAME_DATA.facilityProduction : GAME_DATA.facilityProduction.map((f) => (f.facilityId === DISTILLERY_MAIN ? { ...f, baseStorage } : f)),
   });
   const startWater = (quantity: number): GameCommand => ({ type: "START_PRODUCTION", facilityId: DISTILLERY_MAIN, recipeId: SPRING_WATER, quantity });
 
@@ -77,12 +83,35 @@ describe("recipes with no inputs", () => {
     expectApplied(sim.dispatch({ command: startWater(expected) }));
   });
 
+  it("are bounded by storage when cash allows more", () => {
+    const data = dataWith({}, null);
+    const sim = newGame({ data });
+    const perCase = BASIC.laborPerCase + BASIC.overheadPerCase;
+    const capacity = storageCapacity(sim.state, data, DISTILLERY_MAIN);
+    expect(Math.floor(sim.snapshot().finance.cash / perCase)).toBeGreaterThan(capacity);
+    expect(recipeIn(sim.snapshot(), SPRING_WATER)).toMatchObject({ blockedBy: null, maxStartableQuantity: capacity });
+    expect(sim.dispatch({ command: startWater(capacity + 1) }).status).toBe("rejected");
+    expectApplied(sim.dispatch({ command: startWater(capacity) }));
+  });
+
   it("are bounded by the safe-integer range when they cost nothing", () => {
     const sim = newGame({ data: dataWith({ laborPerCase: cents(0), overheadPerCase: cents(0) }) });
     const option = recipeIn(sim.snapshot(), SPRING_WATER);
     // The completion tick (next tick + ticksPerCase × quantity) has to stay a safe integer.
     const expected = Math.floor((Number.MAX_SAFE_INTEGER - 1) / BASIC.ticksPerCase);
     expect(option).toMatchObject({ blockedBy: null, maxStartableQuantity: expected });
+    expectApplied(sim.dispatch({ command: startWater(expected) }));
+  });
+
+  it("are bounded by the completion tick at a tick other than 0 when they cost nothing", () => {
+    const sim = newGame({ data: dataWith({ laborPerCase: cents(0), overheadPerCase: cents(0) }) });
+    advanceTo(sim, 300);
+    const option = recipeIn(sim.snapshot(), SPRING_WATER);
+    // Started on the next tick (301), so the bound depends on the current tick.
+    const expected = Math.floor((Number.MAX_SAFE_INTEGER - 301) / BASIC.ticksPerCase);
+    expect(expected).toBeLessThan(Math.floor((Number.MAX_SAFE_INTEGER - 1) / BASIC.ticksPerCase));
+    expect(option).toMatchObject({ blockedBy: null, maxStartableQuantity: expected });
+    expect(sim.dispatch({ command: startWater(expected + 1) })).toMatchObject({ status: "rejected", reason: { code: "INVALID_QUANTITY" } });
     expectApplied(sim.dispatch({ command: startWater(expected) }));
   });
 
