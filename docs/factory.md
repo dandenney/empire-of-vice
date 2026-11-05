@@ -148,7 +148,7 @@ The orchestrator posts a comment on the issue whose **first line is** `Orchestra
 
 **Contract changes are ordinary agent tasks.** The orchestrator decides the change first (§8), in an ADR when it shapes more than one task, then writes an issue that lists the affected `packages/contracts/**` files under owned files. The agent dispatched for that issue may edit those files; every other agent still may not. The PR follows the normal review and auto-merge rules.
 
-When `main` has moved and a PR branch needs it, the implementing agent merges `main` into its branch and resolves any conflicts (§5).
+When the orchestrator merges `main` into a PR branch (§5) and the merge conflicts, the implementing agent resolves the conflicts in a new commit.
 
 If the agent stops with a question instead of a PR, it comments the question on the issue and `in-progress` comes off. The orchestrator answers it under §8 and the issue goes back to `agent-ready`, or, for a story or visual-direction question, it gets `needs-design`.
 
