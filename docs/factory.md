@@ -38,8 +38,7 @@ Edit the issue in place, and list what changed in a comment, so the agent and th
 ## 2. Execution
 
 - One issue → one branch (`t02a-inventory`) → one PR. Parallel tasks run in separate git worktrees.
-- Locked acceptance tests (`// @locked`) come first, written by a human or a separate agent. The implementing agent may add tests but must not edit locked ones.
-- **Locked tests are a two-step dispatch.** When an issue names a locked test file, the orchestrator first starts a test-writer agent on the issue's branch. It writes only that file, commits it, and pushes. The implementing agent then starts from that commit. The PR states the locked commit's SHA, and the review agent checks that `git diff <locked SHA>..HEAD -- <locked file>` is empty.
+- Locked acceptance tests (`// @locked`) come first, written by a human or by a test-writer agent that is not the implementing agent. When an issue names a locked test file, dispatch has two steps (§7.3): the test-writer commits only that file to the issue's branch and pushes it, and the implementing agent starts from that commit. The implementing agent may add tests but must not edit locked ones.
 - If the spec is ambiguous or the contract is missing something, the agent stops and comments on the issue instead of guessing.
 
 ## 3. Checks (cheapest first)
@@ -70,7 +69,7 @@ Every PR includes:
 - CI is green.
 - The review agent approved this commit, not an earlier one.
 - Every changed file is in the issue's owned files. (Orchestrator PRs have no issue. Their review checks that the diff matches what the PR body says it changes.)
-- No `// @locked` test changed.
+- No `// @locked` test changed. A locked file that the issue names and the test-writer added at the **locked SHA** stated in the PR is exempt from this check and from the owned-files check; it counts only if `git diff <locked SHA>..HEAD -- <locked file>` is empty.
 - The branch is up to date with `main`. If it has fallen behind, the orchestrator merges `main` into it (a merge commit, no force-push) and CI runs again.
 - The PR isn't a story or visual-direction PR (below).
 
@@ -151,6 +150,8 @@ The orchestrator posts a comment on the issue whose **first line is** `Orchestra
 
 When the orchestrator merges `main` into a PR branch (§5) and the merge conflicts, the implementing agent resolves the conflicts in a new commit.
 
+**Locked-test dispatch (two steps).** When an issue names a locked test file (§2), the orchestrator posts the `Orchestrator: dispatched <branch>` marker and adds `in-progress` before step 1. Step 1 is a test-writer agent on that branch; it counts toward the cap like any agent. Step 2 starts when step 1 has pushed, and the implementing agent includes the locked SHA in the PR body. If the implementing agent finds a locked test defective (it contradicts the issue or can't be satisfied), it stops and comments on the issue. The orchestrator then decides under §8, and a fresh test-writer agent fixes the file in a new commit, which becomes the new locked SHA.
+
 If the agent stops with a question instead of a PR, it comments the question on the issue and `in-progress` comes off. The orchestrator answers it under §8 and the issue goes back to `agent-ready`, or, for a story or visual-direction question, it gets `needs-design`.
 
 ### 7.4 Review
@@ -159,7 +160,8 @@ When an agent PR's or orchestrator PR's CI finishes:
 
 - **CI failed:** the implementing agent fixes it and pushes a new commit. This counts as a review round. For an orchestrator PR, the orchestrator is the implementing agent.
 - **CI passed:** a **fresh review agent** reviews the latest commit. The orchestrator starts it for agent PRs and orchestrator PRs alike, so the orchestrator never reviews its own PRs. It checks:
-  - every changed file is in the owned files
+  - every changed file is in the owned files, except a locked file added at the locked SHA (§5)
+  - for a locked file, `git diff <locked SHA>..HEAD -- <locked file>` is empty
   - each acceptance criterion has evidence (a test, output, or screenshot)
   - contract types are used as defined, with no parallel types, and no edits to contracts unless the issue owns those contract files
   - the `CLAUDE.md` rules (determinism, money, game-data, atomic commands, UI state)
