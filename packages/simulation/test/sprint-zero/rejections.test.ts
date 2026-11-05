@@ -133,8 +133,14 @@ describe("Sprint Zero rejections", () => {
     expectApplied(sim.dispatch({ command: buySugar(qtyOf(SUGAR) * cases) }));
     expectApplied(sim.dispatch({ command: produce(cases) }));
     sim.advance(recipe.ticksPerCase * cases + 1);
-    const result = sim.dispatch({ command: sell(cases, roadhouseQuote(sim.state)) });
-    expect(result).toMatchObject({ status: "rejected", reason: { code: "BUYER_WILL_TAKE_LESS", requested: cases, acceptable: demand } });
+    // GDD §7 liquidity: the buyer takes min(demand remaining, budget / price). The
+    // roadhouse's budget binds before its demand (T02d decision 1).
+    const quote = roadhouseQuote(sim.state);
+    const buyer = sim.state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!;
+    const acceptable = Math.min(buyer.wants[0]!.demandRemaining, Math.floor(buyer.budgetRemaining / quote));
+    expect(acceptable).toBeLessThan(cases);
+    const result = sim.dispatch({ command: sell(cases, quote) });
+    expect(result).toMatchObject({ status: "rejected", reason: { code: "BUYER_WILL_TAKE_LESS", requested: cases, acceptable } });
   });
 
   it("rejects purposes the S0 stub doesn't support with typed reasons", () => {

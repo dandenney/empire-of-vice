@@ -1,20 +1,28 @@
-// S0 stub: extended by T02d (ECO-001 daily market, buyers, suppliers, shortages).
+// ECO-001 daily market (T02d, issue #8; GDD §7; ADR 0016).
 //
-// What's here is only what the Sprint Zero path needs:
-// - opening market, supplier, and buyer state from game-data,
-// - PURCHASE_MATERIALS at the supplier's current price,
-// - spot deals struck at dispatch (ADR 0005): the buyer's quote, the liquidity
-//   cap, and committing/settling the buyer's demand and budget.
-// No midnight cycle yet: prices, stock, and buyer demand stay at their opening
-// values until T02d adds replenishment, refresh, and the spot price formula.
+// - Opening market, supplier, and buyer state from game-data.
+// - The bounded spot price formula (`priceInputs`), and market-data validation.
+// - The midnight cycle, one entry-free DAILY_SETTLEMENT transaction in GDD §7
+//   order: replenish suppliers, refresh buyers, seeded events, prices, report.
+// - Seeded ingredient shortages (SHORTAGE_START / SHORTAGE_END world events).
+// - PURCHASE_MATERIALS at the supplier's current price.
+// - The market side of spot deals (ADR 0005): quote, commit, settle, release.
+//   Logistics stages them inside its DISPATCH and SALE transactions.
 
 import {
+  addMoney,
   applyRatios,
+  clampRatio,
+  dayIndex,
   idempotencyKey,
   multiplyMoney,
   qualityRank,
   RATIO_ONE,
+  RATIO_SCALE,
+  ratioOf,
   subtractMoney,
+  tick,
+  TICKS_PER_DAY,
   type BuyerId,
   type BuyerState,
   type CargoLine,
@@ -22,14 +30,186 @@ import {
   type GameState,
   type MarketState,
   type Money,
+  type ProductId,
+  type QualityTier,
+  type Ratio,
   type RejectionReason,
   type SupplierState,
   type TransactionCoordinator,
 } from "@eov/contracts";
-import type { GameData, ScenarioDefinition } from "@eov/game-data";
-import type { SystemRegistry } from "../../kernel/registry.ts";
+import {
+  MARKET_PRICE_BOUNDS,
+  type BuyerDefinition,
+  type GameData,
+  type MarketDefinition,
+  type ScenarioDefinition,
+  type ShortageDefinition,
+  type SupplierStockDefinition,
+} from "@eov/game-data";
+import { scheduleWorldEvent } from "../../events/world-events.ts";
+import type { SystemRegistry, TickContext } from "../../kernel/registry.ts";
 import { addMaterial } from "../../inventory/pools.ts";
+import { nextIntBetween } from "../../rng/xoshiro128.ts";
 import { cashBalance } from "../ledger/ledger.ts";
+import { materialPurchaseEntries } from "../ledger/postings.ts";
+
+// ---------------------------------------------------------------------------
+// Lookups and ordering
+// ---------------------------------------------------------------------------
+
+const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** ADR 0016 market order: product ID, then quality rank. */
+function compareMarkets(a: { readonly productId: ProductId; readonly quality: QualityTier }, b: typeof a): number {
+  return byString(a.productId, b.productId) || qualityRank(a.quality) - qualityRank(b.quality);
+}
+
+function marketDefinition(data: GameData, productId: ProductId, quality: QualityTier): MarketDefinition {
+  const def = data.markets.find((m) => m.productId === productId && m.quality === quality);
+  if (!def) throw new RangeError(`No market definition for ${productId} ${quality}`);
+  return def;
+}
+
+function basePriceOf(data: GameData, productId: ProductId, quality: QualityTier): Money {
+  const product = data.products.find((p) => p.id === productId);
+  if (!product) throw new RangeError(`Market for unknown product ${productId}`);
+  return product.basePrice[quality];
+}
+
+function buyerDefinition(data: GameData, id: BuyerId): BuyerDefinition | undefined {
+  return data.buyers.find((b) => b.id === id);
+}
+
+function stockDefinition(data: GameData, supplierId: string, materialId: string): SupplierStockDefinition | undefined {
+  return data.suppliers.find((s) => s.id === supplierId)?.stock.find((st) => st.materialId === materialId);
+}
+
+/** floor(n × ppm / 10⁶) in exact integer arithmetic, for non-negative n and ppm. */
+function floorPpm(n: number, ppm: number): number {
+  return Number((BigInt(n) * BigInt(ppm)) / BigInt(RATIO_SCALE));
+}
+
+/**
+ * The buyer's most specific want for a line (ADR 0016): the want for the line's
+ * product with the highest minimum quality at or below the line's quality.
+ */
+function matchWant<W extends { readonly productId: ProductId; readonly minimumQuality: QualityTier }>(
+  wants: readonly W[],
+  productId: ProductId,
+  quality: QualityTier,
+): W | undefined {
+  let best: W | undefined;
+  for (const w of wants) {
+    if (w.productId !== productId || qualityRank(w.minimumQuality) > qualityRank(quality)) continue;
+    if (!best || qualityRank(w.minimumQuality) > qualityRank(best.minimumQuality)) best = w;
+  }
+  return best;
+}
+
+// ---------------------------------------------------------------------------
+// Spot price (GDD §7, ADR 0016)
+// ---------------------------------------------------------------------------
+
+/**
+ * The clamped spot price multipliers [M_D, M_S, M_E] in ppm, ready for
+ * `applyRatios(P_base, …)`: M_D = clamp(D / D₀), M_S = clamp(S₀ / max(S, 1)),
+ * M_E = clamp(eventRatio), with the GDD §7 bounds from game-data.
+ */
+export function priceInputs(
+  market: Pick<MarketState, "demand" | "supply" | "eventRatio">,
+  definition: Pick<MarketDefinition, "baselineDemand" | "baselineSupply">,
+): readonly [Ratio, Ratio, Ratio] {
+  const { demand, supply, event } = MARKET_PRICE_BOUNDS;
+  return [
+    clampRatio(ratioOf(market.demand, definition.baselineDemand), demand.min, demand.max),
+    clampRatio(ratioOf(definition.baselineSupply, Math.max(market.supply, 1)), supply.min, supply.max),
+    clampRatio(market.eventRatio, event.min, event.max),
+  ];
+}
+
+/** The spot price for a market as it stands: one rounding, half up to the cent. */
+function spotPriceOf(data: GameData, market: Pick<MarketState, "productId" | "quality" | "demand" | "supply" | "eventRatio">): Money {
+  const def = marketDefinition(data, market.productId, market.quality);
+  return applyRatios(basePriceOf(data, market.productId, market.quality), priceInputs(market, def));
+}
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+/** Invalid market, buyer, or supplier data. Thrown when the market system registers. */
+export class MarketDataError extends Error {
+  override readonly name = "MarketDataError";
+}
+
+function isPositiveInteger(n: number): boolean {
+  return Number.isSafeInteger(n) && n > 0;
+}
+
+/**
+ * Checks the market, buyer, and supplier definitions against GDD §7 and ADR 0016.
+ * Throws MarketDataError on the first problem found.
+ */
+export function validateMarketData(data: GameData): void {
+  const fail = (message: string): never => {
+    throw new MarketDataError(message);
+  };
+  const hasMarket = (productId: ProductId, quality: QualityTier) => data.markets.some((m) => m.productId === productId && m.quality === quality);
+
+  const seenMarkets = new Set<string>();
+  for (const m of data.markets) {
+    const key = `${m.productId}/${m.quality}`;
+    if (seenMarkets.has(key)) fail(`Market ${key} is defined twice`);
+    seenMarkets.add(key);
+    if (!data.products.some((p) => p.id === m.productId)) fail(`Market ${key} has no product definition`);
+    if (!isPositiveInteger(m.baselineDemand)) fail(`Market ${key}: D₀ must be a positive integer, got ${m.baselineDemand}`);
+    if (!isPositiveInteger(m.baselineSupply)) fail(`Market ${key}: S₀ must be a positive integer, got ${m.baselineSupply}`);
+    if (!Number.isSafeInteger(m.demandDriftPpm) || m.demandDriftPpm < 0 || m.demandDriftPpm >= RATIO_SCALE) {
+      fail(`Market ${key}: demandDriftPpm must be an integer in [0, ${RATIO_SCALE}), got ${m.demandDriftPpm}`);
+    }
+  }
+
+  for (const b of data.buyers) {
+    if (!Number.isSafeInteger(b.minimumReputation) || b.minimumReputation < 0 || b.minimumReputation > 100) {
+      fail(`Buyer ${b.id}: minimumReputation must be an integer in [0, 100], got ${b.minimumReputation}`);
+    }
+    if (!Number.isSafeInteger(b.dailyBudget) || b.dailyBudget < 0) fail(`Buyer ${b.id}: dailyBudget must not be negative, got ${b.dailyBudget}`);
+    const seenWants = new Set<string>();
+    for (const w of b.wants) {
+      const key = `${w.productId}/${w.minimumQuality}`;
+      if (seenWants.has(key)) fail(`Buyer ${b.id} has two wants for ${key}`);
+      seenWants.add(key);
+      if (!hasMarket(w.productId, w.minimumQuality)) fail(`Buyer ${b.id} wants ${key}, which has no market`);
+      if (!isPositiveInteger(w.dailyDemand)) fail(`Buyer ${b.id} want ${key}: dailyDemand must be a positive integer, got ${w.dailyDemand}`);
+      if (!Number.isSafeInteger(w.priceRatio) || w.priceRatio <= 0) fail(`Buyer ${b.id} want ${key}: priceRatio must be positive, got ${w.priceRatio}`);
+    }
+  }
+
+  const { event } = MARKET_PRICE_BOUNDS;
+  const shortageOnMarket = new Map<string, string>();
+  for (const s of data.suppliers) {
+    for (const st of s.stock) {
+      const line = `${s.id}/${st.materialId}`;
+      const sh = st.shortage;
+      if (!sh) continue;
+      if (!Number.isSafeInteger(sh.earliestStartDay) || sh.earliestStartDay < 2) fail(`Shortage ${line}: earliestStartDay must be an integer ≥ 2`);
+      if (!Number.isSafeInteger(sh.latestStartDay) || sh.latestStartDay < sh.earliestStartDay) fail(`Shortage ${line}: latestStartDay must be ≥ earliestStartDay`);
+      if (!isPositiveInteger(sh.durationDays)) fail(`Shortage ${line}: durationDays must be a positive integer`);
+      if (!Number.isSafeInteger(sh.supplyRatio) || sh.supplyRatio <= 0 || sh.supplyRatio > RATIO_ONE) fail(`Shortage ${line}: supplyRatio must be in (0, 1]`);
+      if (!Number.isSafeInteger(sh.priceRatio) || sh.priceRatio < RATIO_ONE) fail(`Shortage ${line}: priceRatio must be ≥ 1`);
+      for (const e of sh.marketEffects) {
+        const key = `${e.productId}/${e.quality}`;
+        if (!hasMarket(e.productId, e.quality)) fail(`Shortage ${line} affects ${key}, which has no market`);
+        if (!Number.isSafeInteger(e.eventRatio) || e.eventRatio < event.min || e.eventRatio > event.max) {
+          fail(`Shortage ${line}: eventRatio for ${key} must be in [${event.min}, ${event.max}] ppm`);
+        }
+        const other = shortageOnMarket.get(key);
+        if (other !== undefined) fail(`Shortages ${other} and ${line} both affect market ${key}`);
+        shortageOnMarket.set(key, line);
+      }
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Opening state
@@ -37,19 +217,15 @@ import { cashBalance } from "../ledger/ledger.ts";
 
 /** The market's opening quote: base price, with demand and supply at baseline (all multipliers 1.0×). */
 export function initialMarkets(data: GameData): readonly MarketState[] {
-  return data.markets.map((m) => {
-    const product = data.products.find((p) => p.id === m.productId);
-    if (!product) throw new RangeError(`Market for unknown product ${m.productId}`);
-    return {
-      productId: m.productId,
-      quality: m.quality,
-      demand: m.baselineDemand,
-      supply: m.baselineSupply,
-      eventRatio: RATIO_ONE,
-      spotPrice: product.basePrice[m.quality],
-      previousSpotPrice: null,
-    };
-  });
+  return data.markets.map((m) => ({
+    productId: m.productId,
+    quality: m.quality,
+    demand: m.baselineDemand,
+    supply: m.baselineSupply,
+    eventRatio: RATIO_ONE,
+    spotPrice: basePriceOf(data, m.productId, m.quality),
+    previousSpotPrice: null,
+  }));
 }
 
 export function initialSuppliers(data: GameData, scenario: ScenarioDefinition): readonly SupplierState[] {
@@ -87,50 +263,60 @@ export function initialBuyers(data: GameData, scenario: ScenarioDefinition, mark
 }
 
 // ---------------------------------------------------------------------------
-// Spot deals (ADR 0005)
+// Spot deals (ADR 0005, ADR 0016)
 // ---------------------------------------------------------------------------
 
 export interface Deal {
   readonly buyerId: BuyerId;
+  /** The `minimumQuality` of the want the line matched, so `commitDeal` reduces that same want. */
+  readonly wantQuality: QualityTier;
   readonly unitPrice: Money;
   readonly quantity: number;
   readonly amount: Money;
 }
 
 /**
- * Checks a spot deal for one cargo line against the buyer's current quote and
- * liquidity (GDD §7: min(offered, demand remaining, budget / price)). No partial
- * sales: anything the buyer won't fully take is rejected.
+ * Checks a spot deal for one cargo line against the buyer's terms and current
+ * quote, in order: unknown buyer, reputation, want, quote, then liquidity
+ * (GDD §7: min(demand remaining, budget / price)). No partial sales: anything the
+ * buyer won't fully take is rejected.
  */
-export function quoteDeal(state: GameState, buyerId: BuyerId, agreedUnitPrice: Money, line: CargoLine): Deal | RejectionReason {
+export function quoteDeal(state: GameState, data: GameData, buyerId: BuyerId, agreedUnitPrice: Money, line: CargoLine): Deal | RejectionReason {
   const buyer = state.buyers.find((b) => b.id === buyerId);
-  if (!buyer) return { code: "UNKNOWN_ENTITY", kind: "Buyer", id: buyerId };
-  const want = buyer.wants.find((w) => w.productId === line.productId && qualityRank(line.quality) >= qualityRank(w.minimumQuality));
+  const def = buyerDefinition(data, buyerId);
+  if (!buyer || !def) return { code: "UNKNOWN_ENTITY", kind: "Buyer", id: buyerId };
+  if (state.family.reputation < def.minimumReputation) {
+    return { code: "REPUTATION_TOO_LOW", required: def.minimumReputation, current: state.family.reputation };
+  }
+  const want = matchWant(buyer.wants, line.productId, line.quality);
   if (!want) return { code: "PRODUCT_NOT_WANTED", buyerId, productId: line.productId, quality: line.quality };
   if (want.unitPrice !== agreedUnitPrice) {
     return { code: "QUOTE_CHANGED", buyerId, agreed: agreedUnitPrice, current: want.unitPrice };
   }
   const affordable = want.unitPrice > 0 ? Math.floor(buyer.budgetRemaining / want.unitPrice) : want.demandRemaining;
-  const acceptable = Math.min(want.demandRemaining, affordable);
+  const acceptable = Math.max(0, Math.min(want.demandRemaining, affordable));
   if (line.quantity > acceptable) return { code: "BUYER_WILL_TAKE_LESS", buyerId, requested: line.quantity, acceptable };
-  return { buyerId, unitPrice: want.unitPrice, quantity: line.quantity, amount: multiplyMoney(want.unitPrice, line.quantity) };
+  return {
+    buyerId,
+    wantQuality: want.minimumQuality,
+    unitPrice: want.unitPrice,
+    quantity: line.quantity,
+    amount: multiplyMoney(want.unitPrice, line.quantity),
+  };
 }
 
-/** Commits the buyer's demand and budget to a deal at dispatch. */
+/** Commits the buyer's demand (on the matched want) and budget to a deal at dispatch. */
 export function commitDeal(state: GameState, deal: Deal, deliveryId: DeliveryId, line: CargoLine): GameState {
   return {
     ...state,
     buyers: state.buyers.map((b) => {
       if (b.id !== deal.buyerId) return b;
-      let taken = false;
       return {
         ...b,
         budgetRemaining: subtractMoney(b.budgetRemaining, deal.amount),
-        wants: b.wants.map((w) => {
-          if (taken || w.productId !== line.productId || qualityRank(line.quality) < qualityRank(w.minimumQuality)) return w;
-          taken = true;
-          return { ...w, demandRemaining: w.demandRemaining - deal.quantity };
-        }),
+        wants: b.wants.map((w) =>
+          w.productId === line.productId && w.minimumQuality === deal.wantQuality ? { ...w, demandRemaining: w.demandRemaining - deal.quantity } : w,
+        ),
         commitments: [...b.commitments, { deliveryId, productId: line.productId, quantity: deal.quantity, amount: deal.amount }],
       };
     }),
@@ -150,11 +336,254 @@ export function settleDeal(state: GameState, buyerId: BuyerId, deliveryId: Deliv
   };
 }
 
+/**
+ * Releases a deal that fell through (for T03's failed runs, ADR 0016): removes the
+ * commitment and gives back its demand, to the want matched by the delivery's
+ * cargo quality, and its stored amount, to the budget. Each is capped at the
+ * buyer's daily value, so a release after a midnight refresh can't push the
+ * buyer past one day's limits. Call it before the delivery's cargo is cleared.
+ * With no such commitment, the state is returned unchanged.
+ */
+export function releaseDeal(state: GameState, data: GameData, buyerId: BuyerId, deliveryId: DeliveryId): GameState {
+  const buyer = state.buyers.find((b) => b.id === buyerId);
+  const commitment = buyer?.commitments.find((c) => c.deliveryId === deliveryId);
+  if (!buyer || !commitment) return state;
+  const def = buyerDefinition(data, buyerId);
+  if (!def) throw new RangeError(`releaseDeal: no definition for buyer ${buyerId}`);
+  const cargo = state.deliveries.find((d) => d.id === deliveryId)?.cargo.find((c) => c.productId === commitment.productId);
+  if (!cargo) throw new RangeError(`releaseDeal: delivery ${deliveryId} carries no ${commitment.productId}`);
+  const want = matchWant(buyer.wants, commitment.productId, cargo.quality);
+  const wantDef = want && def.wants.find((w) => w.productId === want.productId && w.minimumQuality === want.minimumQuality);
+  const budget = addMoney(buyer.budgetRemaining, commitment.amount);
+  const released: BuyerState = {
+    ...buyer,
+    budgetRemaining: budget < def.dailyBudget ? budget : def.dailyBudget,
+    wants: buyer.wants.map((w) =>
+      w === want && wantDef ? { ...w, demandRemaining: Math.min(wantDef.dailyDemand, w.demandRemaining + commitment.quantity) } : w,
+    ),
+    commitments: buyer.commitments.filter((c) => c.deliveryId !== deliveryId),
+  };
+  return { ...state, buyers: state.buyers.map((b) => (b.id === buyerId ? released : b)) };
+}
+
+// ---------------------------------------------------------------------------
+// Midnight cycle (GDD §7 order, ADR 0016)
+// ---------------------------------------------------------------------------
+
+type MarketKey = string;
+const keyOf = (productId: ProductId, quality: QualityTier): MarketKey => `${productId}/${quality}`;
+
+/** Step 1: each stock line back to its daily level, cut and repriced during a shortage. */
+function replenishSuppliers(state: GameState, data: GameData): GameState {
+  return {
+    ...state,
+    suppliers: state.suppliers.map((s) => ({
+      ...s,
+      stock: s.stock.map((st) => {
+        const def = stockDefinition(data, s.id, st.materialId);
+        if (!def) throw new RangeError(`No stock definition for ${s.id}/${st.materialId}`);
+        if (st.shortage === null) return { ...st, available: def.dailyStock, unitPrice: def.unitPrice };
+        const priceRatio = def.shortage?.priceRatio ?? RATIO_ONE;
+        return { ...st, available: floorPpm(def.dailyStock, st.shortage.supplyRatio), unitPrice: applyRatios(def.unitPrice, [priceRatio]) };
+      }),
+    })),
+  };
+}
+
+/** Step 2a: the cases buyers took from each market today (sum of dailyDemand − demandRemaining). */
+function soldVolumes(state: GameState, data: GameData): ReadonlyMap<MarketKey, number> {
+  const sold = new Map<MarketKey, number>();
+  for (const b of state.buyers) {
+    const def = buyerDefinition(data, b.id);
+    if (!def) throw new RangeError(`No definition for buyer ${b.id}`);
+    for (const w of b.wants) {
+      const wantDef = def.wants.find((d) => d.productId === w.productId && d.minimumQuality === w.minimumQuality);
+      if (!wantDef) throw new RangeError(`No definition for buyer ${b.id}'s ${w.productId} ${w.minimumQuality} want`);
+      const key = keyOf(w.productId, w.minimumQuality);
+      sold.set(key, (sold.get(key) ?? 0) + wantDef.dailyDemand - w.demandRemaining);
+    }
+  }
+  return sold;
+}
+
+/** Step 2b: budgets and demand back to their daily values. Outstanding commitments stay. */
+function refreshBuyers(state: GameState, data: GameData): GameState {
+  return {
+    ...state,
+    buyers: state.buyers.map((b) => {
+      const def = buyerDefinition(data, b.id)!;
+      return {
+        ...b,
+        budgetRemaining: def.dailyBudget,
+        wants: b.wants.map((w) => ({
+          ...w,
+          demandRemaining: def.wants.find((d) => d.productId === w.productId && d.minimumQuality === w.minimumQuality)!.dailyDemand,
+        })),
+      };
+    }),
+  };
+}
+
+/** Configured shortages in ADR 0016 roll order: supplier ID, then material ID. */
+function configuredShortages(data: GameData) {
+  return [...data.suppliers]
+    .sort((a, b) => byString(a.id, b.id))
+    .flatMap((s) =>
+      [...s.stock]
+        .sort((a, b) => byString(a.materialId, b.materialId))
+        .flatMap((st) => (st.shortage ? [{ supplierId: s.id, materialId: st.materialId, shortage: st.shortage }] : [])),
+    );
+}
+
+/** Step 3a (the midnight that starts day 1 only): roll and schedule each configured shortage. */
+function scheduleShortages(state: GameState, data: GameData): GameState {
+  let s = state;
+  for (const { supplierId, materialId, shortage } of configuredShortages(data)) {
+    const draw = nextIntBetween(s.rng.market, shortage.earliestStartDay, shortage.latestStartDay);
+    s = { ...s, rng: { ...s.rng, market: draw.rng } };
+    s = scheduleWorldEvent(s, {
+      kind: "SHORTAGE_START",
+      tick: tick(draw.value * TICKS_PER_DAY),
+      supplierId,
+      materialId,
+      supplyRatio: shortage.supplyRatio,
+      durationTicks: shortage.durationDays * TICKS_PER_DAY,
+    });
+  }
+  return s;
+}
+
+/** Step 3b: each market's M_E input from the one active shortage affecting it, or 1.0×. */
+function eventRatios(state: GameState, data: GameData): ReadonlyMap<MarketKey, Ratio> {
+  const ratios = new Map<MarketKey, Ratio>();
+  for (const s of state.suppliers) {
+    for (const st of s.stock) {
+      if (st.shortage === null) continue;
+      const def: ShortageDefinition | null | undefined = stockDefinition(data, s.id, st.materialId)?.shortage;
+      for (const e of def?.marketEffects ?? []) ratios.set(keyOf(e.productId, e.quality), e.eventRatio);
+    }
+  }
+  return ratios;
+}
+
+/** Step 4: drift draws in market order, then new demand, supply, spot prices, and buyer quotes. */
+function updatePrices(state: GameState, data: GameData, sold: ReadonlyMap<MarketKey, number>, events: ReadonlyMap<MarketKey, Ratio>): GameState {
+  let rng = state.rng.market;
+  const demand = new Map<MarketKey, number>();
+  for (const def of [...data.markets].sort(compareMarkets)) {
+    const k = floorPpm(def.baselineDemand, def.demandDriftPpm);
+    const draw = nextIntBetween(rng, -k, k);
+    rng = draw.rng;
+    demand.set(keyOf(def.productId, def.quality), def.baselineDemand + draw.value);
+  }
+  const markets = state.markets.map((m): MarketState => {
+    const def = marketDefinition(data, m.productId, m.quality);
+    const key = keyOf(m.productId, m.quality);
+    const next = {
+      productId: m.productId,
+      quality: m.quality,
+      demand: demand.get(key)!,
+      supply: def.baselineSupply + (sold.get(key) ?? 0),
+      eventRatio: events.get(key) ?? RATIO_ONE,
+    };
+    return { ...next, spotPrice: spotPriceOf(data, next), previousSpotPrice: m.spotPrice };
+  });
+  const buyers = state.buyers.map((b) => {
+    const def = buyerDefinition(data, b.id)!;
+    return {
+      ...b,
+      wants: b.wants.map((w) => {
+        const wantDef = def.wants.find((d) => d.productId === w.productId && d.minimumQuality === w.minimumQuality)!;
+        const market = markets.find((m) => m.productId === w.productId && m.quality === w.minimumQuality);
+        if (!market) throw new RangeError(`Buyer ${b.id} wants ${w.productId} with no ${w.minimumQuality} market`);
+        return { ...w, unitPrice: applyRatios(market.spotPrice, [wantDef.priceRatio]) };
+      }),
+    };
+  });
+  return { ...state, rng: { ...state.rng, market: rng }, markets, buyers };
+}
+
+function runMidnight(state: GameState, ctx: TickContext, data: GameData, coordinator: TransactionCoordinator): GameState {
+  // The day that is starting (ADR 0016).
+  const day = dayIndex(ctx.tick);
+  const tx = coordinator.begin(state, {
+    kind: "DAILY_SETTLEMENT",
+    idempotencyKey: idempotencyKey("DAILY_SETTLEMENT", "MARKET", day),
+    tick: ctx.tick,
+    causedBy: null,
+  });
+  if (tx.status === "duplicate") return state;
+
+  tx.update((s) => replenishSuppliers(s, data));
+  const sold = soldVolumes(tx.state, data);
+  tx.update((s) => refreshBuyers(s, data));
+  if (day === 1) tx.update((s) => scheduleShortages(s, data));
+  const events = eventRatios(tx.state, data);
+  tx.update((s) => updatePrices(s, data, sold, events));
+  tx.emit({ type: "MARKET_UPDATED", dayIndex: day });
+
+  const result = tx.commit();
+  if (result.status !== "committed") throw new Error(`Market midnight cycle rejected: ${JSON.stringify(result.reason)}`);
+  return result.state;
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
-export function registerMarket(registry: SystemRegistry, _data: GameData, coordinator: TransactionCoordinator): void {
+function withStockLine(
+  state: GameState,
+  supplierId: string,
+  materialId: string,
+  change: (line: SupplierState["stock"][number]) => SupplierState["stock"][number],
+): GameState {
+  return {
+    ...state,
+    suppliers: state.suppliers.map((s) =>
+      s.id === supplierId ? { ...s, stock: s.stock.map((st) => (st.materialId === materialId ? change(st) : st)) } : s,
+    ),
+  };
+}
+
+export function registerMarket(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator): void {
+  validateMarketData(data);
+
+  registry.onPhase("midnight", "market-daily-cycle", (state, ctx) => runMidnight(state, ctx, data, coordinator));
+
+  registry.onWorldEvent("SHORTAGE_START", (state, event, ctx) => {
+    const { supplierId, materialId } = event;
+    const tx = coordinator.begin(state, {
+      kind: "DAILY_SETTLEMENT",
+      idempotencyKey: idempotencyKey("DAILY_SETTLEMENT", "SHORTAGE_START", supplierId, materialId, ctx.tick),
+      tick: ctx.tick,
+      causedBy: null,
+    });
+    if (tx.status === "duplicate") return state;
+    const endsAt = tick(ctx.tick + event.durationTicks);
+    tx.update((s) => withStockLine(s, supplierId, materialId, (st) => ({ ...st, shortage: { supplyRatio: event.supplyRatio, endsAt } })));
+    tx.update((s) => scheduleWorldEvent(s, { kind: "SHORTAGE_END", tick: endsAt, supplierId, materialId }));
+    tx.emit({ type: "SHORTAGE_STARTED", supplierId, materialId, supplyRatioPpm: event.supplyRatio, endsAt });
+    const result = tx.commit();
+    if (result.status !== "committed") throw new Error(`SHORTAGE_START rejected: ${JSON.stringify(result.reason)}`);
+    return result.state;
+  });
+
+  registry.onWorldEvent("SHORTAGE_END", (state, event, ctx) => {
+    const { supplierId, materialId } = event;
+    const tx = coordinator.begin(state, {
+      kind: "DAILY_SETTLEMENT",
+      idempotencyKey: idempotencyKey("DAILY_SETTLEMENT", "SHORTAGE_END", supplierId, materialId, ctx.tick),
+      tick: ctx.tick,
+      causedBy: null,
+    });
+    if (tx.status === "duplicate") return state;
+    tx.update((s) => withStockLine(s, supplierId, materialId, (st) => ({ ...st, shortage: null })));
+    tx.emit({ type: "SHORTAGE_ENDED", supplierId, materialId });
+    const result = tx.commit();
+    if (result.status !== "committed") throw new Error(`SHORTAGE_END rejected: ${JSON.stringify(result.reason)}`);
+    return result.state;
+  });
+
   registry.onCommand("PURCHASE_MATERIALS", {
     validate: (_state, command) =>
       Number.isSafeInteger(command.quantity) && command.quantity > 0
@@ -191,21 +620,9 @@ export function registerMarket(registry: SystemRegistry, _data: GameData, coordi
 
       if (total !== null && stock && tx.status === "staging") {
         const cost = total;
-        tx.update((s) => ({
-          ...s,
-          suppliers: s.suppliers.map((sup) =>
-            sup.id === supplierId
-              ? { ...sup, stock: sup.stock.map((st) => (st.materialId === materialId ? { ...st, available: st.available - quantity } : st)) }
-              : sup,
-          ),
-        }));
+        tx.update((s) => withStockLine(s, supplierId, materialId, (st) => ({ ...st, available: st.available - quantity })));
         tx.update((s) => addMaterial(s, facilityId, materialId, quantity, cost));
-        if (cost > 0) {
-          tx.post([
-            { account: "RAW_MATERIALS", side: "DEBIT", amount: cost },
-            { account: "CASH", side: "CREDIT", amount: cost },
-          ]);
-        }
+        tx.post(materialPurchaseEntries(cost));
         tx.emit({
           type: "MATERIALS_PURCHASED",
           supplierId,
@@ -223,4 +640,3 @@ export function registerMarket(registry: SystemRegistry, _data: GameData, coordi
     },
   });
 }
-

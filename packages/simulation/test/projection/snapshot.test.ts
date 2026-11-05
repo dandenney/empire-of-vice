@@ -1,4 +1,5 @@
 import {
+  applyRatios,
   cents,
   gameEventSchema,
   ledgerTransactionSchema,
@@ -11,6 +12,7 @@ import {
   BASIC_MOONSHINE_RECIPE,
   CROSSROADS_ROADHOUSE,
   DISTILLERY_MAIN,
+  FIRST_SHIPMENT_SCENARIO,
   GAME_DATA,
   HOLLOW_CREEK,
   MODEL_TT_TRUCK,
@@ -108,12 +110,18 @@ describe("snapshot projection", () => {
       ["Corn", cents(250), 160, false],
       ["Sugar", cents(200), 100, false],
     ]);
-    expect(s.market.buyers.map((b) => [b.name, b.wants[0]!.unitPrice, b.wants[0]!.maxAcceptableQuantity])).toEqual([
-      ["The Crossroads Roadhouse", cents(1_400), 15],
-      ["Kessler's Back Room", cents(1_519), 20],
-      ["Lakeview Hotel", cents(2_300), 12],
-    ]);
-    expect(s.market.products.map((p) => [p.quality, p.basePrice, p.spotPrice, p.demandRatioPpm, p.supplyRatioPpm, p.previousSpotPrice])).toEqual([
+    // Opening quotes are spot (= base price) × the want's price ratio. A buyer deals
+    // only at or above its minimum reputation, and then takes at most
+    // min(daily demand, budget / quote) (GDD §7, ADR 0016).
+    const reputation = FIRST_SHIPMENT_SCENARIO.family.reputation;
+    expect(s.market.buyers.map((b) => [b.name, b.minimumReputation, b.willDeal, b.wants[0]!.unitPrice, b.wants[0]!.maxAcceptableQuantity])).toEqual(
+      GAME_DATA.buyers.map((def) => {
+        const want = def.wants[0]!;
+        const quote = applyRatios(GAME_DATA.products.find((p) => p.id === want.productId)!.basePrice[want.minimumQuality], [want.priceRatio]);
+        const willDeal = reputation >= def.minimumReputation;
+        return [def.name, def.minimumReputation, willDeal, quote, willDeal ? Math.min(want.dailyDemand, Math.floor(def.dailyBudget / quote)) : 0];
+      }),
+    );    expect(s.market.products.map((p) => [p.quality, p.basePrice, p.spotPrice, p.demandRatioPpm, p.supplyRatioPpm, p.previousSpotPrice])).toEqual([
       ["basic", cents(1_400), cents(1_400), 1_000_000, 1_000_000, null],
       ["standard", cents(2_000), cents(2_000), 1_000_000, 1_000_000, null],
     ]);
@@ -190,7 +198,11 @@ describe("snapshot projection", () => {
     const trip = snapshots.dispatched!.vehicles[0]!.trip!;
     expect(trip).toMatchObject({ routeId: "state-highway", leg: "OUTBOUND", cargo: [{ productId: "moonshine", quality: "basic", quantity: 1 }] });
     expect(trip.purpose).toEqual({ kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: cents(1_400) });
-    expect(roadhouseWant(snapshots.dispatched!)).toMatchObject({ demandRemaining: 14, maxAcceptableQuantity: 14 });
+    // One case committed: demand and budget each drop by one case (GDD §7 liquidity).
+    const roadhouse = GAME_DATA.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!;
+    const daily = roadhouse.wants[0]!.dailyDemand;
+    const afterOne = Math.min(daily - 1, Math.floor((roadhouse.dailyBudget - cents(1_400)) / cents(1_400)));
+    expect(roadhouseWant(snapshots.dispatched!)).toMatchObject({ demandRemaining: daily - 1, maxAcceptableQuantity: afterOne });
     expect(snapshots.sold!.vehicles[0]!.trip!.leg).toBe("RETURN");
     expect(snapshots.home!.vehicles[0]!.trip).toBeNull();
   });

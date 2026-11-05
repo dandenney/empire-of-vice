@@ -18,7 +18,6 @@
 import {
   addMoney,
   qualityRank,
-  ratioOf,
   SNAPSHOT_RECENT_EVENTS,
   ZERO_MONEY,
   divideMoney,
@@ -41,7 +40,7 @@ import {
 } from "@eov/contracts";
 import type { GameData, RecipeDefinition } from "@eov/game-data";
 import { cashBalance } from "../economy/ledger/ledger.ts";
-import { quoteDeal } from "../economy/market/market.ts";
+import { priceInputs, quoteDeal } from "../economy/market/market.ts";
 import { availableMaterial } from "../inventory/pools.ts";
 import type { ProjectionContext, SystemRegistry } from "../kernel/registry.ts";
 import { createSimulation } from "../kernel/simulation.ts";
@@ -68,8 +67,6 @@ export const UNDEFINED_IN_GAME_DATA = {
   maximumWorkers: 0,
   /** Storage capacity per facility (T02c). Reported as 0. */
   storageCapacity: 0,
-  /** Buyers' minimum reputation (T02d). Reported as 0, so every buyer deals. */
-  buyerMinimumReputation: 0,
 } as const;
 
 export interface ProjectionDeps {
@@ -332,23 +329,23 @@ function projectVehicles(state: GameState, data: GameData): readonly VehicleSnap
 }
 
 function projectMarket(state: GameState, data: GameData, clock: ClockSnapshot): MarketReport {
-  const missing = UNDEFINED_IN_GAME_DATA;
   const products = state.markets
     .map((m) => {
       const product = named(data.products, m.productId, "product");
       const def = data.markets.find((d) => d.productId === m.productId && d.quality === m.quality);
       if (!def) throw new RangeError(`Snapshot: no market definition for ${m.productId} ${m.quality}`);
+      // The clamped multipliers the spot price was built from (ADR 0016), so
+      // applyRatios(basePrice, [demand, supply, event]) === spotPrice.
+      const [demandRatioPpm, supplyRatioPpm, eventRatioPpm] = priceInputs(m, def);
       return {
         productId: m.productId,
         productName: product.name,
         quality: m.quality,
         basePrice: product.basePrice[m.quality],
         spotPrice: m.spotPrice,
-        // S0 stub (T02d): GDD §7's M_D = D / D₀ and M_S = S₀ / max(S, 1), not yet clamped
-        // (the clamp bounds aren't in game-data). The S0 market never moves D or S.
-        demandRatioPpm: ratioOf(m.demand, def.baselineDemand),
-        supplyRatioPpm: ratioOf(def.baselineSupply, Math.max(m.supply, 1)),
-        eventRatioPpm: m.eventRatio,
+        demandRatioPpm,
+        supplyRatioPpm,
+        eventRatioPpm,
         previousSpotPrice: m.previousSpotPrice,
       };
     })
@@ -373,7 +370,7 @@ function projectMarket(state: GameState, data: GameData, clock: ClockSnapshot): 
   const buyers = state.buyers
     .map((b): BuyerSnapshot => {
       const def = named(data.buyers, b.id, "buyer");
-      const minimumReputation = missing.buyerMinimumReputation;
+      const minimumReputation = def.minimumReputation;
       return {
         id: b.id,
         name: def.name,
@@ -384,10 +381,11 @@ function projectMarket(state: GameState, data: GameData, clock: ClockSnapshot): 
         wants: b.wants.map((w) => {
           // The liquidity cap comes from the same rule a dispatch is checked with
           // (quoteDeal), asked about one case more than the want's demand remaining.
-          // Its acceptable quantity is never above the demand remaining, so the
-          // probe is always BUYER_WILL_TAKE_LESS and carries the cap. Any other
-          // answer means no deal at this quote: 0.
-          const probe = quoteDeal(state, b.id, w.unitPrice, { productId: w.productId, quality: w.minimumQuality, quantity: w.demandRemaining + 1 });
+          // A line at the want's minimum quality matches that want (ADR 0016). Its
+          // acceptable quantity is never above the demand remaining, so the probe
+          // is BUYER_WILL_TAKE_LESS and carries the cap. Any other answer (such as
+          // REPUTATION_TOO_LOW for a buyer that won't deal) means no deal: 0.
+          const probe = quoteDeal(state, data, b.id, w.unitPrice, { productId: w.productId, quality: w.minimumQuality, quantity: w.demandRemaining + 1 });
           const maxAcceptableQuantity = "code" in probe && probe.code === "BUYER_WILL_TAKE_LESS" ? probe.acceptable : 0;
           return {
             productId: w.productId,
