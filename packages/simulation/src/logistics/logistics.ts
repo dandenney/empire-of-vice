@@ -194,7 +194,7 @@ function planDispatch(state: GameState, command: DispatchDeliveryCommand, data: 
   if (available < line.quantity) {
     return { code: "INSUFFICIENT_STOCK", productId: line.productId, quality: line.quality, requested: line.quantity, available };
   }
-  const deal = quoteDeal(state, purpose.buyerId, purpose.agreedUnitPrice, line);
+  const deal = quoteDeal(state, data, purpose.buyerId, purpose.agreedUnitPrice, line);
   if ("code" in deal) return deal;
   return { route, deal, line, homeId: home.id };
 }
