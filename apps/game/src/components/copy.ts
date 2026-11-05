@@ -13,6 +13,8 @@ export const SHELL_COPY = {
   save: "Save",
   reloadSave: "Reload save",
   newGameStarted: "New game started.",
+  /** The S0 save slot's player-visible label; T06 replaces it with real save names. */
+  saveLabel: "Sprint Zero",
   saved: "Saved.",
   saveReloaded: "Save reloaded.",
   reloadFailed: (code: string) => `Reload failed: ${code}`,

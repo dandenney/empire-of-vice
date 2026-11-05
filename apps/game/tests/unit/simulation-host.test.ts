@@ -195,6 +195,48 @@ describe("SimulationHost", () => {
     });
   });
 
+  it("posts a notify event in the very timer step that emitted it, even when no snapshot is due", () => {
+    const { env, send } = setup();
+    send({ type: "NEW_GAME" });
+    for (const request of [
+      { command: { type: "PURCHASE_MATERIALS", supplierId: "millers-feed", materialId: "corn", quantity: 4, facilityId: "distillery-main" } },
+      { command: { type: "PURCHASE_MATERIALS", supplierId: "millers-feed", materialId: "sugar", quantity: 2, facilityId: "distillery-main" } },
+    ]) {
+      send({ type: "DISPATCH", request });
+    }
+    const started = send({ type: "DISPATCH", request: { command: { type: "START_PRODUCTION", facilityId: "distillery-main", recipeId: "basic-moonshine", quantity: 1 } } });
+    const job = snapshots(started).at(-1)!.snapshot.productionJobs[0];
+    if (!job) throw new Error("production didn't start; check the S0 recipe inputs");
+    // Stop one tick short of completion, then run; SET_SPEED publishes, so the next snapshot isn't due for 200 ms.
+    const tick = lastTick(started);
+    send({ type: "ADVANCE", ticks: job.completesAt - 1 - tick });
+    send({ type: "SET_SPEED", speed: 4 });
+    // One 50 ms step at 4× runs the last tick(s).
+    env.elapse(TIMER_INTERVAL_MS);
+    const step = env.take();
+    expect(snapshots(step)).toHaveLength(0);
+    expect(step.some((m) => m.type === "EVENTS" && m.importance === "notify" && m.events.some((e) => e.type === "PRODUCTION_COMPLETED"))).toBe(true);
+  });
+
+  it("a new game resets a running scheduler: paused, no timer, no ticks", () => {
+    const { env, send } = setup();
+    send({ type: "NEW_GAME" });
+    send({ type: "SET_SPEED", speed: 4 });
+    env.elapse(1_000);
+    // Time owed but not yet stepped must not leak into the new game either.
+    env.ms += 1_000;
+    const fresh = send({ type: "NEW_GAME" });
+    expect(snapshots(fresh)[0]!.scheduler).toEqual({ speed: 0, autoPaused: false });
+    expect(lastTick(fresh)).toBe(0);
+    expect(env.timers.size).toBe(0);
+    env.elapse(10_000);
+    expect(env.take()).toEqual([]);
+    // Resuming runs only time from now on.
+    send({ type: "SET_SPEED", speed: 1 });
+    env.elapse(1_000);
+    expect(lastTick(env.take())).toBe(12);
+  });
+
   it("validates commands before dispatch and reports requests with no game as ERROR", () => {
     const { send } = setup();
     expect(send({ type: "SET_SPEED", speed: 1 }).at(-1)).toMatchObject({ type: "ERROR" });

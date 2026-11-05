@@ -1,6 +1,6 @@
 // The speed scheduler with a fake clock (issue #11, ADR 0014, SIM-001 acceptance).
 
-import { TICKS_PER_DAY } from "@eov/contracts";
+import { TICKS_PER_DAY, TICKS_PER_HOUR } from "@eov/contracts";
 import { REAL_MS_PER_GAME_HOUR_AT_1X } from "@eov/game-data";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
@@ -27,6 +27,11 @@ function drain(scheduler: SpeedScheduler): number {
   let ticks = 0;
   for (let n = scheduler.step(); n > 0; n = scheduler.step()) ticks += n;
   return ticks;
+}
+
+/** Whole ticks `ms` of real time earns at `speed`, from the game-data pacing numbers. */
+function ticksFor(ms: number, speed: Speed): number {
+  return Math.floor((ms * speed * TICKS_PER_HOUR) / REAL_MS_PER_GAME_HOUR_AT_1X);
 }
 
 function setup(): { clock: FakeClock; scheduler: SpeedScheduler } {
@@ -184,8 +189,45 @@ describe("SpeedScheduler", () => {
     expect(() => scheduler.setSpeed(0.5 as Speed)).toThrow(RangeError);
   });
 
-  it("loses and duplicates no ticks across any sequence of speed changes", () => {
+  it("bills time before a speed change between timer steps at the old speed", () => {
+    const { clock, scheduler } = setup();
+    scheduler.setSpeed(1);
+    // No step() at 1 s: the change itself must accrue the first second at 1×.
+    clock.ms = 1_000;
+    scheduler.setSpeed(4);
+    expect(drain(scheduler)).toBe(ticksFor(1_000, 1));
+    // And from here on it runs at 4×.
+    clock.ms = 2_000;
+    expect(drain(scheduler)).toBe(ticksFor(1_000, 4));
+  });
+
+  it("bills time before a pause between timer steps", () => {
+    const { clock, scheduler } = setup();
+    scheduler.setSpeed(4);
+    clock.ms = 1_000;
+    scheduler.setSpeed(0);
+    expect(scheduler.backlog).toBe(ticksFor(1_000, 4));
+  });
+
+  it("bills time before the tab hides between timer steps", () => {
+    const { clock, scheduler } = setup();
+    scheduler.setSpeed(1);
+    // No step() at 1 s: hiding must accrue the visible second before it pauses.
+    clock.ms = 1_000;
+    scheduler.setVisible(false);
+    clock.ms = 61_000;
+    scheduler.setVisible(true);
+    scheduler.setSpeed(1);
+    expect(drain(scheduler)).toBe(ticksFor(1_000, 1));
+  });
+
+  it("loses and duplicates no ticks across any sequence of speed changes and hidden spells", () => {
     const segment = fc.record({
+      // Real time that passes after the last timer step and before the change, with no step() in between.
+      gapMs: fc.integer({ min: 0, max: 300 }),
+      // Optionally the tab hides (after the gap) for a while before the change.
+      hide: fc.boolean(),
+      hiddenMs: fc.integer({ min: 0, max: 60_000 }),
       speed: fc.constantFrom<Speed>(0, 1, 2, 4),
       durationMs: fc.integer({ min: 0, max: 7_000 }),
       stepMs: fc.integer({ min: 1, max: 300 }),
@@ -194,16 +236,32 @@ describe("SpeedScheduler", () => {
       fc.property(fc.array(segment, { maxLength: 40 }), (segments) => {
         const { clock, scheduler } = setup();
         let handedOut = 0;
-        // Exact expectation: total tick units over the whole run, divided once at the end.
+        // Exact expectation: tick units per visible spell, divided once when the
+        // spell ends (hiding resets the sub-tick remainder).
+        let expected = 0;
         let units = 0;
+        let speed: Speed = 0;
         for (const s of segments) {
-          scheduler.setSpeed(s.speed);
+          clock.ms += s.gapMs;
+          units += s.gapMs * speed * TICKS_PER_HOUR;
+          if (s.hide) {
+            scheduler.setVisible(false);
+            expected += Math.floor(units / REAL_MS_PER_GAME_HOUR_AT_1X);
+            units = 0;
+            clock.ms += s.hiddenMs;
+            scheduler.setVisible(true);
+            // Auto-paused: nothing accrues until the speed change below.
+            expect(scheduler.speed).toBe(0);
+          }
+          expect(scheduler.setSpeed(s.speed)).toBe(true);
+          speed = s.speed;
           handedOut += run(clock, scheduler, s.durationMs, s.stepMs);
-          units += s.durationMs * s.speed * 60;
+          units += s.durationMs * speed * TICKS_PER_HOUR;
         }
         scheduler.setSpeed(1);
         handedOut += drain(scheduler);
-        expect(handedOut).toBe(Math.floor(units / REAL_MS_PER_GAME_HOUR_AT_1X));
+        expected += Math.floor(units / REAL_MS_PER_GAME_HOUR_AT_1X);
+        expect(handedOut).toBe(expected);
       }),
     );
   });

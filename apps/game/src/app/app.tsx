@@ -17,7 +17,6 @@ import "./shell.css";
 
 /** S0 stub: replaced by T06 (save slots and the save/load UI). */
 const SAVE_SLOT = "sprint-zero";
-const SAVE_LABEL = "Sprint Zero";
 
 function GameButtons({ busy, setBusy, say }: { readonly busy: boolean; readonly setBusy: (b: boolean) => void; readonly say: (m: string) => void }) {
   const gateway = useGateway();
@@ -50,7 +49,7 @@ function GameButtons({ busy, setBusy, say }: { readonly busy: boolean; readonly 
         data-testid="save"
         disabled={busy || !snapshot}
         onClick={run(async () => {
-          await gateway.save(SAVE_SLOT, SAVE_LABEL);
+          await gateway.save(SAVE_SLOT, SHELL_COPY.saveLabel);
           return SHELL_COPY.saved;
         })}
       >
