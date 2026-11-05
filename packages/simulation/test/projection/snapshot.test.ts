@@ -121,7 +121,8 @@ describe("snapshot projection", () => {
         const willDeal = reputation >= def.minimumReputation;
         return [def.name, def.minimumReputation, willDeal, quote, willDeal ? Math.min(want.dailyDemand, Math.floor(def.dailyBudget / quote)) : 0];
       }),
-    );    expect(s.market.products.map((p) => [p.quality, p.basePrice, p.spotPrice, p.demandRatioPpm, p.supplyRatioPpm, p.previousSpotPrice])).toEqual([
+    );
+    expect(s.market.products.map((p) => [p.quality, p.basePrice, p.spotPrice, p.demandRatioPpm, p.supplyRatioPpm, p.previousSpotPrice])).toEqual([
       ["basic", cents(1_400), cents(1_400), 1_000_000, 1_000_000, null],
       ["standard", cents(2_000), cents(2_000), 1_000_000, 1_000_000, null],
     ]);

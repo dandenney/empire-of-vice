@@ -1,8 +1,8 @@
 // T02d (issue #8) implementation tests, alongside the locked ECO-001 file:
 // edge cases of validation, releaseDeal, and the midnight cycle's RNG use.
 
-import { asId, TICKS_PER_DAY } from "@eov/contracts";
-import { CROSSROADS_ROADHOUSE, GAME_DATA, type GameData } from "@eov/game-data";
+import { asId, qualityRank, ratio, TICKS_PER_DAY } from "@eov/contracts";
+import { CORN, CROSSROADS_ROADHOUSE, FIRST_SHIPMENT_SCENARIO, GAME_DATA, MILLERS_FEED, SUGAR, type GameData } from "@eov/game-data";
 import { describe, expect, it } from "vitest";
 import { MarketDataError, releaseDeal, validateMarketData } from "../../../src/economy/market/index.ts";
 import { createSimulation, newGame, nextIntBetween, simulationOptions } from "../../../src/index.ts";
@@ -45,6 +45,42 @@ describe("midnight cycle (extra cases)", () => {
     for (let i = 0; i < data.markets.length; i++) rng = nextIntBetween(rng, 0, 0).rng;
     expect(sim.state.rng.market).toEqual(rng);
     for (const m of sim.state.markets) expect(m.demand).toBe(data.markets.find((d) => d.productId === m.productId && d.quality === m.quality)!.baselineDemand);
+  });
+
+  it("rolls two configured shortages in supplier, then material, order before the drift draws", () => {
+    // A second shortage on sugar with no market effects, so it doesn't share a market with corn's.
+    const sugarShortage = { earliestStartDay: 2, latestStartDay: 9, durationDays: 1, supplyRatio: ratio(500_000), priceRatio: ratio(1_200_000), marketEffects: [] };
+    const data: GameData = {
+      ...GAME_DATA,
+      suppliers: GAME_DATA.suppliers.map((s) => ({ ...s, stock: s.stock.map((st) => (st.materialId === SUGAR ? { ...st, shortage: sugarShortage } : st)) })),
+    };
+    expect(() => validateMarketData(data)).not.toThrow();
+    const corn = data.suppliers.find((s) => s.id === MILLERS_FEED)!.stock.find((st) => st.materialId === CORN)!.shortage!;
+    expect(CORN < SUGAR).toBe(true);
+
+    for (const seed of [1, 2, 3]) {
+      const sim = newGame({ scenario: { ...FIRST_SHIPMENT_SCENARIO, seed }, data });
+      sim.advance(TICKS_PER_DAY - 1);
+      let rng = sim.state.rng.market;
+      sim.advance(1);
+      const rolls = [
+        { materialId: CORN, window: corn },
+        { materialId: SUGAR, window: sugarShortage },
+      ].map(({ materialId, window }) => {
+        const draw = nextIntBetween(rng, window.earliestStartDay, window.latestStartDay);
+        rng = draw.rng;
+        return { materialId, tick: draw.value * TICKS_PER_DAY };
+      });
+      for (const m of [...data.markets].sort((a, b) => (a.productId < b.productId ? -1 : a.productId > b.productId ? 1 : qualityRank(a.quality) - qualityRank(b.quality)))) {
+        const k = Math.floor((m.baselineDemand * m.demandDriftPpm) / 1_000_000);
+        rng = nextIntBetween(rng, -k, k).rng;
+      }
+      expect(sim.state.rng.market).toEqual(rng);
+      for (const r of rolls) {
+        const starts = sim.state.scheduledEvents.filter((e) => e.kind === "SHORTAGE_START" && e.materialId === r.materialId);
+        expect(starts.map((e) => e.tick)).toEqual([r.tick]);
+      }
+    }
   });
 
   it("commits one market transaction per midnight, keyed by the day that is starting", () => {
