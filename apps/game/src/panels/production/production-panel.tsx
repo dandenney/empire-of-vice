@@ -4,8 +4,8 @@
 // `maxStartableQuantity` and `blockedBy` are precomputed by the simulation
 // (ADR 0007); the panel only shows them. The quantity isn't clamped to the
 // maximum, so a request the simulation rejects shows its typed reason. No
-// pre-start duration estimate until #49 renames `ticksPerBatch` (issue #11
-// decision 11).
+// pre-start duration estimate yet (issue #11 decision 11); a later task may
+// show `ticksPerCase × quantity`.
 
 import type { FacilitySnapshot, GameSnapshot, ProductionJobSnapshot, RecipeOption } from "@eov/contracts";
 import { useState } from "react";

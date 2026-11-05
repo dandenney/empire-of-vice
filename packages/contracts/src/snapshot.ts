@@ -282,7 +282,8 @@ export interface RecipeOption {
   readonly quality: QualityTier;
   /** Inputs per output case. */
   readonly inputsPerCase: readonly MaterialLine[];
-  readonly ticksPerBatch: number;
+  /** The recipe's base ticks per case at 1× throughput; a job of N cases takes N × this. */
+  readonly ticksPerCase: number;
   /** Largest quantity startable now (materials, capacity, storage, cash). 0 if blocked. */
   readonly maxStartableQuantity: number;
   readonly blockedBy: RejectionReason | null;
