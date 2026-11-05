@@ -27,6 +27,9 @@ export function releaseRejection(state: GameState, reservationId: ReservationId)
 
 export function registerInventory(registry: SystemRegistry, _data: GameData, coordinator: TransactionCoordinator): void {
   registry.onCommand("RELEASE_RESERVATION", {
+    // `validate` runs at dispatch time only, for commands queued for a later
+    // tick (ADR 0004); the reservation may be released or consumed before then,
+    // so `apply` judges it again against the state of the tick it runs in.
     validate: (state, command) => releaseRejection(state, command.reservationId),
     apply: (state, command, ctx) => {
       const { reservationId } = command;

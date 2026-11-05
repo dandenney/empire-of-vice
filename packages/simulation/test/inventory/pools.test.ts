@@ -5,14 +5,17 @@ import { CORN, DISTILLERY_MAIN, FIRST_SHIPMENT_SCENARIO, GAME_DATA, MOONSHINE } 
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "../../src/game/index.ts";
 import {
+  addMaterial,
   addProduct,
   addReservation,
   consumeReservations,
+  findMaterialPool,
   findProductPool,
   InventoryError,
   releaseRejection,
   removeMaterial,
   removeProduct,
+  takeMaterial,
 } from "../../src/inventory/index.ts";
 
 const F = DISTILLERY_MAIN;
@@ -34,6 +37,19 @@ describe("low-level removal", () => {
     expect(() => removeMaterial(s, F, CORN, 1, cents(0))).toThrow(InventoryError);
     expect(findProductPool(removeProduct(s, F, MOONSHINE, "basic", 3, cents(1000)), F, MOONSHINE, "basic")).toBeUndefined();
   });
+
+  it("refuses an add that would overflow a pool's quantity or cost", () => {
+    const max = Number.MAX_SAFE_INTEGER;
+    const products = addProduct(blank(), F, MOONSHINE, "basic", max, cents(1));
+    expect(() => addProduct(products, F, MOONSHINE, "basic", 1, cents(0))).toThrow(InventoryError);
+    const pricey = addProduct(blank(), F, MOONSHINE, "basic", 1, cents(max));
+    expect(() => addProduct(pricey, F, MOONSHINE, "basic", 1, cents(1))).toThrow();
+
+    const materials = addMaterial(blank(), F, CORN, max, cents(1));
+    expect(() => addMaterial(materials, F, CORN, 1, cents(0))).toThrow(InventoryError);
+    const priceyCorn = addMaterial(blank(), F, CORN, 1, cents(max));
+    expect(() => addMaterial(priceyCorn, F, CORN, 1, cents(1))).toThrow();
+  });
 });
 
 describe("reservations", () => {
@@ -50,6 +66,22 @@ describe("reservations", () => {
     expect(consumed.state.productPools).toEqual([]);
     expect(consumed.state.reservations).toEqual([]);
     expect(() => consumeReservations(s, [contractRes(1, 1).id, contractRes(1, 1).id])).toThrow(InventoryError);
+  });
+
+  it("takes only unreserved materials, leaving a job's reservation intact", () => {
+    const jobRes: ReservationState = {
+      id: asId("Reservation", "res-job"),
+      facilityId: F,
+      goods: { kind: "MATERIAL", materialId: CORN },
+      quantity: 3,
+      holder: { kind: "PRODUCTION_JOB", jobId: asId("ProductionJob", "job-1") },
+    };
+    const s = addReservation(addMaterial(blank(), F, CORN, 5, cents(500)), jobRes);
+    expect(() => takeMaterial(s, F, CORN, 3)).toThrow(InventoryError);
+    const taken = takeMaterial(s, F, CORN, 2);
+    expect(taken.cost).toBe(200);
+    expect(findMaterialPool(taken.state, F, CORN)).toEqual({ facilityId: F, materialId: CORN, quantity: 3, totalCost: 300 });
+    expect(taken.state.reservations).toEqual([jobRes]);
   });
 
   it("lets the player release contract-held reservations only", () => {
