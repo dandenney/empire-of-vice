@@ -3,19 +3,13 @@
 // events, and the transaction coordinator (T02b) should reuse it for transactions
 // and events rather than writing its own.
 
-import { asId, type DynamicIdKind, type GameState, type Id } from "@eov/contracts";
+import { asId, DYNAMIC_ID_PREFIXES, type DynamicIdKind, type GameState, type Id } from "@eov/contracts";
 
-/** Prefixes match the contract fixtures ("cmd-1", "evt-1", "txn-1", "job-17", "res-4", ...). */
-export const ID_PREFIXES: Readonly<Record<DynamicIdKind, string>> = {
-  Command: "cmd",
-  Event: "evt",
-  Transaction: "txn",
-  ProductionJob: "job",
-  Delivery: "delivery",
-  ContractOffer: "offer",
-  Contract: "contract",
-  Reservation: "res",
-};
+/**
+ * The contracts' prefixes ("cmd-1", "evt-1", "txn-1", "job-17", "res-4", ...),
+ * re-exported so minting and `compareIds` can't drift apart.
+ */
+export const ID_PREFIXES: Readonly<Record<DynamicIdKind, string>> = DYNAMIC_ID_PREFIXES;
 
 /** Formats the ID a counter value would produce, without consuming it. */
 export function formatId<K extends DynamicIdKind>(kind: K, n: number): Id<K> {

@@ -51,7 +51,7 @@ describe("snapshot projection", () => {
   it("is registered for every game created through the package", () => {
     expect(SYSTEMS.map((s) => s.name)).toContain("snapshot projection (S0b)");
     expect(() => newGame().snapshot()).not.toThrow();
-    expect(() => newGameWithoutProjection().snapshot()).toThrow(/projection/);
+    expect(() => newGameWithoutProjection({ systems: SYSTEMS.filter((s) => s.name !== "snapshot projection (S0b)") }).snapshot()).toThrow(/projection/);
   });
 
   it("has the contract fixtures' shape at every step of the path", () => {
