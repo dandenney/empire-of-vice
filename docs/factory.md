@@ -39,6 +39,7 @@ Edit the issue in place, and list what changed in a comment, so the agent and th
 
 - One issue → one branch (`t02a-inventory`) → one PR. Parallel tasks run in separate git worktrees.
 - Locked acceptance tests (`// @locked`) come first, written by a human or a separate agent. The implementing agent may add tests but must not edit locked ones.
+- **Locked tests are a two-step dispatch.** When an issue names a locked test file, the orchestrator first starts a test-writer agent on the issue's branch. It writes only that file, commits it, and pushes. The implementing agent then starts from that commit. The PR states the locked commit's SHA, and the review agent checks that `git diff <locked SHA>..HEAD -- <locked file>` is empty.
 - If the spec is ambiguous or the contract is missing something, the agent stops and comments on the issue instead of guessing.
 
 ## 3. Checks (cheapest first)
