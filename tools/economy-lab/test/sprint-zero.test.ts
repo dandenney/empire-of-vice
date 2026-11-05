@@ -39,8 +39,9 @@ describe("sprint-zero runner", () => {
   // The Sprint Zero replay hash, quoted in PRs (factory.md §4). It changes whenever
   // the path's rules or placeholder game-data change; a PR that changes it says why.
   // History: fnv1a64:ac5215124cd58562 (S0a, issue #4); fnv1a64:356d462e35305432
-  // (issue #36: RESERVATION_RELEASED CONSUMED events and the VEHICLE_RETURN transaction).
+  // (issue #36: RESERVATION_RELEASED CONSUMED events and the VEHICLE_RETURN transaction);
+  // fnv1a64:cc8a53a058022ea5 (T02d, issue #8: decision-1 buyer budgets, demand, and wants; decision-2 market baselines D₀/S₀).
   it("has a pinned replay hash", async () => {
-    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:356d462e35305432"`);
+    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:cc8a53a058022ea5"`);
   });
 });
