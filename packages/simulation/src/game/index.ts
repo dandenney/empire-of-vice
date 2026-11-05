@@ -5,5 +5,28 @@
 export { createInitialState, loadGame, newGame, ScenarioSetupError, simulationOptions, type GameSetup } from "./new-game.ts";
 export { createGameRegistry, SYSTEMS, type RegisterSystem, type SystemEntry } from "./systems.ts";
 export { checkInvariants, CoordinatorError, createCoordinator } from "../economy/coordinator/index.ts";
-export { accountBalances, balanceSheet, cashBalance, entryTotals, type AccountBalances, type BalanceSheet } from "../economy/ledger/index.ts";
+export {
+  accountBalances,
+  balanceSheet,
+  cargoLossEntries,
+  cashBalance,
+  dispatchEntries,
+  entryTotals,
+  equipmentPurchaseEntries,
+  impairmentEntries,
+  ledgerBalances,
+  materialPurchaseEntries,
+  payDownEntries,
+  payOrAccrueEntries,
+  productionEntries,
+  productionWriteOffEntries,
+  returnFromTransitEntries,
+  saleEntries,
+  type AccountBalances,
+  type BalanceSheet,
+  type ExpenseAccount,
+  type PayOrAccrueCharge,
+  type ProductionCosts,
+  type SaleAmounts,
+} from "../economy/ledger/index.ts";
 export { allocateRemovalCost, availableMaterial, availableProduct } from "../inventory/index.ts";
