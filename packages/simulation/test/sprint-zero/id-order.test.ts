@@ -61,7 +61,10 @@ describe("ID order in state", () => {
   });
 
   it("keeps reservations in compareIds order, not text order", () => {
-    let state = newGame().state;
+    // addReservation needs the goods in a pool (T02a #5): stock the 4 corn first.
+    const stocked = newGame();
+    expectApplied(stocked.dispatch({ command: buyCorn(4) }));
+    let state = stocked.state;
     for (const n of [10, 9, 2, 100]) state = addReservation(state, reservation(n));
     expectIdOrder(
       state.reservations.map((r) => r.id),

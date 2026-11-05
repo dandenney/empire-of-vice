@@ -8,6 +8,7 @@ import type { TransactionCoordinator } from "@eov/contracts";
 import type { GameData } from "@eov/game-data";
 import { createCoordinator } from "../economy/coordinator/coordinator.ts";
 import { registerMarket } from "../economy/market/market.ts";
+import { registerInventory } from "../inventory/release.ts";
 import { createRegistry, type SystemRegistry } from "../kernel/registry.ts";
 import { registerLogistics } from "../logistics/logistics.ts";
 import { registerProduction } from "../production/production.ts";
@@ -26,6 +27,7 @@ export const SYSTEMS: readonly SystemEntry[] = [
   { name: "production (S0 stub, T02c)", register: registerProduction },
   { name: "logistics (S0 stub, T03)", register: registerLogistics },
   PROJECTION_SYSTEM,
+  { name: "inventory (T02a)", register: registerInventory },
 ];
 
 /** A registry with every system in SYSTEMS, sharing one coordinator. */

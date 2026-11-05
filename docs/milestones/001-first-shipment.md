@@ -13,7 +13,8 @@ T00a ─► T00b ─► T01 ─► S0a ─► S0b ─┬─► T02a ─┬─►
                                    │         │                      │         │
                                    │         └─► T03 ───────────────┴─────────┘
                                    │
-                                   └─► T04a ─► T04b ─────────────────────────────────────► T06
+                                   └─► T04a ─┬─► T04b ───────────────────────────────────► T06
+                                             └─► T04c ───────────────────────────────────► T06
 T05 ─► T07
 ```
 
@@ -33,9 +34,10 @@ T05 ─► T07
 | T03 | Logistics and route disruption | T02a | agent |
 | T04a | Management panels and speed scheduler | S0b | agent |
 | T04b | PixiJS map | T04a | agent |
+| T04c | Market, Contracts and Facility panels (split from T04a, #50) | T04a | agent |
 | T07a | Economy smoke loop (balance early warning) | T02c, T02d, T01b | agent |
 | T05 | Progression, scenario, repeat orders, victory (PROG-001) | T02c, T02e, T03, T07a | agent |
-| T06 | Integration and persistence | T04a, T04b, T05 | agent |
+| T06 | Integration and persistence | T04a, T04b, T04c, T05 | agent |
 | T07 | Balance laboratory (GDD §13) | T05 | agent |
 
 ### Why Sprint Zero first
@@ -45,7 +47,7 @@ GDD §12: before parallelizing, build one complete path, *create game → buy in
 ### Parallelism
 
 - T00a → T00b (with you) → T01 → S0a → S0b, strictly one at a time.
-- After S0b: T02a, T02b, and T04a in parallel. T04b follows T04a.
+- After S0b: T02a, T02b, and T04a in parallel. T04b and T04c follow T04a.
 - T01b (a follow-up from T01 review) can run alongside S0a: it touches only the kernel, the command queue, and one doc comment in contracts. It has to land before T07a.
 - After T02a + T02b: T02c, T02d, and T03 in parallel.
 
@@ -78,3 +80,8 @@ GDD §12: before parallelizing, build one complete path, *create game → buy in
 | Contract batch (#36) | #39 | y | 0 | Nothing blocking. Mutation testing found that removing the job and delivery sorts goes uncaught (follow-up #44). Merged by: human |
 | S0b | #40 | n | 0 (post-merge review) | Merged before review, by a human; the post-merge review approved. Merged in parallel with #39, and the combination turned `main` red (`VEHICLE_RETURN` missing from the projection map, stale e2e hash), even though both PRs were green on their own. Fixed in #42. Latent bugs filed as #43. Merged by: human |
 | S0b-fix (#41) | #42 | y | 0 | Nothing blocking. A mutation survived because the no-cash guard has no test (added to #43). First merge by the orchestrator under the new rules. Merged by: auto |
+| S0b-follow (#44) | #46 | n | 0 | The implementing agent found that moving the projection broke an assertion in a file #43 owned. The orchestrator gave #44 that one assertion (§8), so it was fixed before review. Review: nothing blocking; mutation tests confirmed the new ID-order tests bite. Merged by: auto |
+| S0b-follow (#43) | #47 | y | 0 | Nothing blocking. The review checked that the throwaway-kernel dry run leaves the state hash and RNG unchanged, and measured its cost. Left out: `START_PRODUCTION` throws on overflow (rule 6), passed to #7. Approval carried over after merging `main`. Merged by: auto |
+| Locked-test dispatch (orchestrator) | #51 | n | 2 | Round 1: the locked file conflicted with §5's owned-files and no-locked checks, and §7.3 didn't cover the test-writer step. Round 2: the locked SHA came from the PR body, so an implementer could certify its own edit. It's now recorded by the orchestrator. Approval carried over after merging `main`. Merged by: auto |
+| T02b (#6) | #55 | y | 0 | Nothing blocking. First two-step locked dispatch to merge. The review used 44 one-line mutations and an instrumented run. The run checked that the coordinator stays incremental (0 full recomputes vs 370 for a naive version). Surviving mutants: the `cashAvailable < 0` clamp, the memo length guard, and the incrementality itself (non-blocking). Approval carried over after merging metrics-only `main`. Merged by: auto |
+| T02a (#5) | #53 | n | 1 | Review mutation testing: `takeMaterial` ignored reservations and no test caught it (locked tests only checked `takeProduct`). Fixed in round 1 with a test for unreserved-only removal, plus overflow-guard tests. Approval carried over after merging `main` (incl. #55). Merged by: auto |

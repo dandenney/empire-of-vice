@@ -1,8 +1,12 @@
-// S0 stub: extended by T02b (ADR 0010 invariants, FIN-001 accounting acceptance).
+// ADR 0010 invariants, FIN-001 accounting acceptance (T02b, issue #6).
 //
 // Checked against the staged state, with the new transaction already appended.
-// Recomputes balances from the whole log on every commit: fine for an M001 game
-// (a few thousand transactions); T02b can make it incremental if it ever matters.
+// Balances come from `ledgerBalances`, memoized per log array outside state
+// (decision 2). The coordinator builds the staged log with `appendTransaction`,
+// so on commit they're the previous log's balances plus this transaction's
+// entries: no recompute of the whole log. A staged change that replaced the log
+// itself misses the memo and is recomputed in full, which is what catches a
+// corrupted log (BALANCE_SHEET_MISMATCH).
 
 import {
   addMoney,
@@ -14,7 +18,7 @@ import {
   type Money,
 } from "@eov/contracts";
 import { inventoryValue } from "../../inventory/pools.ts";
-import { accountBalances, balanceSheet, entryTotals } from "../ledger/ledger.ts";
+import { balanceSheetOfBalances, entryTotals, ledgerBalances } from "../ledger/ledger.ts";
 
 export function checkInvariants(state: GameState, transaction: LedgerTransaction): readonly InvariantViolation[] {
   const violations: InvariantViolation[] = [];
@@ -27,7 +31,7 @@ export function checkInvariants(state: GameState, transaction: LedgerTransaction
   const { debits, credits } = entryTotals(transaction.entries);
   if (debits !== credits) violations.push({ code: "LEDGER_UNBALANCED", debits, credits });
 
-  const balances = accountBalances(state.ledger.transactions);
+  const balances = ledgerBalances(state.ledger.transactions);
   if (balances.CASH < 0) violations.push({ code: "NEGATIVE_CASH", cash: balances.CASH });
 
   // Quantities and amounts that can't go below zero.
@@ -87,7 +91,7 @@ export function checkInvariants(state: GameState, transaction: LedgerTransaction
   }
 
   // Assets = liabilities + equity (including profit to date).
-  const sheet = balanceSheet(state);
+  const sheet = balanceSheetOfBalances(balances);
   const liabilitiesAndEquity = addMoney(addMoney(sheet.liabilities, sheet.equity), sheet.netIncome);
   if (sheet.assets !== liabilitiesAndEquity) {
     violations.push({ code: "BALANCE_SHEET_MISMATCH", assets: sheet.assets, liabilitiesAndEquity });
