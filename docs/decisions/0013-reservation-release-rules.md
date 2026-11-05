@@ -37,3 +37,7 @@ Removal for a sale or a transfer (`takeProduct`, `takeMaterial`) takes unreserve
 - `RESERVATION_RELEASED { reason: "DELIVERY_FAILED" }` is never emitted under the M001 rules. It's a candidate for removal in a later contract change; until then nothing emits it.
 - `RESERVATION_NOT_ACTIVE` covers both "no such reservation" and "not yours to release" (job-held). A distinct code would need a contract change; the current one is close enough for M001's UI.
 - T02c, T02e, and T03 call the inventory helpers and emit the events; they don't remove reservations by hand.
+
+#### Amendment, 2026-11-05 (ADR 0017, issue #7): a failed job's write-off includes its conversion cost
+
+Rule 4 still applies to the inputs, which are consumed at weighted-average cost and reported with `PRODUCTION_FAILED`. A failed job is also charged its labor and overhead, as a completed one would be, and the whole amount is written off to `LOSSES`. `ProductionFailedEvent.writtenOff` is therefore materials plus conversion: the `LOSSES` debit of the `PRODUCTION_WRITE_OFF` transaction.
