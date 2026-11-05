@@ -24,7 +24,9 @@ Main also constrains the design:
    - **Duration.** Otherwise a job takes `ceil(ticksPerCase × quantity × RATIO_SCALE × crew / (base × staffed))` ticks, computed exactly in BigInt with no intermediate rounding. When `crew = 0`, use `crew = staffed = 1`. The crew factor is folded into this one division, so durations never pass through a rounded throughput.
    - **Displayed ratio.** The throughput `Ratio` the snapshot shows (and `productionCapacityPerDay`) is `floor(base × staffed / crew)` ppm. It is for display only.
    - **T02c1** has no crew yet, so it uses `crew = staffed = 1`. Its `jobDuration(recipe, quantity, throughput)` then equals the formula above. T02c2 extends the helper to take the crew terms, and the results for a full crew stay the same.
-   - Example: the still alone, 2 of 3 workers, 10 cases of a 1 440-tick recipe gives `ceil(1440 × 10 × 3 / 2)` = 21 600 ticks.
+   - **Locked-test rule for T02c1.** Any T02c1 test that asserts a duration or `productionCapacityPerDay` with equipment that adds crew (the condenser) must set the facility's workers to at least the full crew (4 for the still plus the condenser) in its fixture state. T02c1 ignores workers, so this changes nothing there. Under T02c2 those numbers then still hold. The starting state (the still alone, 3 workers, crew 3) is already fully staffed, so its timing holds in both.
+   - **Rule 6 overflow.** T02c2's `INVALID_QUANTITY` overflow bound and `quantityCeiling` (#47) must use this crew-aware duration, which can be up to `crew / staffed` times longer.
+   - **Example:** the basic recipe (144 ticks per case) on the still alone with 2 of 3 workers takes `ceil(144 × 10 × 3 / 2)` = 2 160 ticks for 10 cases. With 3 workers it takes 1 440. With the condenser and 4 workers it takes `ceil(144 × 10 × 10⁶ × 4 / (1 400 000 × 4))` = 1 029.
    - `completesAt` is fixed when the job starts (ADR 0008). Later equipment or workforce changes don't re-time a running job.
    - When several jobs complete on the same tick, they're processed in job ID order (`compareIds`), and so are their failure draws.
 2. **One job at a time per facility.** A running job holds the facility's capacity. Starting a second one is rejected with `PRODUCTION_CAPACITY_EXCEEDED { requested, available: 0 }`. So is a start at a facility whose throughput is 0 (decision 1).
@@ -49,11 +51,11 @@ Main also constrains the design:
    - **Conversion cost.** A recipe's `laborPerCase` + `overheadPerCase` is the variable cost of a run. It is capitalized into the goods when the job completes, and paid in cash or accrued to `WAGES_PAYABLE`, as in FIN-001's worked example.
    - **Period costs.** Daily wages (the leaders' `dailyWage`, plus workers × `workerDailyWage`) and each facility's `dailyOverhead` are expensed at midnight and never capitalized.
    - Game-data defines each cost once, so no labor is counted twice.
-8. **Workforce.** `SET_WORKFORCE` rejects a count above the facility's maximum with `WORKFORCE_LIMIT_EXCEEDED`. While a job runs there, it also rejects a count below `min(workerCount, crew)`, with `INVALID_QUANTITY { field: "workerCount" }` until a dedicated code exists. It commits a `DAILY_SETTLEMENT` transaction with no entries, keyed `DAILY_SETTLEMENT:WORKFORCE:<commandId>`, and emits `WORKFORCE_CHANGED`. Setting the current count is accepted as a no-op: there is no transaction, no event, and no state change.
-9. **Midnight settlement.** The production system's midnight hook commits three transactions in order. `<day>` is the day that just ended.
-   1. Tonight's wages, in `DAILY_SETTLEMENT:WAGES:<day>`, through `payOrAccrueEntries(amount, cashBalance)`. This transaction is **skipped when the amount is 0**.
-   2. Tonight's overhead, in `DAILY_SETTLEMENT:OVERHEAD:<day>`, the same way. It is also skipped when the amount is 0.
-   3. Earlier `WAGES_PAYABLE` paid down in `DAILY_SETTLEMENT:PAYROLL:<day>`, by `min(WAGES_PAYABLE balance, cashBalance)`. This one **always commits**, even with no entries, and carries `DAY_SETTLED`.
+8. **Workforce.** `SET_WORKFORCE` rejects a count above the facility's maximum with `WORKFORCE_LIMIT_EXCEEDED`. While a job runs there, it also rejects a count below `min(workerCount, crew)`, with `INVALID_QUANTITY { field: "workerCount" }` until a dedicated code exists. It commits a `DAILY_SETTLEMENT` transaction with no entries, keyed `DAILY_SETTLEMENT:WORKFORCE:<commandId>`, and emits `WORKFORCE_CHANGED`. Setting the current count is accepted as a no-op: there is no transaction, no event, and no change to the facility. The command envelope is still appended to the command log, like any applied command.
+9. **Midnight settlement.** The production system's midnight hook commits three transactions in order. `<day>` is the day that just ended: `dayIndex(tick) − 1` at the midnight tick, which equals `DAY_SETTLED.dayIndex`.
+   1. Tonight's wages, in `DAILY_SETTLEMENT:WAGES:<day>`, through `payOrAccrueEntries({ amount, expense: "WAGES_EXPENSE", payable: "WAGES_PAYABLE", cashAvailable: cashBalance })`. This transaction is **skipped when the amount is 0**.
+   2. Tonight's overhead, in `DAILY_SETTLEMENT:OVERHEAD:<day>`, through `payOrAccrueEntries({ amount, expense: "OVERHEAD_EXPENSE", payable: "WAGES_PAYABLE", cashAvailable: cashBalance })`. It is also skipped when the amount is 0.
+   3. Earlier `WAGES_PAYABLE` paid down in `DAILY_SETTLEMENT:PAYROLL:<day>`, by `min(WAGES_PAYABLE balance, cashBalance)`, posted with `payDownEntries(amount, "WAGES_PAYABLE")`. This one **always commits**, even with no entries, and carries `DAY_SETTLED`.
 
    Each step reads `cashBalance` as it stands after the previous step commits, so cash never goes negative. The `DAY_SETTLED` fields are:
    - `wagesDue`: tonight's wages
@@ -63,9 +65,9 @@ Main also constrains the design:
    - `liabilitiesPaid`: step 3's paydown. In M001 that's `WAGES_PAYABLE` only; `PENALTIES_PAYABLE` paydown is T02e's
    - `transactionId`: step 3's ID
 
-   Overhead that has to accrue goes to `WAGES_PAYABLE`, so its later paydown shows under `WAGES` in the cash flow statement (ADR 0015).
+   **Cash flow (ADR 0015).** When overhead is paid in full, its transaction's accounts agree, and it files under `OVERHEAD`. When it is partly accrued, the accounts disagree (`OVERHEAD_EXPENSE` against `WAGES_PAYABLE`). The transaction then falls to the `DAILY_SETTLEMENT` default, so tonight's cash part files under `WAGES`, and so does the later paydown. M001 accepts that blur. It only happens when cash is short, and a dedicated overhead payable would need a contract change.
 
-   Separate transactions let the cash flow statement report `WAGES` and `OVERHEAD` separately (ADR 0015). The market's midnight hook (ADR 0016) runs first, in registration order. SIM-001 step 5 lists settling costs before replenishing supply, but the two hooks touch disjoint state (the ledger and payables here; markets, suppliers and buyers there), so the order has no observable effect beyond transaction IDs, and registration order fixes those.
+   Separate transactions are what let fully paid overhead report apart from wages. The market's midnight hook (ADR 0016) runs first, in registration order. SIM-001 step 5 lists settling costs before replenishing supply, but the two hooks touch disjoint state (the ledger and payables here; markets, suppliers and buyers there), so the order has no observable effect beyond transaction IDs, and registration order fixes those.
 10. **Leaders** have skill and loyalty (0–100) and a daily wage in game-data, and the snapshot shows them. In M001 neither skill nor loyalty has a mechanical effect.
 
 ## Alternatives considered
