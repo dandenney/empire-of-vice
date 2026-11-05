@@ -49,3 +49,13 @@ Architecture §4: the UI holds no authoritative state and renders read-only snap
 - T04a/T04b can build entirely against fixture snapshots (the fixtures come later in T00b).
 - Every system task has to fill its part of the snapshot. Adding a field is a contract change, and the plain-data test keeps new fields honest.
 - Some fields name tuning values that game-data defines (risk, wages, capacities). The snapshot only reports them.
+
+#### Amendment, 2026-11-04 (issue #36, from #34): what "sorted by ID" means
+
+Sorted as plain text, simulation-created IDs come out in the wrong order: `job-10` before `job-9`. So "sorted by ID" now means sorted with **`compareIds`** from contracts (`ids.ts`), the one ordering every package uses:
+
+- **Fixed-data IDs** (from game-data and scenario files) sort as text, by UTF-16 code unit. Never `localeCompare`, which depends on the runtime's locale.
+- **Simulation-created IDs** (`<prefix>-<n>`, with the prefixes in `DYNAMIC_ID_PREFIXES`) sort by prefix, then by numeric suffix: `job-9` before `job-10`. For one kind, that's creation order.
+- The order is total: two IDs compare equal only when they're the same string. `compareById` sorts records by their `id` field.
+
+Snapshot lists of simulation-created records (production jobs, deliveries, contract offers, contracts) follow it. Lists of fixed-data records keep their order, since `compareIds` orders fixed-data IDs as text. The snapshot fixtures were already in this order, so none of them changed.

@@ -314,7 +314,7 @@ export const gameEventSchema = z.discriminatedUnion("type", [
   ev("CONTRACT_COMPLETED", { contractId: idSchema("Contract"), outcomes: z.array(outcomeSchema) }),
   ev("RESERVATION_RELEASED", {
     reservationId: idSchema("Reservation"),
-    reason: z.enum(["PLAYER", "CONTRACT_ENDED", "PRODUCTION_FAILED", "DELIVERY_FAILED"]),
+    reason: z.enum(["PLAYER", "CONTRACT_ENDED", "PRODUCTION_FAILED", "DELIVERY_FAILED", "CONSUMED"]),
   }),
   ev("REPUTATION_CHANGED", {
     from: z.number().int().min(0).max(100),
@@ -350,7 +350,7 @@ const ledgerAccountSchema = z.enum(Object.keys(LEDGER_ACCOUNTS) as [LedgerAccoun
 const transactionKindSchema = z.enum([
   "OPENING_BALANCE", "MATERIAL_PURCHASE", "PRODUCTION", "PRODUCTION_WRITE_OFF", "EQUIPMENT_PURCHASE",
   "DISPATCH", "SALE", "TRANSFER", "CARGO_LOSS", "DAILY_SETTLEMENT", "INSTALLMENT_SETTLEMENT",
-  "RESERVATION", "ASSET_SALE",
+  "RESERVATION", "ASSET_SALE", "VEHICLE_RETURN",
 ] as const satisfies readonly TransactionKind[]);
 
 const ledgerEntrySchema = z.strictObject({

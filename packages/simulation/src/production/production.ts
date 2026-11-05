@@ -6,6 +6,8 @@
 // - The production phase completes due jobs: reserved materials are consumed at
 //   their pool cost, labor and overhead are added, and the total is capitalized
 //   into finished goods. No profit is recognized (FIN-001 production accounting).
+//   Each consumed reservation is reported with RESERVATION_RELEASED { reason:
+//   "CONSUMED" } in the completion transaction, before PRODUCTION_COMPLETED.
 //
 // Stub limits (T02c): one active job per facility, no throughput or storage
 // capacity, no workforce effect, no failure.
@@ -13,6 +15,7 @@
 import {
   addMoney,
   addTicks,
+  compareById,
   idempotencyKey,
   multiplyMoney,
   subtractMoney,
@@ -59,6 +62,7 @@ function completeJob(state: GameState, job: ProductionJobState, data: GameData, 
     tx.update((s) => removeMaterial(s, job.facilityId, materialId, reservation.quantity, cost));
   }
   tx.update((s) => removeReservations(s, job.reservationIds));
+  for (const reservationId of job.reservationIds) tx.emit({ type: "RESERVATION_RELEASED", reservationId, reason: "CONSUMED" });
 
   // Labor and overhead: paid in cash where possible, accrued otherwise (cash never goes negative).
   const conversion = conversionCost(recipe, job.quantity);
@@ -151,7 +155,7 @@ export function registerProduction(registry: SystemRegistry, data: GameData, coo
               holder: { kind: "PRODUCTION_JOB", jobId },
             });
           });
-          return { ...next, productionJobs: [...next.productionJobs, job] };
+          return { ...next, productionJobs: [...next.productionJobs, job].sort(compareById) };
         });
         tx.emit({ type: "PRODUCTION_STARTED", jobId, facilityId, recipeId, quantity, completesAt });
       }

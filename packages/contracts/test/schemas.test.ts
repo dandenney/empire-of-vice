@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import type { z } from "zod";
 import { day0Save, day0SaveFile, ids } from "../fixtures/index.ts";
 import {
+  asId,
   cents,
   commandEnvelopeSchema,
   commandRequestSchema,
@@ -14,6 +15,7 @@ import {
   saveFileSchema,
   saveGameSchema,
   saveHeaderSchema,
+  tick,
   type CommandEnvelope,
   type CommandRequest,
   type GameCommand,
@@ -149,5 +151,33 @@ describe("saves", () => {
   it("reads just the header of any version, so persistence can pick a migration path", () => {
     expect(saveHeaderSchema.parse({ format: "empire-of-vice/save", schemaVersion: 7, whatever: true }).schemaVersion).toBe(7);
     expect(saveHeaderSchema.safeParse({ format: "something-else", schemaVersion: 1 }).success).toBe(false);
+  });
+});
+
+describe("S0a contract gaps (issues #32, #33)", () => {
+  it("accepts a VEHICLE_RETURN transaction with no entries", () => {
+    const transaction: LedgerTransaction = {
+      id: asId("Transaction", "txn-9"),
+      tick: tick(300),
+      kind: "VEHICLE_RETURN",
+      idempotencyKey: "VEHICLE_RETURN:delivery-1",
+      entries: [],
+      eventIds: [asId("Event", "evt-12")],
+    };
+    expect(ledgerTransactionSchema.parse(roundTrip(transaction))).toEqual(transaction);
+    expect(ledgerTransactionSchema.safeParse({ ...transaction, kind: "VEHICLE_PARKED" }).success).toBe(false);
+  });
+
+  it("accepts RESERVATION_RELEASED with reason CONSUMED", () => {
+    const event: GameEvent = {
+      id: asId("Event", "evt-7"),
+      tick: tick(120),
+      causedBy: null,
+      type: "RESERVATION_RELEASED",
+      reservationId: asId("Reservation", "res-2"),
+      reason: "CONSUMED",
+    };
+    expect(gameEventSchema.parse(roundTrip(event))).toEqual(event);
+    expect(gameEventSchema.safeParse({ ...event, reason: "USED_UP" }).success).toBe(false);
   });
 });

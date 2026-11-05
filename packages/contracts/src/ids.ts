@@ -48,6 +48,23 @@ export const DYNAMIC_ID_KINDS = [
 ] as const satisfies readonly IdKind[];
 export type DynamicIdKind = (typeof DYNAMIC_ID_KINDS)[number];
 
+/**
+ * The prefix of each dynamic kind's IDs: `<prefix>-<n>` (ADR 0003). The simulation
+ * mints IDs with these prefixes, and `compareIds` uses them to recognize
+ * simulation-created IDs. Static IDs must not take the form `<prefix>-<n>` for any
+ * of these prefixes.
+ */
+export const DYNAMIC_ID_PREFIXES = {
+  Command: "cmd",
+  Event: "evt",
+  Transaction: "txn",
+  ProductionJob: "job",
+  Delivery: "delivery",
+  ContractOffer: "offer",
+  Contract: "contract",
+  Reservation: "res",
+} as const satisfies Readonly<Record<DynamicIdKind, string>>;
+
 export type Id<K extends IdKind> = string & { readonly [idBrand]: K };
 
 export type LocationId = Id<"Location">;
@@ -92,4 +109,60 @@ export function asId<K extends IdKind>(kind: K, value: string): Id<K> {
     throw new InvalidIdError(`Invalid ${kind} ID: ${JSON.stringify(value)}`);
   }
   return value as Id<K>;
+}
+
+// ---------------------------------------------------------------------------
+// Ordering (ADR 0007 and ADR 0008, amended for issue #34)
+// ---------------------------------------------------------------------------
+
+const DYNAMIC_PREFIX_SET: ReadonlySet<string> = new Set(Object.values(DYNAMIC_ID_PREFIXES));
+
+/** UTF-16 code-unit order. Never `localeCompare`, which depends on the runtime's locale. */
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Splits a simulation-created ID into its head (`"job-"`) and canonical digit
+ * suffix (`"17"`), or returns null for anything else: static IDs, and suffixes
+ * with leading zeros, which the simulation never mints.
+ */
+function splitDynamicId(id: string): { readonly head: string; readonly digits: string } | null {
+  const dash = id.indexOf("-");
+  if (dash <= 0 || dash !== id.lastIndexOf("-")) return null;
+  const digits = id.slice(dash + 1);
+  if (!DYNAMIC_PREFIX_SET.has(id.slice(0, dash)) || digits.length === 0) return null;
+  for (let i = 0; i < digits.length; i++) {
+    const c = digits.charCodeAt(i);
+    if (c < 48 || c > 57) return null; // not 0-9
+  }
+  if (digits.length > 1 && digits.charCodeAt(0) === 48) return null; // leading zero
+  return { head: id.slice(0, dash + 1), digits };
+}
+
+/**
+ * The one ID order for state and snapshot lists (ADR 0007, ADR 0008). A total order:
+ *
+ * - Static (fixed-data) IDs sort as text, by UTF-16 code unit.
+ * - Simulation-created IDs (`<prefix>-<n>`, see `DYNAMIC_ID_PREFIXES`) sort by
+ *   prefix, then by numeric suffix: `job-9` before `job-10`. That's creation order.
+ *
+ * Each ID's sort key is (head, number). A dynamic ID's head is `"<prefix>-"`; a
+ * static ID's head is the whole ID, with no number. A valid ID never ends in a
+ * hyphen, so a static and a dynamic ID never share a head, and comparing keys
+ * lexicographically is total and transitive. Suffixes compare as digit strings
+ * (length, then text), so there's no overflow at any length. Pure string logic,
+ * deterministic in every runtime.
+ */
+export function compareIds(a: string, b: string): number {
+  const da = splitDynamicId(a);
+  const db = splitDynamicId(b);
+  const byHead = compareText(da ? da.head : a, db ? db.head : b);
+  if (byHead !== 0 || !da || !db) return byHead;
+  return da.digits.length - db.digits.length || compareText(da.digits, db.digits);
+}
+
+/** Orders records by `id` with `compareIds`, for `Array.prototype.sort`. */
+export function compareById<T extends { readonly id: string }>(a: T, b: T): number {
+  return compareIds(a.id, b.id);
 }

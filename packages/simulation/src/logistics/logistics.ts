@@ -6,7 +6,8 @@
 //   change.
 // - The vehicles phase resolves arrivals. An outbound SALE arrival is paid cash
 //   on delivery: revenue and cost of goods sold are recognized now (FIN-001).
-//   The truck then drives home on the same route; its return emits VEHICLE_RETURNED.
+//   The truck then drives home on the same route. Its return moves no money: a
+//   VEHICLE_RETURN transaction with no entries, emitting VEHICLE_RETURNED (ADR 0010).
 //
 // Stub limits (T03, T02d, T02e): SALE only (TRANSFER finds no route between owned
 // facilities in the stub data; CONTRACT_INSTALLMENT has no contracts yet), one
@@ -15,6 +16,7 @@
 import {
   addMoney,
   addTicks,
+  compareById,
   divideMoney,
   idempotencyKey,
   ZERO_MONEY,
@@ -33,7 +35,6 @@ import {
 } from "@eov/contracts";
 import type { GameData, RouteDefinition } from "@eov/game-data";
 import { commitDeal, findCommitment, quoteDeal, settleDeal, type Deal } from "../economy/market/market.ts";
-import { emitEvent } from "../events/journal.ts";
 import { allocateRemovalCost, availableProduct, findProductPool, removeProduct } from "../inventory/pools.ts";
 import { allocateId, formatId } from "../kernel/ids.ts";
 import type { SystemRegistry, TickContext } from "../kernel/registry.ts";
@@ -126,20 +127,33 @@ function arriveForSale(
 }
 
 /**
- * The truck is home. No money moves, so this doesn't go through the coordinator:
- * it emits through the kernel's journal API (see the PR's contract gaps).
+ * The truck is home. No money moves, so this commits a VEHICLE_RETURN transaction
+ * with no entries (ADR 0010), keyed by the delivery so a return applies once.
  */
-function returnHome(state: GameState, vehicle: VehicleState, data: GameData, ctx: TickContext): GameState {
+function returnHome(
+  state: GameState,
+  vehicle: VehicleState,
+  data: GameData,
+  coordinator: TransactionCoordinator,
+  ctx: TickContext,
+): GameState {
   const trip = vehicle.trip!;
   const def = data.vehicles.find((v) => v.id === vehicle.id);
   const home = data.facilities.find((f) => f.id === def?.homeFacilityId);
   if (!home) throw new RangeError(`Vehicle ${vehicle.id} has no home facility`);
-  const parked = withVehicle(state, vehicle.id, null);
-  return emitEvent(
-    parked,
-    { type: "VEHICLE_RETURNED", vehicleId: vehicle.id, deliveryId: trip.deliveryId, locationId: home.locationId, returnedCargo: [] },
-    { tick: ctx.tick, causedBy: null },
-  ).state;
+  const tx = coordinator.begin(state, {
+    kind: "VEHICLE_RETURN",
+    idempotencyKey: idempotencyKey("VEHICLE_RETURN", trip.deliveryId),
+    tick: ctx.tick,
+    causedBy: null,
+  });
+  if (tx.status === "duplicate") return state;
+
+  tx.update((s) => withVehicle(s, vehicle.id, null));
+  tx.emit({ type: "VEHICLE_RETURNED", vehicleId: vehicle.id, deliveryId: trip.deliveryId, locationId: home.locationId, returnedCargo: [] });
+  const result = tx.commit();
+  if (result.status !== "committed") throw new RangeError(`Return of ${vehicle.id} from ${trip.deliveryId} was rejected: ${result.reason.code}`);
+  return result.state;
 }
 
 /** Validates a dispatch against current state (business rules). Returns what to stage, or why not. */
@@ -219,7 +233,7 @@ export function registerLogistics(registry: SystemRegistry, data: GameData, coor
         tx.update((s) => {
           const minted = allocateId(s, "Delivery").state;
           const unloaded = removeProduct(minted, homeId, line.productId, line.quality, line.quantity, cost);
-          return { ...unloaded, deliveries: [...unloaded.deliveries, delivery] };
+          return { ...unloaded, deliveries: [...unloaded.deliveries, delivery].sort(compareById) };
         });
         tx.update((s) =>
           withVehicle(s, vehicleId, { deliveryId, routeId: route.id, leg: "OUTBOUND", departedAt: ctx.tick, arrivesAt, delayed: false }),
@@ -245,7 +259,7 @@ export function registerLogistics(registry: SystemRegistry, data: GameData, coor
       const trip = vehicle.trip;
       if (!trip || trip.arrivesAt > ctx.tick) continue;
       if (trip.leg === "RETURN") {
-        s = returnHome(s, vehicle, data, ctx);
+        s = returnHome(s, vehicle, data, coordinator, ctx);
         continue;
       }
       const delivery = s.deliveries.find((d) => d.id === trip.deliveryId);
