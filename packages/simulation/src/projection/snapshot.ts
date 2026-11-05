@@ -5,8 +5,9 @@
 // plain data, explicit nulls, display names from game-data, lists sorted by ID
 // (fixed-data IDs as text; simulation-created records keep state order, which
 // is creation order, until #34 settles ID ordering), and `blockedBy` taken from
-// the rejection the command handler itself would return (a dry run against the
-// current state, discarded afterwards), so the UI never re-implements a rule.
+// the rejection a real dispatch would return (a dispatch on a throwaway kernel
+// over the current state, discarded afterwards), so the UI never re-implements
+// a rule.
 //
 // Sections whose system doesn't exist yet report what state and game-data hold
 // and nothing more: contracts are empty lists (T02e), the progression ladder is
@@ -15,17 +16,14 @@
 // see UNDEFINED_IN_GAME_DATA below.
 
 import {
-  dayIndex,
-  isMidnight,
+  addMoney,
   qualityRank,
   ratioOf,
   SNAPSHOT_RECENT_EVENTS,
-  tick,
   ZERO_MONEY,
   divideMoney,
   type BuyerSnapshot,
   type ClockSnapshot,
-  type CommandEnvelope,
   type FacilitySnapshot,
   type FacilityState,
   type GameSnapshot,
@@ -42,11 +40,11 @@ import {
   type VehicleSnapshot,
 } from "@eov/contracts";
 import type { GameData, RecipeDefinition } from "@eov/game-data";
-import { clockAt } from "../clock/calendar.ts";
+import { cashBalance } from "../economy/ledger/ledger.ts";
 import { quoteDeal } from "../economy/market/market.ts";
 import { availableMaterial } from "../inventory/pools.ts";
-import { formatId } from "../kernel/ids.ts";
 import type { ProjectionContext, SystemRegistry } from "../kernel/registry.ts";
+import { createSimulation } from "../kernel/simulation.ts";
 import { projectFinance } from "./finance.ts";
 
 /**
@@ -93,39 +91,72 @@ function named<T extends { readonly id: string; readonly name: string }>(list: r
 // ---------------------------------------------------------------------------
 
 /**
- * Runs START_PRODUCTION's handler against `state` as if it were dispatched now,
- * and returns its rejection reason, or null if it would apply. The handler is a
- * pure function, and its result is discarded, so nothing changes.
+ * Dispatches START_PRODUCTION on a throwaway kernel over `state` and returns
+ * the rejection reason, or null if it would apply. It goes through the kernel's
+ * own dispatch path, so commands queued for the next tick apply first, exactly
+ * as they would for a real dispatch. The throwaway kernel is discarded and
+ * `state` is never changed.
  */
 function startProductionRejection(state: GameState, command: StartProductionCommand, deps: ProjectionDeps, startDate: ProjectionContext["startDate"]): RejectionReason | null {
-  const at = tick(state.tick + 1);
-  const envelope: CommandEnvelope = {
-    id: formatId("Command", state.counters.nextId.Command),
-    scheduledTick: at,
-    sequence: state.counters.nextCommandSequence,
-    command,
-  };
-  const ctx = { tick: at, dayIndex: dayIndex(at), isMidnight: isMidnight(at), clock: clockAt(startDate, at), envelope };
-  const outcome = deps.registry.commandHandler("START_PRODUCTION").apply(state, command as never, ctx);
-  return outcome.status === "rejected" ? outcome.reason : null;
+  const probe = createSimulation(state, { registry: deps.registry, startDate, gameDataVersion: deps.data.version });
+  const result = probe.dispatch({ command });
+  return result.status === "rejected" ? result.reason : null;
+}
+
+/**
+ * The largest quantity START_PRODUCTION can be asked about without its
+ * arithmetic leaving the safe-integer range (labor cost, completion tick, input
+ * totals). A search bound, not a gameplay limit; at least 1.
+ */
+function quantityCeiling(state: GameState, recipe: RecipeDefinition): number {
+  const safe = Number.MAX_SAFE_INTEGER;
+  let ceiling = safe;
+  const perCase = addMoney(recipe.laborPerCase, recipe.overheadPerCase);
+  if (perCase > 0) ceiling = Math.min(ceiling, Math.floor(safe / perCase));
+  if (recipe.ticksPerCase > 0) ceiling = Math.min(ceiling, Math.floor((safe - (state.tick + 1)) / recipe.ticksPerCase));
+  for (const input of recipe.inputsPerCase) if (input.quantity > 0) ceiling = Math.min(ceiling, Math.floor(safe / input.quantity));
+  return Math.max(1, ceiling);
+}
+
+/**
+ * What the current state's stock and cash allow, as a first guess for the
+ * search. Commands queued for the next tick can change both, so the search
+ * checks the guess against the handler rather than trusting it.
+ */
+function quantityGuess(state: GameState, facility: FacilityState, recipe: RecipeDefinition, ceiling: number): number {
+  let guess = ceiling;
+  for (const input of recipe.inputsPerCase) {
+    if (input.quantity > 0) guess = Math.min(guess, Math.floor(availableMaterial(state, facility.id, input.materialId) / input.quantity));
+  }
+  const perCase = addMoney(recipe.laborPerCase, recipe.overheadPerCase);
+  if (perCase > 0) guess = Math.min(guess, Math.floor(cashBalance(state) / perCase));
+  return Math.max(1, guess);
 }
 
 function recipeOption(state: GameState, facility: FacilityState, recipe: RecipeDefinition, deps: ProjectionDeps, ctx: ProjectionContext): RecipeOption {
   const command = (quantity: number): StartProductionCommand => ({ type: "START_PRODUCTION", facilityId: facility.id, recipeId: recipe.id, quantity });
-  const rejection = (quantity: number) => startProductionRejection(state, command(quantity), deps, ctx.startDate);
-  const blockedBy = rejection(1);
+  const accepts = (quantity: number): boolean => startProductionRejection(state, command(quantity), deps, ctx.startDate) === null;
+  const blockedBy = startProductionRejection(state, command(1), deps, ctx.startDate);
   let maxStartableQuantity = 0;
   if (blockedBy === null) {
     // Validity is monotone in quantity (more cases need more materials and cash),
-    // so binary-search the largest accepted quantity under the materials bound.
+    // so binary-search the largest accepted quantity in [1, ceiling]. The bounds
+    // are finite even for a recipe with no inputs or no cost. Checking the guess
+    // and the one above it first settles the usual case in two dispatches.
     let low = 1;
-    let high = Math.max(
-      1,
-      Math.min(...recipe.inputsPerCase.map((input) => Math.floor(availableMaterial(state, facility.id, input.materialId) / input.quantity))),
-    );
+    let high = quantityCeiling(state, recipe);
+    const guess = Math.min(high, quantityGuess(state, facility, recipe, high));
+    if (guess > low) {
+      if (accepts(guess)) low = guess;
+      else high = guess - 1;
+    }
+    if (low === guess && low < high) {
+      if (accepts(low + 1)) low += 1;
+      else high = low;
+    }
     while (low < high) {
       const mid = low + Math.ceil((high - low) / 2);
-      if (rejection(mid) === null) low = mid;
+      if (accepts(mid)) low = mid;
       else high = mid - 1;
     }
     maxStartableQuantity = low;
@@ -352,9 +383,13 @@ function projectMarket(state: GameState, data: GameData, clock: ClockSnapshot): 
         willDeal: state.family.reputation >= minimumReputation,
         budgetRemaining: b.budgetRemaining,
         wants: b.wants.map((w) => {
-          // The liquidity cap comes from the same rule a dispatch is checked with (quoteDeal).
-          const probe = quoteDeal(state, b.id, w.unitPrice, { productId: w.productId, quality: w.minimumQuality, quantity: Number.MAX_SAFE_INTEGER });
-          const maxAcceptableQuantity = "code" in probe ? (probe.code === "BUYER_WILL_TAKE_LESS" ? probe.acceptable : 0) : w.demandRemaining;
+          // The liquidity cap comes from the same rule a dispatch is checked with
+          // (quoteDeal), asked about one case more than the want's demand remaining.
+          // Its acceptable quantity is never above the demand remaining, so the
+          // probe is always BUYER_WILL_TAKE_LESS and carries the cap. Any other
+          // answer means no deal at this quote: 0.
+          const probe = quoteDeal(state, b.id, w.unitPrice, { productId: w.productId, quality: w.minimumQuality, quantity: w.demandRemaining + 1 });
+          const maxAcceptableQuantity = "code" in probe && probe.code === "BUYER_WILL_TAKE_LESS" ? probe.acceptable : 0;
           return {
             productId: w.productId,
             productName: named(data.products, w.productId, "product").name,
