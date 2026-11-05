@@ -1,6 +1,6 @@
 import { SAVE_SCHEMA_VERSION, type SaveMeta } from "@eov/contracts";
 import { BASIC_MOONSHINE_RECIPE, CORN, CROSSROADS_ROADHOUSE, DISTILLERY_MAIN, MILLERS_FEED, MODEL_TT_TRUCK, MOONSHINE, SUGAR } from "@eov/game-data";
-import { loadGame, newGame } from "@eov/simulation/game";
+import { loadGame, newGame } from "@eov/simulation";
 import { describe, expect, it } from "vitest";
 import { createSaveFile, MemoryStorageAdapter, parseSaveFile, readSave, serializeSaveFile, writeSave } from "../src/index.ts";
 

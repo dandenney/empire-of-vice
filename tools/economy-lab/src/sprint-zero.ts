@@ -18,8 +18,7 @@ import {
   type RecipeDefinition,
 } from "@eov/game-data";
 import { MemoryStorageAdapter, readSave, writeSave } from "@eov/persistence";
-import type { KernelSimulation } from "@eov/simulation";
-import { accountBalances, balanceSheet, loadGame, newGame, type BalanceSheet } from "@eov/simulation/game";
+import { accountBalances, balanceSheet, loadGame, newGame, type BalanceSheet, type KernelSimulation } from "@eov/simulation";
 
 export interface SprintZeroStep {
   readonly step: string;

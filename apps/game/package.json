@@ -9,7 +9,12 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
-    "test:e2e": "playwright test --pass-with-no-tests"
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@eov/contracts": "workspace:*",
+    "@eov/persistence": "workspace:*",
+    "@eov/simulation": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
