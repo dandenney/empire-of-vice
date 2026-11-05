@@ -145,8 +145,14 @@ describe("snapshot projection", () => {
         completedContracts: { current: 0, target: 0 },
       },
     });
-    expect(distillery(s).equipmentOptions).toEqual([]);
-    expect(distillery(s).equipmentSlots).toEqual({ used: 1, total: 0 });
+    // Equipment options and slots come from game-data since T02c1 (#7): every unowned item, by ID.
+    const owned = ["copper-still"];
+    expect(distillery(s).equipmentOptions.map((o) => o.equipmentId)).toEqual(
+      GAME_DATA.equipment.map((e) => e.id).filter((id) => !owned.includes(id)).sort(),
+    );
+    const spec = GAME_DATA.facilityProduction.find((f) => f.facilityId === DISTILLERY_MAIN)!;
+    expect(distillery(s).equipmentSlots).toEqual({ used: 1, total: spec.equipmentSlots });
+    expect(distillery(s).storage).toEqual({ used: 0, capacity: spec.baseStorage });
     expect(distillery(s).workforce).toEqual({ workers: 3, maximum: 0, dailyWagePerWorker: GAME_DATA.workforce.workerDailyWage });
   });
 
