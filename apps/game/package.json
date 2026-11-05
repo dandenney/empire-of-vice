@@ -9,16 +9,26 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
+    "test": "vitest run",
     "test:e2e": "playwright test"
   },
   "dependencies": {
     "@eov/contracts": "workspace:*",
+    "@eov/game-data": "workspace:*",
     "@eov/persistence": "workspace:*",
-    "@eov/simulation": "workspace:*"
+    "@eov/simulation": "workspace:*",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zustand": "^5.0.16"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
     "@types/node": "^24.19.2",
-    "vite": "^8.3.5"
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "fast-check": "^4.10.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.1.0"
   }
 }
