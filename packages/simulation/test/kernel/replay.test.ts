@@ -65,12 +65,15 @@ const newSeen = (): Seen => ({ immediate: 0, queued: 0, dispatchRejected: 0, app
  *
  * The replay procedure (ADR 0004 amendment, issue #66): place the envelopes due
  * at or before the end tick, advance to the end tick, then place the envelopes
- * due at end tick + 1. Only immediate dispatches made on the run's last tick can
- * be due then (a queued command is logged only once its tick is processed), and
- * placing them after the advance applies them at once, as the original run did.
- * Placed before the advance, they'd stay queued and never apply.
+ * due at end tick + 1. Only commands applied on the run's last tick can be due
+ * then: immediate dispatches, and any queued commands for end tick + 1 that such
+ * a dispatch drained ahead of itself. Placing them after the advance, in log
+ * order, applies them at once, as the original run did. Placed before the
+ * advance, they'd stay queued and never apply.
+ *
+ * Returns how many envelopes were due at end tick + 1.
  */
-function checkRun(steps: readonly Step[], tail: number, catchUp: readonly boolean[], seen: Seen): void {
+function checkRun(steps: readonly Step[], tail: number, catchUp: readonly boolean[], seen: Seen): number {
   const original = fakeSimulation();
   const run: Run = { results: [], events: [] };
   const results = run.results as Run["results"][number][];
@@ -163,6 +166,7 @@ function checkRun(steps: readonly Step[], tail: number, catchUp: readonly boolea
     // The same events, with the same IDs: including every COMMAND_REJECTED.
     expect(replayed.takeEvents()).toEqual(events);
   }
+  return trailing.length;
 }
 
 describe("command log replay (T01b)", () => {
@@ -175,7 +179,9 @@ describe("command log replay (T01b)", () => {
         fc.integer({ min: 0, max: 600 }),
         // Per log entry: in the incremental replay, advance to just before its tick first?
         fc.array(fc.boolean(), { maxLength: 60 }),
-        (steps, tail, catchUp) => checkRun(steps, tail, catchUp, seen),
+        (steps, tail, catchUp) => {
+          checkRun(steps, tail, catchUp, seen);
+        },
       ),
       { numRuns: 200 },
     );
@@ -199,8 +205,37 @@ describe("command log replay (T01b)", () => {
       { kind: "advance", ticks: 370 },
       { kind: "dispatch", command: setWorkforce(FACILITIES[0]!, 0), when: { kind: "now" } },
     ];
-    // As found (no incremental catch-up), and with every incremental placement caught up.
-    checkRun(steps, 0, [], newSeen());
-    checkRun(steps, 0, Array<boolean>(steps.length).fill(true), newSeen());
+    // The run ends at tick 1919, so the immediate dispatch (due 1920) also drains
+    // the start state's queued cmd-2 (due 1920) ahead of itself: two envelopes are
+    // due at end tick + 1. As found (no incremental catch-up), and with every
+    // incremental placement caught up.
+    expect(checkRun(steps, 0, [], newSeen())).toBe(2);
+    expect(checkRun(steps, 0, Array<boolean>(steps.length).fill(true), newSeen())).toBe(2);
+  });
+
+  // The two ways into end tick + 1 on their own (#68 review), after the start
+  // state's queue has run out. The run ends with no tail on an immediate dispatch,
+  // which is logged for E + 1 before that tick is processed.
+  it("replays an immediate dispatch on the run's last tick, with nothing queued (issue #66)", () => {
+    const steps: Step[] = [
+      { kind: "advance", ticks: 1_400 },
+      { kind: "dispatch", command: setWorkforce(FACILITIES[0]!, 1), when: { kind: "now" } },
+    ];
+    expect(checkRun(steps, 0, [], newSeen())).toBe(1);
+    expect(checkRun(steps, 0, Array<boolean>(steps.length).fill(true), newSeen())).toBe(1);
+  });
+
+  // A command queued for E + 1, then an immediate dispatch at E that drains it
+  // ahead of itself: the queued command is logged for E + 1 too, before that tick
+  // is processed, and both replay after the advance, in log order.
+  it("replays a queued command drained by an immediate dispatch on the run's last tick (issue #66)", () => {
+    const steps: Step[] = [
+      { kind: "advance", ticks: 1_400 },
+      { kind: "dispatch", command: setWorkforce(FACILITIES[1]!, 2), when: { kind: "offset", n: 5 } },
+      { kind: "advance", ticks: 4 },
+      { kind: "dispatch", command: setWorkforce(FACILITIES[0]!, 1), when: { kind: "now" } },
+    ];
+    expect(checkRun(steps, 0, [], newSeen())).toBe(2);
+    expect(checkRun(steps, 0, Array<boolean>(steps.length).fill(true), newSeen())).toBe(2);
   });
 });
