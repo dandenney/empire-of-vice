@@ -30,7 +30,7 @@ export function DashboardPanel({ snapshot }: PanelProps) {
       <dl>
         <dt>{C.date}</dt>
         <dd data-testid="dashboard-date">
-          {formatGameDate(clock.date)} ({C.day(clock.dayIndex)}, {COMMON_COPY.tick(clock.tick)})
+          {C.dateLine(formatGameDate(clock.date), C.day(clock.dayIndex), COMMON_COPY.tick(clock.tick))}
         </dd>
         <dt>{C.cash}</dt>
         <dd data-testid="dashboard-cash">{formatMoney(finance.cash)}</dd>

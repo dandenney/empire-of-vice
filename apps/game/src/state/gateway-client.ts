@@ -11,6 +11,7 @@
 
 import type { CommandResult, GameEvent, GameSnapshot, SaveLoadError, SaveMeta } from "@eov/contracts";
 import { readSave, writeSave, type StorageAdapter } from "@eov/persistence";
+import { WORKER_COPY } from "../workers/copy.ts";
 import type { RequestId, WorkerMessage, WorkerRequest, WorkerResponse } from "../workers/protocol.ts";
 import { PAUSED_STATUS, type SchedulerStatus, type Speed } from "../workers/scheduler.ts";
 
@@ -155,6 +156,6 @@ export class GatewayClient {
   }
 
   #unexpected(response: WorkerResponse): GatewayError {
-    return new GatewayError(response.type === "ERROR" ? response.message : `Unexpected worker response ${response.type}`);
+    return new GatewayError(response.type === "ERROR" ? response.message : WORKER_COPY.unexpectedResponse(response.type));
   }
 }

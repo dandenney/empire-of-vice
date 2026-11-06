@@ -6,6 +6,8 @@ export const PRODUCTION_COPY = {
   capacity: (casesPerDay: number) => `Capacity: ${casesPerDay} cases per day`,
   storage: (used: number, capacity: number) => `Storage: ${used} of ${capacity}`,
   workforce: (workers: number, maximum: number) => `Workers: ${workers} of ${maximum}`,
+  /** "Capacity … · Storage … · Workers …". Separate parts, so each renders as its own text node, as before #58. */
+  facilitySummary: (capacity: string, storage: string, workforce: string): readonly string[] => [capacity, " · ", storage, " ·", " ", workforce],
   materials: "Materials",
   noMaterials: "No materials in stock.",
   materialLine: (name: string, quantity: number, reserved: number) => `${name}: ${quantity} (${reserved} reserved)`,
@@ -27,5 +29,7 @@ export const PRODUCTION_COPY = {
   noJobs: "Nothing in production.",
   jobLine: (quantity: number, recipe: string, quality: string) => `${quantity} × ${recipe} (${quality})`,
   jobTiming: (startedAt: number, completesAt: number) => `started tick ${startedAt}, completes tick ${completesAt}`,
+  /** Separate parts, so each renders as its own text node, as before #58. */
+  jobSummary: (line: string, timing: string): readonly string[] => [line, ", ", timing],
   jobProgressLabel: (recipe: string) => `Progress of ${recipe}`,
 } as const;

@@ -9,7 +9,7 @@
 
 import type { FacilitySnapshot, GameSnapshot, ProductionJobSnapshot, RecipeOption } from "@eov/contracts";
 import { useState } from "react";
-import { describeOutcome, describeReason } from "../../components/format.ts";
+import { describeOutcome, describeReason, formatQuality } from "../../components/format.ts";
 import { COMMON_COPY } from "../../components/copy.ts";
 import { useCommand } from "../../components/use-command.ts";
 import type { PanelProps } from "../registry.ts";
@@ -27,7 +27,7 @@ function RecipeRow({ facility, recipe }: { readonly facility: FacilitySnapshot; 
   return (
     <tr data-testid={testId}>
       <th scope="row">{recipe.name}</th>
-      <td>{recipe.quality}</td>
+      <td>{formatQuality(recipe.quality)}</td>
       <td>
         <ul>
           {recipe.inputsPerCase.map((i) => (
@@ -62,7 +62,7 @@ function JobItem({ job, facility, tick }: { readonly job: ProductionJobSnapshot;
   const recipe = facility.recipes.find((r) => r.recipeId === job.recipeId)?.name ?? job.recipeId;
   return (
     <li data-testid={`job-${job.id}`}>
-      {C.jobLine(job.quantity, recipe, job.quality)}, {C.jobTiming(job.startedAt, job.completesAt)}{" "}
+      {C.jobSummary(C.jobLine(job.quantity, recipe, formatQuality(job.quality)), C.jobTiming(job.startedAt, job.completesAt))}{" "}
       <progress
         max={job.completesAt - job.startedAt}
         value={Math.min(Math.max(tick - job.startedAt, 0), job.completesAt - job.startedAt)}
@@ -79,8 +79,11 @@ function FacilitySection({ facility, snapshot }: { readonly facility: FacilitySn
     <section data-testid={`facility-${facility.id}`} aria-labelledby={`facility-${facility.id}-title`}>
       <h3 id={`facility-${facility.id}-title`}>{facility.name}</h3>
       <p>
-        {C.capacity(facility.productionCapacityPerDay)} · {C.storage(facility.storage.used, facility.storage.capacity)} ·{" "}
-        {C.workforce(facility.workforce.workers, facility.workforce.maximum)}
+        {C.facilitySummary(
+          C.capacity(facility.productionCapacityPerDay),
+          C.storage(facility.storage.used, facility.storage.capacity),
+          C.workforce(facility.workforce.workers, facility.workforce.maximum),
+        )}
       </p>
       <h4>{C.materials}</h4>
       {facility.materials.length === 0 ? (
@@ -98,7 +101,7 @@ function FacilitySection({ facility, snapshot }: { readonly facility: FacilitySn
       ) : (
         <ul data-testid={`facility-${facility.id}-products`}>
           {facility.products.map((p) => (
-            <li key={`${p.productId}:${p.quality}`}>{C.productLine(p.productName, p.quality, p.quantity, p.reservedQuantity)}</li>
+            <li key={`${p.productId}:${p.quality}`}>{C.productLine(p.productName, formatQuality(p.quality), p.quantity, p.reservedQuantity)}</li>
           ))}
         </ul>
       )}
