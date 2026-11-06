@@ -17,6 +17,7 @@
     "@eov/game-data": "workspace:*",
     "@eov/persistence": "workspace:*",
     "@eov/simulation": "workspace:*",
+    "pixi.js": "^8.22.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "zustand": "^5.0.16"
