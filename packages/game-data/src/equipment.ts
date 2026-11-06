@@ -18,6 +18,12 @@ export interface EquipmentDefinition {
   readonly throughputBonus: Ratio;
   /** Finished cases of storage this item adds to the facility (ADR 0017 decision 3). */
   readonly storageBonus: number;
+  /**
+   * Workers this item needs to run at full speed (ADR 0017 decision 1). The
+   * facility's crew is Σ crew of what it owns; it runs at min(workers, crew) / crew
+   * of its throughput, or 1× when the crew is 0.
+   */
+  readonly crew: number;
   /** An unlock the family must hold to buy it (`LOCKED` otherwise), or null. */
   readonly requiredUnlockId: UnlockId | null;
 }
@@ -35,6 +41,7 @@ export const EQUIPMENT: readonly EquipmentDefinition[] = [
     price: cents(30_000), // PLACEHOLDER
     throughputBonus: ratio(0), // PLACEHOLDER
     storageBonus: 0, // PLACEHOLDER
+    crew: 3, // PLACEHOLDER
     requiredUnlockId: null,
   },
   {
@@ -44,6 +51,7 @@ export const EQUIPMENT: readonly EquipmentDefinition[] = [
     price: cents(45_000), // PLACEHOLDER
     throughputBonus: ratio(400_000), // PLACEHOLDER: +40%
     storageBonus: 0, // PLACEHOLDER
+    crew: 1, // PLACEHOLDER
     requiredUnlockId: null,
   },
   {
@@ -53,6 +61,7 @@ export const EQUIPMENT: readonly EquipmentDefinition[] = [
     price: cents(65_000), // PLACEHOLDER
     throughputBonus: ratio(0), // PLACEHOLDER
     storageBonus: 0, // PLACEHOLDER
+    crew: 0, // PLACEHOLDER
     requiredUnlockId: null, // T05 sets this
   },
   {
@@ -62,6 +71,7 @@ export const EQUIPMENT: readonly EquipmentDefinition[] = [
     price: cents(35_000), // PLACEHOLDER
     throughputBonus: ratio(0), // PLACEHOLDER
     storageBonus: 100, // PLACEHOLDER: +100 cases
+    crew: 0, // PLACEHOLDER
     requiredUnlockId: null,
   },
 ];

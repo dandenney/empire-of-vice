@@ -11,7 +11,7 @@
 //
 // Sections whose system doesn't exist yet report what state and game-data hold
 // and nothing more: contracts are empty lists (T02e), the progression ladder is
-// the scenario's current tier only (T05), and leaders are empty (T02c2). Where
+// the scenario's current tier only (T05). Where
 // the contract needs a value game-data doesn't define yet, see
 // UNDEFINED_IN_GAME_DATA below.
 
@@ -47,7 +47,7 @@ import { priceInputs, quoteDeal } from "../economy/market/market.ts";
 import { availableMaterial } from "../inventory/pools.ts";
 import type { ProjectionContext, SystemRegistry } from "../kernel/registry.ts";
 import { createSimulation } from "../kernel/simulation.ts";
-import { facilitySpec, maxSafeQuantity, productionCapacityPerDay, storageAvailable, storageCapacity, supportsRecipe } from "../production/index.ts";
+import { facilityMaxSafeQuantity, facilitySpec, productionCapacityPerDay, storageAvailable, storageCapacity, supportsRecipe } from "../production/index.ts";
 import { projectFinance } from "./finance.ts";
 
 /**
@@ -65,8 +65,6 @@ export const UNDEFINED_IN_GAME_DATA = {
   victoryNetWorth: ZERO_MONEY,
   victoryReputation: 0,
   victoryCompletedContracts: 0,
-  /** Maximum workforce per facility (T02c). Reported as 0. */
-  maximumWorkers: 0,
 } as const;
 
 export interface ProjectionDeps {
@@ -108,11 +106,11 @@ function dryRunRejection(
 /**
  * The largest quantity START_PRODUCTION accepts without its arithmetic leaving
  * the safe-integer range (input totals, conversion cost, completion tick), for
- * a start on the next tick: the handler's own bound (`maxSafeQuantity`). A
- * search bound; at least 1.
+ * a start on the next tick: the handler's own crew-aware bound
+ * (`facilityMaxSafeQuantity`, ADR 0017 decision 1). A search bound; at least 1.
  */
-function quantityCeiling(state: GameState, recipe: RecipeDefinition): number {
-  return Math.max(1, maxSafeQuantity(recipe, state.tick + 1));
+function quantityCeiling(state: GameState, facility: FacilityState, recipe: RecipeDefinition, data: GameData): number {
+  return Math.max(1, facilityMaxSafeQuantity(state, data, facility.id, recipe, state.tick + 1));
 }
 
 /**
@@ -141,7 +139,7 @@ function recipeOption(state: GameState, facility: FacilityState, recipe: RecipeD
     // are finite even for a recipe with no inputs or no cost. Checking the guess
     // and the one above it first settles the usual case in two dispatches.
     let low = 1;
-    let high = quantityCeiling(state, recipe);
+    let high = quantityCeiling(state, facility, recipe, deps.data);
     const guess = Math.min(high, quantityGuess(state, facility, recipe, deps.data, high));
     if (guess > low) {
       if (accepts(guess)) low = guess;
@@ -257,7 +255,6 @@ function projectRoutes(state: GameState, data: GameData): readonly RouteSnapshot
 function projectFacility(state: GameState, facility: FacilityState, deps: ProjectionDeps, ctx: ProjectionContext): FacilitySnapshot {
   const { data } = deps;
   const def = named(data.facilities, facility.id, "facility");
-  const missing = UNDEFINED_IN_GAME_DATA;
   const reservedHere = (match: (goods: GameState["reservations"][number]["goods"]) => boolean): number =>
     state.reservations.filter((r) => r.facilityId === facility.id && match(r.goods)).reduce((n, r) => n + r.quantity, 0);
   const products = state.productPools
@@ -291,7 +288,7 @@ function projectFacility(state: GameState, facility: FacilityState, deps: Projec
     equipment: facility.equipment.map((e, i) => ({ id: e.equipmentId, name: owned[i]!.name, bookValue: e.bookValue })),
     equipmentSlots: { used: facility.equipment.length, total: facilitySpec(data, facility.id).equipmentSlots },
     equipmentOptions: equipmentOptions(state, facility, deps, ctx),
-    workforce: { workers: facility.workerCount, maximum: missing.maximumWorkers, dailyWagePerWorker: data.workforce.workerDailyWage },
+    workforce: { workers: facility.workerCount, maximum: facilitySpec(data, facility.id).maximumWorkers, dailyWagePerWorker: data.workforce.workerDailyWage },
     storage: { used: products.reduce((n, p) => n + p.quantity, 0), capacity: storageCapacity(state, data, facility.id) },
     productionCapacityPerDay: productionCapacityPerDay(state, data, facility.id),
     recipes: [...data.recipes].sort(byId).map((r) => recipeOption(state, facility, r, deps, ctx)),
@@ -429,8 +426,10 @@ export function projectSnapshot(state: GameState, ctx: ProjectionContext, deps: 
       id: state.family.id,
       name: UNDEFINED_IN_GAME_DATA.familyName(state.family.id),
       reputation: state.family.reputation,
-      // S0 stub (T02c): game-data's characters have no skill or loyalty yet, and nothing assigns them to a family.
-      leaders: [],
+      // The family's leaders are game-data's characters (ADR 0017 decision 10).
+      leaders: [...data.characters]
+        .sort(byId)
+        .map((c) => ({ id: c.id, name: c.name, role: c.role, skill: c.skill, loyalty: c.loyalty, dailyWage: c.dailyWage })),
     },
     finance,
     progression: projectProgression(state, finance.netWorth),
