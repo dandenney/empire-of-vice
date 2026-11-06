@@ -127,8 +127,10 @@ function scan(file: string, code: string): Violation[] {
 
     if ((ts.isNewExpression(node) || ts.isCallExpression(node)) && ts.isIdentifier(node.expression) && ERROR_CONSTRUCTORS.has(node.expression.text)) {
       const message = node.arguments?.[0];
-      const text = message ? literalText(message) : null;
-      if (visible(text) && !ALLOWED_ERRORS.some((a) => file.endsWith(a.file) && a.text === text)) report(node, "error message literal", text);
+      // Every literal in the message expression, so `cond ? m : \`Unexpected ...\`` is caught too.
+      for (const text of message ? literalsIn(message) : []) {
+        if (!ALLOWED_ERRORS.some((a) => file.endsWith(a.file) && a.text === text)) report(node, "error message literal", text);
+      }
     }
 
     node.forEachChild(visit);
@@ -167,6 +169,7 @@ describe("player-facing strings live in copy.ts (#58)", () => {
       `const e = <svg title={\`Map \${n}\`} />;`,
       `const f = { label: "Pause" };`,
       `throw new Error("Something broke");`,
+      `throw new GatewayError(r.type === "ERROR" ? r.message : \`Bad response \${r.type}\`);`,
       `const ok = <p data-testid="fine" className="fine">{x}{" "}{y ? z : ""}{s === "DEBIT" ? d : c}</p>;`,
     ].join("\n");
     expect(scan("fixture.tsx", code).map((v) => [v.line, v.text])).toEqual([
@@ -177,6 +180,7 @@ describe("player-facing strings live in copy.ts (#58)", () => {
       [5, "Map"],
       [6, "Pause"],
       [7, "Something broke"],
+      [8, "Bad response"],
     ]);
   });
 });

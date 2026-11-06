@@ -27,16 +27,13 @@ export interface PanelDefinition {
   readonly component: ComponentType<PanelProps>;
 }
 
-/** The Market panel's title, until T04c gives it a copy.ts. */
-const MARKET_TITLE = PLACEHOLDER_PANEL_COPY.marketTitle;
-
-const MarketPlaceholder: ComponentType<PanelProps> = () => createElement(PanelPlaceholder, { title: MARKET_TITLE });
+const MarketPlaceholder: ComponentType<PanelProps> = () => createElement(PanelPlaceholder, { title: PLACEHOLDER_PANEL_COPY.marketTitle });
 
 export const PANELS: readonly PanelDefinition[] = [
   { id: "dashboard", title: DASHBOARD_COPY.title, component: DashboardPanel },
   { id: "production", title: PRODUCTION_COPY.title, component: ProductionPanel },
   { id: "finance", title: FINANCE_COPY.title, component: FinancePanel },
-  { id: "market", title: MARKET_TITLE, component: MarketPlaceholder },
+  { id: "market", title: PLACEHOLDER_PANEL_COPY.marketTitle, component: MarketPlaceholder },
 ];
 
 export const DEFAULT_PANEL_ID: PanelId = "dashboard";

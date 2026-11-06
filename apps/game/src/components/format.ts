@@ -22,7 +22,7 @@ export function formatGameDate(date: GameDate): string {
 export function describeReason(reason: RejectionReason): string {
   const { code, ...details } = reason;
   const fields = Object.entries(details).map(([k, v]) =>
-    COMMON_COPY.reasonField(REJECTION_FIELD_COPY[k as RejectionField], fieldValue(k, v)),
+    COMMON_COPY.reasonField(REJECTION_FIELD_COPY[k as RejectionField] ?? k, fieldValue(k, v)),
   );
   return COMMON_COPY.reason(REJECTION_COPY[code], code, fields);
 }
