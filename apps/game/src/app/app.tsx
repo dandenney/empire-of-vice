@@ -8,7 +8,7 @@
 
 import { useState } from "react";
 import { SHELL_COPY } from "../components/copy.ts";
-import { formatGameDate } from "../components/format.ts";
+import { describeLoadError, formatGameDate } from "../components/format.ts";
 import { SpeedControls } from "../components/speed-controls.tsx";
 import { DEFAULT_PANEL_ID, PANELS, panelById } from "../panels/registry.ts";
 import { useGateway, useGatewayView, useUi } from "../state/app-context.tsx";
@@ -61,7 +61,7 @@ function GameButtons({ busy, setBusy, say }: { readonly busy: boolean; readonly 
         disabled={busy}
         onClick={run(async () => {
           const loaded = await gateway.load(SAVE_SLOT);
-          return loaded.ok ? SHELL_COPY.saveReloaded : SHELL_COPY.reloadFailed(loaded.error.code);
+          return loaded.ok ? SHELL_COPY.saveReloaded : SHELL_COPY.reloadFailed(describeLoadError(loaded.error));
         })}
       >
         {SHELL_COPY.reloadSave}

@@ -15,6 +15,7 @@
 
 import { commandRequestSchema, EVENT_IMPORTANCE, formatIssues, type GameEvent, type Simulation } from "@eov/contracts";
 import { loadGame, newGame } from "@eov/simulation";
+import { WORKER_COPY } from "./copy.ts";
 import type { WorkerMessage, WorkerRequest, WorkerResponse } from "./protocol.ts";
 import { isSpeed, SpeedScheduler, type SchedulerClock } from "./scheduler.ts";
 
@@ -96,8 +97,8 @@ export class SimulationHost {
       }
       case "SET_SPEED": {
         const sim = this.#running();
-        if (!isSpeed(request.speed)) throw new RangeError(`Not a speed: ${String(request.speed)}`);
-        if (!this.#scheduler.setSpeed(request.speed)) throw new Error("The tab is hidden: the game stays paused until it's visible");
+        if (!isSpeed(request.speed)) throw new RangeError(WORKER_COPY.notASpeed(String(request.speed)));
+        if (!this.#scheduler.setSpeed(request.speed)) throw new Error(WORKER_COPY.tabHidden);
         this.#syncTimer();
         this.#publish(sim);
         return { type: "READY", requestId };
@@ -132,7 +133,7 @@ export class SimulationHost {
   }
 
   #running(): Simulation {
-    if (!this.#sim) throw new Error("No game is running: start a new game or load a save first");
+    if (!this.#sim) throw new Error(WORKER_COPY.noGame);
     return this.#sim;
   }
 
