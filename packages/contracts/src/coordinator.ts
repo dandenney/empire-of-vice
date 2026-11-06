@@ -113,7 +113,10 @@ export type InvariantViolation =
   /**
    * An inventory account's ledger balance doesn't equal the inventory it represents:
    * RAW_MATERIALS = material pools, FINISHED_GOODS = product pools,
-   * GOODS_IN_TRANSIT = cost of cargo on outbound deliveries.
+   * GOODS_IN_TRANSIT = summed cargo-line cost of every OUTBOUND delivery, plus every
+   * FAILED delivery that a vehicle's current trip still names (its cargo is riding
+   * home after a sale fell through, ADR 0019; the return unloads it and empties the
+   * delivery's cargo).
    */
   | { readonly code: "LEDGER_INVENTORY_MISMATCH"; readonly account: LedgerAccount; readonly ledger: Money; readonly inventory: Money }
   /** Assets ≠ liabilities + equity (including current-period profit). */
