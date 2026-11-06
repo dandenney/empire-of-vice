@@ -40,8 +40,10 @@ describe("sprint-zero runner", () => {
   // the path's rules or placeholder game-data change; a PR that changes it says why.
   // History: fnv1a64:ac5215124cd58562 (S0a, issue #4); fnv1a64:356d462e35305432
   // (issue #36: RESERVATION_RELEASED CONSUMED events and the VEHICLE_RETURN transaction);
-  // fnv1a64:cc8a53a058022ea5 (T02d, issue #8: decision-1 buyer budgets, demand, and wants; decision-2 market baselines D₀/S₀).
+  // fnv1a64:cc8a53a058022ea5 (T02d, issue #8: decision-1 buyer budgets, demand, and wants; decision-2 market baselines D₀/S₀);
+  // fnv1a64:50c5ae9cdf05ff0d (T03, issue #10, ADR 0019: decision-1 risky routes and per-route tuning fields in the
+  // starting state; decision-2 transport cost paid in VEHICLE_RETURN).
   it("has a pinned replay hash", async () => {
-    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:cc8a53a058022ea5"`);
+    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:50c5ae9cdf05ff0d"`);
   });
 });

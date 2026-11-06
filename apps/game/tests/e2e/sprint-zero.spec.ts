@@ -18,7 +18,7 @@ import type { EovTestHook } from "../../src/app/test-hook.ts";
  * The headless Sprint Zero run's hash once the truck is home. Must equal the
  * hash pinned in tools/economy-lab/test/sprint-zero.test.ts; update both together.
  */
-const HEADLESS_HASH = "fnv1a64:cc8a53a058022ea5";
+const HEADLESS_HASH = "fnv1a64:50c5ae9cdf05ff0d";
 
 type Snapshot = NonNullable<EovTestHook["snapshot"]>;
 
@@ -145,8 +145,9 @@ test("plays the Sprint Zero path through the worker and matches the headless has
   await advanceTo(page, reloaded.vehicles[0]!.trip!.arrivesAt);
   const home = await snapshot(page);
   expect(home.vehicles[0]!.trip).toBeNull();
-  expect(home.finance.toDate.profit.netProfit).toBe(300);
-  await expect(page.getByTestId("dashboard-profit-toDate")).toHaveText("$3.00");
+  // The $1.50 transport is paid when the truck gets home (ADR 0019 decision 2).
+  expect(home.finance.toDate.profit.netProfit).toBe(150);
+  await expect(page.getByTestId("dashboard-profit-toDate")).toHaveText("$1.50");
   expect(await stateHash(page)).toBe(HEADLESS_HASH);
   await expect(page.getByTestId("state-hash")).toHaveText(HEADLESS_HASH);
 });
