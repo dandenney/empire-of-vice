@@ -56,6 +56,14 @@ describe("game-data definitions", () => {
     for (const r of d.routes) expect(Number.isSafeInteger(r.durationTicks) && r.durationTicks > 0).toBe(true);
     for (const v of d.vehicles) expect(Number.isSafeInteger(v.capacityCases) && v.capacityCases > 0).toBe(true);
   });
+
+  it("gives every route a name and every risky route a description (#77)", () => {
+    const singleLine = (text: string | null): boolean => text !== null && text.trim().length > 0 && !/[\r\n]/.test(text);
+    for (const r of GAME_DATA.routes) {
+      expect(singleLine(r.name), `${r.id} name`).toBe(true);
+      if (r.riskPpm > 0) expect(singleLine(r.description), `${r.id} description`).toBe(true);
+    }
+  });
 });
 
 describe("First Shipment scenario (S0 placeholder)", () => {
