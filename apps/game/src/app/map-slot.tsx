@@ -151,6 +151,30 @@ export function MapSlot({ snapshot }: { readonly snapshot: GameSnapshot }) {
     if (renderer || failed) el.dataset["tick"] = String(snapshot.clock.tick);
   }, [renderer, failed, placed, view, selected, hovered, snapshot.clock.tick]);
 
+  const overlay = placed.map(({ entity, screen, radius }) => {
+    if (entity.kind === "ROUTE") return null;
+    const key = `${entity.kind}:${entity.id}`;
+    const box = { position: "absolute", left: screen.x - radius, top: screen.y - radius, width: 2 * radius, height: 2 * radius } as const;
+    if (entity.kind === "VEHICLE") return <span key={key} data-shape="vehicle" data-id={entity.id} aria-hidden="true" style={{ ...box, pointerEvents: "none" }} />;
+    const locationId = entity.locationId!;
+    return (
+      <button
+        key={key}
+        type="button"
+        data-shape={entity.kind.toLowerCase()}
+        data-id={entity.id}
+        aria-label={entity.label}
+        aria-current={locationId === selected ? "true" : undefined}
+        onClick={() => openPanelForLocation(locationId)}
+        onPointerEnter={() => setHovered(locationId)}
+        onPointerLeave={() => setHovered((h) => (h === locationId ? null : h))}
+        onFocus={() => setHovered(locationId)}
+        onBlur={() => setHovered((h) => (h === locationId ? null : h))}
+        style={{ ...box, padding: 0, border: 0, borderRadius: "50%", background: "transparent", cursor: "pointer", pointerEvents: "auto" }}
+      />
+    );
+  });
+
   return (
     <div
       ref={host}
@@ -162,29 +186,7 @@ export function MapSlot({ snapshot }: { readonly snapshot: GameSnapshot }) {
       <div ref={canvasHost} style={{ position: "absolute", inset: 0 }} />
       {failed && <p style={{ position: "absolute", margin: 8, color: css(MAP_COLORS.label) }}>{MAP_COPY.unavailable}</p>}
       <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-        {placed.map(({ entity, screen, radius }) => {
-          if (entity.kind === "ROUTE") return null;
-          const key = `${entity.kind}:${entity.id}`;
-          const box = { position: "absolute", left: screen.x - radius, top: screen.y - radius, width: 2 * radius, height: 2 * radius } as const;
-          if (entity.kind === "VEHICLE") return <span key={key} data-shape="vehicle" data-id={entity.id} aria-hidden="true" style={{ ...box, pointerEvents: "none" }} />;
-          const locationId = entity.locationId!;
-          return (
-            <button
-              key={key}
-              type="button"
-              data-shape={entity.kind.toLowerCase()}
-              data-id={entity.id}
-              aria-label={entity.label}
-              aria-current={locationId === selected ? "true" : undefined}
-              onClick={() => openPanelForLocation(locationId)}
-              onPointerEnter={() => setHovered(locationId)}
-              onPointerLeave={() => setHovered((h) => (h === locationId ? null : h))}
-              onFocus={() => setHovered(locationId)}
-              onBlur={() => setHovered((h) => (h === locationId ? null : h))}
-              style={{ ...box, padding: 0, border: 0, borderRadius: "50%", background: "transparent", cursor: "pointer", pointerEvents: "auto" }}
-            />
-          );
-        })}
+        {overlay}
       </div>
     </div>
   );
