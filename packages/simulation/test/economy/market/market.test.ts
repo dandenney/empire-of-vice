@@ -49,7 +49,7 @@ describe("midnight cycle (extra cases)", () => {
 
   it("rolls two configured shortages in supplier, then material, order before the drift draws", () => {
     // A second shortage on sugar with no market effects, so it doesn't share a market with corn's.
-    const sugarShortage = { earliestStartDay: 2, latestStartDay: 9, durationDays: 1, supplyRatio: ratio(500_000), priceRatio: ratio(1_200_000), marketEffects: [] };
+    const sugarShortage = { name: "Sugar shortage", earliestStartDay: 2, latestStartDay: 9, durationDays: 1, supplyRatio: ratio(500_000), priceRatio: ratio(1_200_000), marketEffects: [] };
     const data: GameData = {
       ...GAME_DATA,
       suppliers: GAME_DATA.suppliers.map((s) => ({ ...s, stock: s.stock.map((st) => (st.materialId === SUGAR ? { ...st, shortage: sugarShortage } : st)) })),
