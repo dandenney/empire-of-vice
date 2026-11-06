@@ -1,6 +1,6 @@
 // M001 routes (ADR 0019 decision 1, GDD §14.6). Definition types per ADR 0012.
-// All numbers are PLACEHOLDER tuning for T07a. Route names and waypoints are
-// PLACEHOLDER (story): the real ones are a needs-design decision (#77).
+// All numbers are PLACEHOLDER tuning for T07a. Route names and descriptions
+// are the story decision on #77; the risky routes' waypoints are still PLACEHOLDER.
 
 import { asId, cents, type LocationId, type Money, type RouteId, type WorldPoint } from "@eov/contracts";
 import { CROSSROADS, HOLLOW_CREEK, KESSLER_PHARMACY, LAKEVIEW } from "./map.ts";
@@ -8,6 +8,8 @@ import { CROSSROADS, HOLLOW_CREEK, KESSLER_PHARMACY, LAKEVIEW } from "./map.ts";
 export interface RouteDefinition {
   readonly id: RouteId;
   readonly name: string;
+  /** Player-facing flavor text (#77). The safe routes have none. */
+  readonly description: string | null;
   readonly fromLocationId: LocationId;
   readonly toLocationId: LocationId;
   readonly waypoints: readonly WorldPoint[];
@@ -54,7 +56,8 @@ export const ROUTES: readonly RouteDefinition[] = [
   // Safe defaults.
   {
     id: STATE_HIGHWAY,
-    name: "State highway",
+    name: "State Highway",
+    description: null,
     fromLocationId: HOLLOW_CREEK,
     toLocationId: CROSSROADS,
     waypoints: [{ x: 10, y: 12 }, { x: 24, y: 14 }],
@@ -65,7 +68,8 @@ export const ROUTES: readonly RouteDefinition[] = [
   },
   {
     id: COUNTY_ROAD,
-    name: "County road",
+    name: "County Road",
+    description: null,
     fromLocationId: HOLLOW_CREEK,
     toLocationId: KESSLER_PHARMACY,
     waypoints: [{ x: 10, y: 12 }, { x: 20, y: 8 }, { x: 32, y: 4 }],
@@ -77,6 +81,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   {
     id: LAKE_SHORE_DRIVE,
     name: "Lake Shore Drive",
+    description: null,
     fromLocationId: HOLLOW_CREEK,
     toLocationId: LAKEVIEW,
     waypoints: [{ x: 10, y: 12 }, { x: 24, y: 20 }, { x: 38, y: 18 }],
@@ -88,10 +93,11 @@ export const ROUTES: readonly RouteDefinition[] = [
   // Risky alternatives: faster and cheaper, but the cargo can be delayed or seized.
   {
     id: CROSSROADS_BACK_ROAD,
-    name: "Crossroads back road", // PLACEHOLDER (story, #77)
+    name: "Old Quarry Cutoff",
+    description: "A neglected road past the old quarry. Deep ruts and roadside hijackers can delay a shipment or cost you the cargo.",
     fromLocationId: HOLLOW_CREEK,
     toLocationId: CROSSROADS,
-    waypoints: [{ x: 10, y: 12 }, { x: 17, y: 10 }, { x: 24, y: 14 }], // PLACEHOLDER (story, #77)
+    waypoints: [{ x: 10, y: 12 }, { x: 17, y: 10 }, { x: 24, y: 14 }], // PLACEHOLDER (story, #77): match the quarry geography once the map has it
     durationTicks: 80, // PLACEHOLDER
     transportCost: cents(100), // PLACEHOLDER
     riskPpm: RISKY_ROUTE_RISK_PPM,
@@ -99,10 +105,11 @@ export const ROUTES: readonly RouteDefinition[] = [
   },
   {
     id: KESSLER_BACK_ROAD,
-    name: "Kessler's back road", // PLACEHOLDER (story, #77)
+    name: "Blackwater Crossing",
+    description: "An unofficial river crossing where dry agents sometimes wait for bootleggers.",
     fromLocationId: HOLLOW_CREEK,
     toLocationId: KESSLER_PHARMACY,
-    waypoints: [{ x: 10, y: 12 }, { x: 22, y: 5 }, { x: 32, y: 4 }], // PLACEHOLDER (story, #77)
+    waypoints: [{ x: 10, y: 12 }, { x: 22, y: 5 }, { x: 32, y: 4 }], // PLACEHOLDER (story, #77): match the river geography once the map has it
     durationTicks: 100, // PLACEHOLDER
     transportCost: cents(133), // PLACEHOLDER
     riskPpm: RISKY_ROUTE_RISK_PPM,
@@ -110,10 +117,11 @@ export const ROUTES: readonly RouteDefinition[] = [
   },
   {
     id: LAKEVIEW_BACK_ROAD,
-    name: "Lakeview back road", // PLACEHOLDER (story, #77)
+    name: "The Canal Run",
+    description: "An industrial shortcut past canal warehouses. Fast and cheap, but hijackers and corrupt patrols know the route.",
     fromLocationId: HOLLOW_CREEK,
     toLocationId: LAKEVIEW,
-    waypoints: [{ x: 10, y: 12 }, { x: 26, y: 15 }, { x: 38, y: 18 }], // PLACEHOLDER (story, #77)
+    waypoints: [{ x: 10, y: 12 }, { x: 26, y: 15 }, { x: 38, y: 18 }], // PLACEHOLDER (story, #77): match the canal geography once the map has it
     durationTicks: 200, // PLACEHOLDER
     transportCost: cents(267), // PLACEHOLDER
     riskPpm: RISKY_ROUTE_RISK_PPM,
