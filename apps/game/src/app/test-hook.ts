@@ -11,7 +11,7 @@
 //     for deterministic tests (ADR 0014 decision 7).
 
 import type { GameSnapshot } from "@eov/contracts";
-import type { SceneShape } from "../map/placeholder-map.ts";
+import type { SceneShape } from "../map/scene.ts";
 import type { DispatchOutcome, GatewayClient } from "../state/gateway-client.ts";
 import type { SchedulerStatus } from "../workers/scheduler.ts";
 
