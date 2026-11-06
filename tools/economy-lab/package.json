@@ -10,7 +10,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "sprint-zero": "node src/sprint-zero.ts"
+    "sprint-zero": "node src/sprint-zero.ts",
+    "smoke": "node src/smoke.ts"
   },
   "dependencies": {
     "@eov/contracts": "workspace:*",

@@ -40,6 +40,11 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # T07a (#12): 50 seeded greedy playthroughs. Fails only on a crash or an
+      # invariant violation; missed balance targets are reported, not failed.
+      - name: Economy smoke (50 seeds)
+        run: pnpm --filter @eov/economy-lab smoke --seeds 50
+
       # Browser tests (Sprint Zero onward). pnpm install doesn't fetch browsers.
       - name: Install Playwright browsers
         run: pnpm --filter @eov/game exec playwright install --with-deps chromium
