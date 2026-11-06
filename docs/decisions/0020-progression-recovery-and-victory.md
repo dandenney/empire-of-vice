@@ -55,7 +55,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
    | A second contract's first two installments (Kessler's again from day 8, or Lakeview's once standard moonshine exists) | +7, +7 | 29, 36 | reputation 30 |
 
    Reputation alone would allow victory around days 10–12, inside the 15-day window. Net worth is the binding constraint, and tuning it is T05g's job (decision 15).
-3. **Tier ladder and unlocks.** The GDD table moves recurring contracts to tier 1. That's a deliberate deviation, and the human can veto it.
+3. **Tier ladder and unlocks.** The GDD table moves recurring contracts to tier 1. That's a deliberate deviation, and the human can veto it. It also changes GDD §4 player action 7 ("Unlock and fulfill a recurring contract"): contracts are now available from the start, not unlocked, so the note to the human names both.
 
    | Tier (`TierId`) | Net worth | Reputation | Unlocks (`UnlockId`) | Gates |
    |---|---:|---:|---|---|
@@ -74,7 +74,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
    - **The rule.** The family is promoted to tier *k* when it holds tier *k*−1, net worth ≥ *k*'s threshold, and reputation ≥ *k*'s threshold. A `null` threshold always passes. Several tiers can be reached on one tick, in ascending order.
    - **Transaction.** Each promotion is one `PROGRESSION` transaction with no entries, keyed `PROGRESSION:TIER:<tierId>`. It:
      - sets `family.tierId`;
-     - adds the tier's unlocks to `family.unlocked`, sorted and without duplicates;
+     - adds the tier's unlocks to `family.unlocked`, without duplicates and sorted by `compareIds` (`@eov/contracts`). The same comparator is used everywhere unlocks are sorted, including `new-game.ts`, which today uses `.sort()`; the two agree for M001's IDs;
      - emits `TIER_REACHED`, then one `UNLOCK_GRANTED` per newly held unlock, in the tier's listed order.
    - **Never revoked.** Tiers and unlocks are never taken back, even if net worth or reputation later falls (GDD §9).
    - **The starting tier** is set by the scenario and emits nothing.
@@ -88,7 +88,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
      - `installmentMissed` −8
 
      The bounds 0–100 are the contract invariant, not data.
-   - **Source events.** The progression system's `deadlines` hook (decision 8) reads the events stamped with the current tick (`state.eventJournal` entries with `tick === ctx.tick`) in ID order. These are `SALE_COMPLETED` from this tick's arrivals and `INSTALLMENT_SETTLED` from this tick's settlements. This is ADR 0018 decision 10's "from those events". The kernel trims the journal only after a whole tick or a whole command (`#commit`), so the hook sees every event of its tick.
+   - **Source events.** The progression system's `deadlines` hook (decision 8) reads the events stamped with the current tick (`state.eventJournal` entries with `tick === ctx.tick`) in ID order. These are `SALE_COMPLETED` from this tick's arrivals and `INSTALLMENT_SETTLED` from this tick's settlements. This is ADR 0018 decision 10's "from those events". ADR 0006 treats events as records, not the source of truth. Reading them as gameplay input is allowed here only because it's limited to the current tick, and nothing trims the journal mid-tick. It isn't a precedent for reading older events. The kernel trims the journal only after a whole tick or a whole command (`#commit`), so the hook sees every event of its tick.
    - **First qualifying delivery.** A `SALE_COMPLETED` (spot or contract) whose cargo totals ≥ 5 cases, while `firstQualifyingDeliveryMade` is false.
      - Transaction: `PROGRESSION:FIRST_DELIVERY`. The key itself enforces once per game.
      - It sets the flag and applies +3 with reason `FIRST_QUALIFYING_DELIVERY`, carrying the event's `deliveryId` and `contractId`.
@@ -118,7 +118,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
 
      (Kessler's basic contract and the copper still satisfy this for every tier.)
 
-   Dynamic reachability, meaning a bot actually reaching tier 4 and victory, is T05g's lab criterion.
+   This is a **static test over `GAME_DATA` only**. It must never become a load-time or system-build check: locked tests patch in unlocks that no tier grants (`fixture-contracts` in ECO-001 contracts, `FIXTURE_UNLOCK` in PROD-001). Dynamic reachability, meaning a bot actually reaching tier 4 and victory, is T05g's lab criterion.
 7. **Victory.**
    - **Conditions.** While `outcome` is `PLAYING`, all of these hold:
      - `balanceSheet(state).netWorth ≥ victory.netWorth` ($5,000)
@@ -140,31 +140,69 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
    - **Resale value.** `applyRatios(bookValue, [progression.recovery.equipmentResaleRatio])`, with the ratio at 500 000 ppm (50%). The ratio is validated in (0, 1 000 000).
    - **Transaction.** One `ASSET_SALE` transaction keyed `ASSET_SALE:<commandId>`:
      - posts Dr `CASH` the proceeds, Dr `LOSSES` (book value − proceeds), Cr `EQUIPMENT` the book value;
+     - omits any line whose amount would be 0, because the coordinator rejects entries ≤ 0;
      - removes the item from the facility;
      - emits `EQUIPMENT_SOLD`.
-     - Cash flow files it under `ASSET_SALES`: the `EQUIPMENT` and `LOSSES` lines disagree, so the kind default applies (ADR 0015). `GAIN_ON_ASSET_SALE` stays unused in M001.
+     - **Cash flow.** It files under `ASSET_SALES` (ADR 0015): the `EQUIPMENT` and `LOSSES` lines disagree, so the kind default applies.
+     - **The edge case.** If rounding leaves no `LOSSES` line, the only non-cash account is `EQUIPMENT`, and the sale files under `EQUIPMENT`. That's accepted. It can't happen at a 50% ratio with any book value ≥ 2¢, and every M001 item is priced in dollars.
+     - `GAIN_ON_ASSET_SALE` stays unused in M001.
    - **What a sale doesn't change.** A running job's `completesAt` was fixed at its start, so selling equipment mid-run doesn't affect it. Workers stay employed; the player can lay them off. Selling a storage expansion may leave the facility over capacity, which is allowed, as for returned cargo (ADR 0019 decision 4).
    - **Not sellable.** The truck (selling it would end every route to revenue) and the building.
    - **Buying the item back.** The first purchase of an item at a facility keeps the key `EQUIPMENT_PURCHASE:<facility>:<equipment>`, which the PROD-001 locked test asserts. A purchase made when that key already exists uses `EQUIPMENT_PURCHASE:<facility>:<equipment>:<commandId>`. Without this, buying back a sold item would be swallowed as a duplicate.
    - **Snapshot.** Each owned equipment entry shows its `resaleValue`.
-10. **Insolvency (`GAME_LOST { INSOLVENT }`) and the minimum restart path (§14.9).**
-    - **The minimum restart path:**
-      1. sell equipment the recipe doesn't need;
-      2. buy one case's inputs;
-      3. start a one-case run, hiring a worker if there are none (hiring costs no cash now; wages accrue);
-      4. dispatch to a spot buyer on the safe route (no dispatch funds check, ADR 0019 decision 2).
+10. **Insolvency (`GAME_LOST { INSOLVENT }`), the minimum restart path, and no soft-lock (§14.9).** Revised in review round 1.
+    - **"In play."** Supplier prices and materials mean the suppliers in `state.suppliers` (the scenario's `supplierIds`), not every game-data supplier. Buyers mean those in `state.buyers`.
+    - **An eligible sale.** Finished goods of product *p* and quality *q* have an eligible sale when some buyer in play:
+      - wants (*p*, a minimum quality ≤ *q*);
+      - has `minimumReputation` ≤ the family's reputation;
+      - is reachable from the goods' facility by a **safe** route (`riskPpm` 0) that isn't closed.
+
+      The policy never uses risky routes, because a seizure would end the attempt without a sale.
+    - **The recovery policy** applies to any state that isn't `LOST`, in this order. On each step it acts or waits, and waiting is always bounded by the horizon below.
+      1. **Wait** for every running production job to complete, and for every delivery whose `cargo` isn't empty to finish. That includes `FAILED` cargo riding home after a fall-through.
+      2. **Sell goods.** If finished goods are on hand, release any contract reservations on them (`RELEASE_RESERVATION`). Dispatch up to the truck's capacity, at the buyer's current quote, to the first eligible buyer in buyer-ID order, on the first eligible safe route listed for it.
+         - If the truck is out, wait for it.
+         - If no buyer is eligible, or today's demand or budget is used up, wait until a buyer is eligible: a closure ends, or the next midnight resets demand.
+      3. **Restart.** If there are no goods, pick the cheapest feasible restart recipe *R* (below; ties go to recipe-ID order), then:
+         1. sell every owned item at the facility that *R* doesn't require (`SELL_EQUIPMENT`);
+         2. buy each required item the facility lacks (`PURCHASE_EQUIPMENT`);
+         3. set the workforce to 1 if it's 0 (`SET_WORKFORCE`);
+         4. buy one case's missing inputs at the current supplier price (`PURCHASE_MATERIALS`);
+         5. start a one-case job (`START_PRODUCTION`).
+
+         If a paid step is short of funds only because a shortage raises today's price, wait for the shortage to end. Then go back to step 1.
+    - **The minimum restart path** is step 3 followed by step 2. Hiring costs no cash now (wages accrue), and dispatch has no funds check (ADR 0019 decision 2).
     - **When the family is insolvent.** At the midnight check, while `PLAYING`, all of these hold:
-      - **No goods that can still sell:** every product pool is empty, no delivery is `OUTBOUND`, and no production job is running.
-      - **No recipe offers a restart.** At an owned facility, recipe *R* is a restart route if it is feasible and `funds(R) ≥ cost(R)`, where:
-        - `cost(R)` = the price of each required item the facility lacks, plus for each input the shortfall against materials on hand × that material's cheapest game-data `unitPrice` (the base price, ignoring shortages), plus `laborPerCase + overheadPerCase`;
-        - `funds(R)` = cash + the resale value of the owned equipment *R* doesn't require;
-        - *R* is infeasible if a required item it lacks is `LOCKED`, or no supplier sells one of its inputs.
+      - **No goods:**
+        - every product pool is empty;
+        - every delivery's `cargo` is empty, which covers `OUTBOUND` deliveries and `FAILED` cargo on a truck heading home;
+        - no production job is running.
+      - **No recipe offers a restart.** Recipe *R*, at an owned facility, is a restart route if it is feasible and `funds(R) ≥ cost(R)`, where the three terms are step 3's paid steps at base prices:
+        - `cost(R)` = the price of each required item the facility lacks, plus, for each input, the shortfall against materials on hand × that material's lowest base `unitPrice` among the suppliers in play (game-data, ignoring shortages), plus `laborPerCase + overheadPerCase`.
+        - `funds(R)` = cash + the resale value of the owned equipment *R* doesn't require.
+        - *R* is infeasible if a required item it lacks is `LOCKED`, if no supplier in play sells one of its inputs, or if no buyer in play with `minimumReputation` ≤ the family's reputation wants its product at the recipe's quality.
     - **Base prices on purpose.** A shortage can delay a restart for its few days, but it can't cause a loss.
     - **Transaction.** Insolvency commits `PROGRESSION:LOST`, sets `outcome = { status: "LOST", tick, reason: "INSOLVENT" }`, and emits `GAME_LOST`.
-    - **No soft-lock (GDD §9)** is a locked property test (T05f): from random command sequences, at every midnight either the outcome is `LOST`, or a scripted restart policy produces a `SALE_COMPLETED` within 2 game days. And whenever `GAME_LOST` fires, that policy can't make its first paid step.
+    - **The horizon `H`**, from a state at tick *t*, is computed from game-data and state. It's the latest of these, plus a slack:
+
+      | Term | Value |
+      |---|---|
+      | *t* | |
+      | each running job | `completesAt` |
+      | each delivery with cargo | the return arrival of its truck: `arrivesAt`, plus the route's `durationTicks` while still outbound, plus `delayTicks` if a risky trip may still be delayed |
+      | each active shortage | its end tick |
+      | each route closure | its `reopensAt` |
+
+      The slack is `2 × TICKS_PER_DAY` (a full day of buyer demand and the next midnight's reset), plus a one-case job's duration at a workforce of 1 (ADR 0017's crew formula, for the slowest recipe), plus a round trip on the longest safe route.
+
+      Every term is finite in M001: closures always have durations (decision 12), and shortages have `durationDays`.
+    - **No soft-lock (GDD §9).** T05f writes this as a locked fast-check property. From every midnight state reached by random valid command sequences, running the recovery policy on a copy reaches `SALE_COMPLETED` or `GAME_LOST` by tick `H`. Reaching neither is a soft-lock. Wages draining cash while the policy waits can produce `GAME_LOST`, and that's an acceptable outcome.
+    - **No false loss** is the property's other half, part of the same locked test. Whenever `GAME_LOST` fires:
+      - the test recomputes `funds(R) < cost(R)` for every feasible *R* independently;
+      - if no shortage is active, the policy run on a copy is rejected with `INSUFFICIENT_FUNDS` at some paid step before production starts: `PURCHASE_EQUIPMENT`, `PURCHASE_MATERIALS`, or `START_PRODUCTION` itself (its conversion check).
 11. **`REPEAT_OPERATION`** (ADR 0004 leaves these points open):
     - **Source.** The envelope in `state.commandLog` whose `id` is `sourceCommandId`.
-    - **Chain.** If the source is itself a `REPEAT_OPERATION`, follow it back to the underlying command. Every link must already be in the log and applied, and a command enters the log only after it applies, so the chain can't loop.
+    - **Chain.** If the source is itself a `REPEAT_OPERATION`, follow it back to the underlying command. Every link must already be in the log when the repeat applies. So each link points to a strictly earlier log entry, and the chain can't loop. (Apply-time rejections are logged too, ADR 0004; that's why the next point checks for a transaction.)
     - **"Previously successful" means applied:** the ledger holds a transaction with `causedBy` equal to that command's ID. Every applied repeatable command commits one, keyed by the command, job, or delivery. This must hold at every link of the chain.
     - **`NOT_REPEATABLE { sourceCommandId }`** covers every source problem:
       - not in the log (unknown, still queued, or rejected at dispatch);
@@ -186,7 +224,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
     - **Validation.** `createInitialState` throws `ScenarioSetupError` when:
       - a scheduled closure names an unknown route, has `tick` < 1, or has a duration < 1;
       - `family.tierId` isn't a tier;
-      - `family.unlocked` isn't exactly the sorted union of the unlocks of the tiers up to the starting tier;
+      - `family.unlocked` isn't exactly the union of the unlocks of the tiers up to the starting tier, sorted by `compareIds`;
       - the family ID has no `FAMILIES` entry.
 
       So a bad scenario fails when it loads, not inside a tick (the T03 review note).
@@ -196,7 +234,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
       - `SellEquipmentCommand { type: "SELL_EQUIPMENT"; facilityId: FacilityId; equipmentId: EquipmentId }`, in `GameCommand` and appended to `GAME_COMMAND_TYPES`. It's not a `RepeatableCommand`.
       - `RejectionReason` gains `{ code: "EQUIPMENT_NOT_OWNED"; facilityId: FacilityId; equipmentId: EquipmentId }`.
     - **`packages/contracts/src/events.ts`:**
-      - `EquipmentSoldEvent = GameEventOf<"EQUIPMENT_SOLD", { facilityId; equipmentId; bookValue: Money; proceeds: Money; transactionId: TransactionId }>`, in `GameEvent`, with `EVENT_IMPORTANCE` `"log"`.
+      - `EquipmentSoldEvent = GameEventOf<"EQUIPMENT_SOLD", { facilityId: FacilityId; equipmentId: EquipmentId; bookValue: Money; proceeds: Money; transactionId: TransactionId }>`, in `GameEvent`, with `EVENT_IMPORTANCE` `"log"`.
       - `GameLostEvent`'s doc comment cites this ADR.
     - **`packages/contracts/src/ledger.ts`:** `TransactionKind` gains `"PROGRESSION"`, for reputation, tier, unlock, and outcome changes. It never has entries.
     - **`packages/contracts/src/snapshot.ts`:** `FacilitySnapshot.equipment` entries gain `resaleValue: Money`.
@@ -211,6 +249,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
 15. **Tuning, and the victory-feasibility criterion.**
     - **T05g owns the first tuning pass**, in game-data only. GDD §14: tune values, don't weaken rules.
     - **Its levers:** product base prices, market baselines and drift, buyer quotes, demand, budgets, and minimum reputations, supplier prices and stock, recipe inputs, labor and overhead, equipment prices, wages and overhead, the building value, reputation amounts, the resale ratio, and the rival window.
+    - **Two levers have a floor.** At least one contract buyer, and for each producible quality (basic and standard) at least one spot buyer that takes it, must keep `minimumReputation` 0. Kessler's covers all three today. Decision 6's reachability and decision 10's eligible sale and restart feasibility rely on them.
     - **Not levers without a locked-test round:**
       - the contract terms and quantities;
       - the route table and truck capacity;
