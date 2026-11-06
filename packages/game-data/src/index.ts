@@ -7,6 +7,7 @@
 
 import firstShipmentJson from "./scenarios/first-shipment.json" with { type: "json" };
 import { BUYERS, type BuyerDefinition } from "./buyers.ts";
+import { CONTRACTS, type ContractsDefinition } from "./contracts.ts";
 import { EQUIPMENT, type EquipmentDefinition } from "./equipment.ts";
 import { FACILITY_PRODUCTION, type FacilityProductionDefinition } from "./facilities.ts";
 import { FACILITIES, LOCATIONS, type FacilityDefinition, type LocationDefinition } from "./map.ts";
@@ -20,6 +21,7 @@ import { SUPPLIERS, type SupplierDefinition } from "./suppliers.ts";
 import { VEHICLES, type VehicleDefinition } from "./vehicles.ts";
 
 export * from "./buyers.ts";
+export * from "./contracts.ts";
 export * from "./equipment.ts";
 export * from "./facilities.ts";
 export * from "./map.ts";
@@ -53,6 +55,7 @@ export interface GameData {
   readonly locations: readonly LocationDefinition[];
   readonly facilities: readonly FacilityDefinition[];
   readonly facilityProduction: readonly FacilityProductionDefinition[];
+  readonly contracts: ContractsDefinition;
 }
 
 export const GAME_DATA: GameData = {
@@ -71,6 +74,7 @@ export const GAME_DATA: GameData = {
   locations: LOCATIONS,
   facilities: FACILITIES,
   facilityProduction: FACILITY_PRODUCTION,
+  contracts: CONTRACTS,
 };
 
 /** The First Shipment scenario (S0 placeholder; T05 owns the real one). */

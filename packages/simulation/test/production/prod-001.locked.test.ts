@@ -534,9 +534,17 @@ describe("PROD-001 capacity helpers", () => {
         fc.integer({ min: 1, max: 5_000_000 }),
         (ticksPerCase, quantity, t) => {
           const recipe: RecipeDefinition = { ...basic(), ticksPerCase };
-          const d = jobDuration(recipe, quantity, ratio(t));
-          expect(Number.isSafeInteger(d)).toBe(true);
-          expect(d).toBe(durationOf(ticksPerCase, quantity, t));
+          // Exact in BigInt: durationOf rounds through Number, which is lossy above 2^53.
+          const num = BigInt(ticksPerCase) * BigInt(quantity) * BigInt(PPM);
+          const den = BigInt(t);
+          const exact = (num + den - 1n) / den;
+          if (exact <= BigInt(Number.MAX_SAFE_INTEGER)) {
+            const d = jobDuration(recipe, quantity, ratio(t));
+            expect(Number.isSafeInteger(d)).toBe(true);
+            expect(BigInt(d)).toBe(exact);
+          } else {
+            expect(() => jobDuration(recipe, quantity, ratio(t))).toThrow(RangeError);
+          }
         },
       ),
       { numRuns: 500 },
