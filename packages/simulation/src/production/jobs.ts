@@ -5,7 +5,8 @@
 //   UNKNOWN_ENTITY facility, then recipe → RECIPE_NOT_SUPPORTED →
 //   PRODUCTION_CAPACITY_EXCEEDED (a job already running there, or zero
 //   throughput) → STORAGE_CAPACITY_EXCEEDED → INSUFFICIENT_MATERIALS →
-//   INSUFFICIENT_FUNDS. On success it reserves the inputs and schedules the job
+//   INSUFFICIENT_FUNDS. The overflow bound and the duration are crew-aware
+//   (T02c2, ADR 0017 decision 1). On success it reserves the inputs and schedules the job
 //   (`completesAt` lives on the job, ADR 0008). It moves no money, so its
 //   RESERVATION transaction has no entries (ADR 0010).
 // - The production phase settles due jobs in ID order. A recipe with a
@@ -38,16 +39,28 @@ import { addProduct, addReservation, availableMaterial, consumeReservations } fr
 import { allocateId, formatId } from "../kernel/ids.ts";
 import type { CommandHandler, TickContext } from "../kernel/registry.ts";
 import { nextInt } from "../rng/xoshiro128.ts";
-import { conversionCost, jobDuration, maxSafeQuantity, storageAvailable, supportsRecipe, throughput } from "./capacity.ts";
+import {
+  conversionCost,
+  facilityJobDuration,
+  facilityMaxSafeQuantity,
+  fullCrewMaxSafeQuantity,
+  storageAvailable,
+  supportsRecipe,
+  throughput,
+} from "./capacity.ts";
 
 /**
  * INVALID_QUANTITY for a quantity that isn't a positive safe integer, or (for a
- * known recipe) is above `maxSafeQuantity` when started at `startTick`.
+ * known recipe) is above `bound(recipe)`, the rule 6 overflow bound.
  */
-function quantityRejection(quantity: number, recipe: RecipeDefinition | undefined, startTick: number): RejectionReason | null {
+function quantityRejection(
+  quantity: number,
+  recipe: RecipeDefinition | undefined,
+  bound: (recipe: RecipeDefinition) => number,
+): RejectionReason | null {
   const invalid: RejectionReason = { code: "INVALID_QUANTITY", field: "quantity", value: quantity };
   if (!Number.isSafeInteger(quantity) || quantity <= 0) return invalid;
-  if (recipe && quantity > maxSafeQuantity(recipe, startTick)) return invalid;
+  if (recipe && quantity > bound(recipe)) return invalid;
   return null;
 }
 
@@ -56,7 +69,8 @@ function startRejection(state: GameState, command: StartProductionCommand, data:
   const { facilityId, recipeId, quantity } = command;
   const facility = state.facilities.find((f) => f.id === facilityId);
   const recipe = data.recipes.find((r) => r.id === recipeId);
-  const invalid = quantityRejection(quantity, recipe, tick);
+  // Crew-aware (ADR 0017 decision 1): a short-handed job runs longer, so fewer cases fit.
+  const invalid = quantityRejection(quantity, recipe, (r) => facilityMaxSafeQuantity(state, data, facilityId, r, tick));
   if (invalid) return invalid;
   if (!facility) return { code: "UNKNOWN_ENTITY", kind: "Facility", id: facilityId };
   if (!recipe) return { code: "UNKNOWN_ENTITY", kind: "Recipe", id: recipeId };
@@ -81,12 +95,13 @@ export function startProductionHandler(data: GameData, coordinator: TransactionC
   return {
     // Dispatch time, for a command queued for a later tick: only the quantity
     // rules. It starts no earlier than the next tick, so a quantity that
-    // overflows then overflows at any later tick too. Apply checks everything.
+    // overflows then overflows at any later tick too. Workers can be hired
+    // before it applies, so this assumes a full crew. Apply checks everything.
     validate: (state, command) =>
       quantityRejection(
         command.quantity,
         data.recipes.find((r) => r.id === command.recipeId),
-        state.tick + 1,
+        (r) => fullCrewMaxSafeQuantity(state, data, command.facilityId, r, state.tick + 1),
       ),
     apply: (state, command, ctx) => {
       const { facilityId, recipeId, quantity } = command;
@@ -107,7 +122,7 @@ export function startProductionHandler(data: GameData, coordinator: TransactionC
         // IDs are minted in order from the counters, so they're known before staging.
         const firstReservation = tx.state.counters.nextId.Reservation;
         const reservationIds: readonly ReservationId[] = recipe.inputsPerCase.map((_, i) => formatId("Reservation", firstReservation + i));
-        const completesAt = addTicks(ctx.tick, jobDuration(recipe, quantity, throughput(tx.state, data, facilityId)));
+        const completesAt = addTicks(ctx.tick, facilityJobDuration(tx.state, data, facilityId, recipe, quantity));
         const job: ProductionJobState = { id: jobId, facilityId, recipeId, quantity, startedAt: ctx.tick, completesAt, reservationIds };
         tx.update((s) => {
           let next = allocateId(s, "ProductionJob").state;
