@@ -33,7 +33,7 @@ GDD §9 (PROG-001) defines tiers, example reputation adjustments, repeat orders,
 
 ## Decision
 
-Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md rule 3) unless it's quoted from the GDD. Display names are placeholder story content (factory.md §8).
+Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md rule 3) unless it's quoted from the GDD. Story content (display names, rival flavor, player-facing copy) comes from the user's sign-off on #99. Where #99 doesn't settle something, it's placeholder content (factory.md §8).
 
 1. **Opening balance sheet (§14.1).** The structure on main stands; this decision fixes what is valued and how.
    - **Assets**, each at cost (GDD §2 assumption 3):
@@ -55,7 +55,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
    | A second contract's first two installments (Kessler's again from day 8, or Lakeview's once standard moonshine exists) | +7, +7 | 29, 36 | reputation 30 |
 
    Reputation alone would allow victory around days 10–12, inside the 15-day window. Net worth is the binding constraint, and tuning it is T05g's job (decision 15).
-3. **Tier ladder and unlocks.** The GDD table moves recurring contracts to tier 1. That's a deliberate deviation, and the human can veto it. It also changes GDD §4 player action 7 ("Unlock and fulfill a recurring contract"): contracts are now available from the start, not unlocked, so the note to the human names both.
+3. **Tier ladder and unlocks.** The GDD table moves recurring contracts to tier 1. That's a deliberate deviation, and **the user approved it on #99** (point 6). It also changes GDD §4 player action 7 ("Unlock and fulfill a recurring contract"): contracts are now available from the start, not unlocked.
 
    | Tier (`TierId`) | Net worth | Reputation | Unlocks (`UnlockId`) | Gates |
    |---|---:|---:|---|---|
@@ -65,7 +65,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
    | `regional-distributor` | $5,000 | 30 | `next-region` | nothing in M001 |
 
    - **Thresholds** are the GDD's.
-   - **Display names** are the GDD's tier names, marked PLACEHOLDER until the human confirms them.
+   - **Display names** are the GDD's tier names, final per #99 (point 1).
    - **`contracts.terms.requiredUnlockId` stays `null`.**
    - **"Improved buyers"** (GDD tier 3) are delivered through reputation-gated buyer access (Lakeview's `minimumReputation`) and standard moonshine, not through an unlock.
    - **Why the deviation.** The table as written is a cycle: contracts need tier 2, and tier 2 needs reputation that only contracts give. The options are below. Option C keeps the shipped and locked T02e behavior, needs no new reputation source, and gives tier 2 a real unlock. Gating the condenser also answers #85's "upgrade affordable at tick 1": the first upgrade now lands at tier 2, around day 5 (about 10 real minutes, inside GDD §13's 10–15 minute target).
@@ -215,8 +215,10 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
     - **Snapshot.** No change. The UI can offer "repeat" on the `causedBy` of the events it already shows (`MATERIALS_PURCHASED`, `PRODUCTION_STARTED`, `DELIVERY_DISPATCHED`).
     - **Registration.** Its own `SYSTEMS` line, ahead of progression.
 12. **Scenario contents and validation at load.**
-    - **The family's display name** is game-data (`FAMILIES` in `personnel.ts`, PLACEHOLDER "The Kerrigans"), because the projection has game-data but not the scenario.
-    - **The disruption source** is a rival. The scenario gains `scheduledEvents`, accepting only `ROUTE_CLOSURE { tick, routeId, reason, durationTicks }` with a positive, non-null `durationTicks`, so M001 has no open-ended closures. The First Shipment closes Kessler's safe route (`county-road`), reason `RIVAL`, from day 8 at 08:00 (tick 12 000) for 1 440 ticks.
+    - **The family's display name** is game-data (`FAMILIES` in `personnel.ts`), because the projection has game-data but not the scenario.
+      - "The Kerrigans" is final for M001 (#99 point 2).
+      - It stays a display name on a `FamilyId`, not a fixed surname, so custom family names stay possible later.
+    - **The disruption source** is a rival, the Dwyer Crew (#99 point 3). The story is flavor on the existing closure: no new mechanics and no lore beyond #99. The scenario gains `scheduledEvents`, accepting only `ROUTE_CLOSURE { tick, routeId, reason, durationTicks }` with a positive, non-null `durationTicks`, so M001 has no open-ended closures. The First Shipment closes Kessler's safe route (`county-road`), reason `RIVAL`, from day 8 at 08:00 (tick 12 000) for 1 440 ticks.
       - Before then, the risky back road and a later delivery are the player's choices.
       - The window was picked to fall after the locked tests' contract deliveries (days 3–7). T05b re-checks that no locked test dispatches onto it.
       - The corn shortage (ADR 0016) stays the economic disruption.
@@ -243,7 +245,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
       - `packages/contracts/fixtures/**`;
       - `CASH_FLOW_CATEGORY` (`PROGRESSION: null`) in `projection/finance.ts`;
       - the `resaleValue` projection, reported 0 through `UNDEFINED_IN_GAME_DATA` until T05d (the S0b pattern);
-      - placeholder copy in `REJECTION_COPY` and `TRANSACTION_KIND_COPY` (`apps/game`).
+      - copy in `REJECTION_COPY` and `TRANSACTION_KIND_COPY` (`apps/game`), using #99's approved strings: `EQUIPMENT_NOT_OWNED` gets #99's rejection line, and the `PROGRESSION` kind is labelled "Reputation".
     - **Saves.** Additive enum members only, so existing saves stay valid (ADR 0009), and `SAVE_FORMAT` doesn't change.
     - **Not folded in.** ADR 0017's two stand-ins (a workforce kind and a workforce-in-use code) would move PROD-001 locked expectations.
 15. **Tuning, and the victory-feasibility criterion.**
@@ -263,6 +265,8 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
     - **When.** The worker host (`apps/game/src/workers/simulation-host.ts`) pauses the scheduler (`setSpeed(0)`) when a step's collected events include `VICTORY_ACHIEVED` or `GAME_LOST`. It then syncs the timer and publishes a snapshot at once.
     - **Overshoot.** The step finishes its batch, so the clock can run past the deciding tick by at most one scheduler batch (`MAX_TICKS_PER_STEP`). `advance()` keeps its semantics, so replay and the lab don't change.
     - **Resuming** isn't refused (decision 8).
+    - **The end-of-game text** (title, lead, support, and call to action for victory and for loss) is approved on #99, point 5. T06 (#14) shows it.
+    - **The loss lead uses #99's alternate line,** "Nothing left to sell. No way to start again." `GAME_LOST` can fire with positive cash: cash can cover the inputs but not the conversion cost, or not the price of buying back a still (decision 10).
 17. **Data shapes** (`packages/game-data/src/progression.ts`, types per ADR 0012), added to `GameData` as `progression`:
 
     ```ts
@@ -336,9 +340,13 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
   - the T07a smoke report's tuning flags → T05g (its #85 non-blocking items are already on #15)
   - route-ID validation at load → T05b
 - **#76 (T03b):** its last criterion is answered by decision 13.
-- **Story placeholders for the human** (factory.md §8), each marked PLACEHOLDER where it's added:
-  - the tier display names (the GDD's names are used for now)
-  - the family display name
-  - the rival's identity and flavor for the closure
-  - copy for the new rejection, transaction kind, and event
-  - the end-of-game text (T06)
+- **Story sign-off (#99).** The user answered every story question on #99 (comment of 2026-11-06T20:29). ADR 0020 points there instead of copying the text. Where each string goes:
+  - **T05b (game-data):** the tier names and "The Kerrigans".
+  - **T05a (app copy):** the `EQUIPMENT_NOT_OWNED` rejection and the `PROGRESSION` kind label "Reputation".
+  - **T06 (#14):**
+    - the Dwyer's Roadblock notification, its title, and the reopening line
+    - the `EQUIPMENT_SOLD` notification
+    - the reputation and standing activity lines
+    - the end-of-game text, with the loss lead as above
+
+  Any new faction, character, or lore beyond #99 still needs a story question.
