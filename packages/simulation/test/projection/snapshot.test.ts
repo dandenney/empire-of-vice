@@ -10,6 +10,7 @@ import {
 import { midGameSnapshot, startOfGameSnapshot } from "@eov/contracts/fixtures";
 import {
   BASIC_MOONSHINE_RECIPE,
+  COPPER_STILL,
   CROSSROADS_ROADHOUSE,
   DISTILLERY_MAIN,
   FIRST_SHIPMENT_SCENARIO,
@@ -104,7 +105,7 @@ describe("snapshot projection", () => {
     expect(s.finance.toDate.cashFlow.openingCash).toBe(cents(100_000));
     expect(s.finance.recentTransactions.map((t) => t.kind)).toEqual(["OPENING_BALANCE"]);
     expect(distillery(s)).toMatchObject({ name: "Hollow Creek distillery", locationId: HOLLOW_CREEK, kind: "DISTILLERY", productionCapacityPerDay: 10 });
-    expect(distillery(s).equipment).toEqual([{ id: "copper-still", name: "Copper still", bookValue: cents(30_000) }]);
+    expect(distillery(s).equipment).toEqual([{ id: COPPER_STILL, name: "Copper still", bookValue: cents(30_000) }]);
     expect(s.vehicles).toEqual([{ id: MODEL_TT_TRUCK, name: "Model TT truck", capacity: 20, homeLocationId: HOLLOW_CREEK, trip: null }]);
     expect(s.market.suppliers[0]!.materials.map((m) => [m.materialName, m.unitPrice, m.available, m.shortage])).toEqual([
       ["Corn", cents(250), 160, false],
@@ -143,7 +144,15 @@ describe("snapshot projection", () => {
   it("reports sections with no system yet as empty lists and the scenario's values, never invented numbers", () => {
     const s = newGame().snapshot();
     expect(s.contracts).toEqual({ offers: [], active: [], closed: [] });
-    expect(s.family).toEqual({ id: "kerrigan", name: "kerrigan", reputation: 0, leaders: [] });
+    // Leaders are game-data's characters since T02c2 (#63), by ID.
+    expect(s.family).toEqual({
+      id: "kerrigan",
+      name: "kerrigan",
+      reputation: 0,
+      leaders: [...GAME_DATA.characters]
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        .map((c) => ({ id: c.id, name: c.name, role: c.role, skill: c.skill, loyalty: c.loyalty, dailyWage: c.dailyWage })),
+    });
     expect(s.progression).toEqual({
       currentTierId: "starting-operation",
       tiers: [{ id: "starting-operation", name: "starting-operation", netWorthRequired: null, reputationRequired: null, unlocks: ["spot-sales"], reached: true }],
@@ -155,14 +164,14 @@ describe("snapshot projection", () => {
       },
     });
     // Equipment options and slots come from game-data since T02c1 (#7): every unowned item, by ID.
-    const owned = ["copper-still"];
+    const owned: readonly string[] = [COPPER_STILL];
     expect(distillery(s).equipmentOptions.map((o) => o.equipmentId)).toEqual(
       GAME_DATA.equipment.map((e) => e.id).filter((id) => !owned.includes(id)).sort(),
     );
     const spec = GAME_DATA.facilityProduction.find((f) => f.facilityId === DISTILLERY_MAIN)!;
     expect(distillery(s).equipmentSlots).toEqual({ used: 1, total: spec.equipmentSlots });
     expect(distillery(s).storage).toEqual({ used: 0, capacity: spec.baseStorage });
-    expect(distillery(s).workforce).toEqual({ workers: 3, maximum: 0, dailyWagePerWorker: GAME_DATA.workforce.workerDailyWage });
+    expect(distillery(s).workforce).toEqual({ workers: 3, maximum: spec.maximumWorkers, dailyWagePerWorker: GAME_DATA.workforce.workerDailyWage });
   });
 
   it("takes blockedBy from the handler's real rejection, and never changes state", () => {
@@ -258,13 +267,18 @@ describe("snapshot projection", () => {
     const { sim } = playPath();
     const sameDay = sim.snapshot();
     expect(sameDay.finance.today.profit.netProfit).toBe(cents(300));
+    // The midnight settlement (T02c2, #63) expenses tonight's wages and overhead into the day that ended.
+    const wages =
+      GAME_DATA.characters.reduce((n, c) => n + c.dailyWage, 0) +
+      sim.state.facilities.reduce((n, f) => n + f.workerCount * GAME_DATA.workforce.workerDailyWage, 0);
+    const overhead = GAME_DATA.facilityProduction.reduce((n, f) => n + f.dailyOverhead, 0);
     sim.advance(1_440 - sim.state.tick);
     const nextDay = sim.snapshot();
     expect(nextDay.clock.dayIndex).toBe(1);
     expect(nextDay.finance.today).toMatchObject({ fromTick: 1_440, toTick: 1_440 });
     expect(nextDay.finance.today.profit.netProfit).toBe(0);
     expect(nextDay.finance.previousDay).toMatchObject({ fromTick: 0, toTick: 1_440 });
-    expect(nextDay.finance.previousDay!.profit.netProfit).toBe(cents(300));
+    expect(nextDay.finance.previousDay!.profit.netProfit).toBe(cents(300) - wages - overhead);
     expect(nextDay.finance.today.cashFlow.openingCash).toBe(nextDay.finance.previousDay!.cashFlow.closingCash);
   });
 
