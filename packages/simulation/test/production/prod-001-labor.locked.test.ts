@@ -16,10 +16,11 @@
 // `@eov/game-data`.
 //
 // Expected numbers are derived from game-data and the ADR 0017 formulas, so
-// placeholder tuning can change without breaking these tests. Two tests pin
+// placeholder tuning can change without breaking these tests. One test pins
 // literals on purpose: the shipped crew numbers the issue names (still 3,
 // condenser 1, QC station 0, storage expansion 0, and so 1.05× / 1.4× / 1 372
-// ticks / 10 a day), and the Sprint Zero hash `fnv1a64:cc8a53a058022ea5`.
+// ticks / 10 a day). The Sprint Zero hash test checks the shared reference hash
+// `SPRINT_ZERO_HASH` from `../sprint-zero/reference-hash.ts`.
 //
 // API these tests assume. (issue) marks names the issue or ADR fixes. The rest
 // are the test-writer's choice.
@@ -128,6 +129,7 @@ import {
   type GameSetup,
   type KernelSimulation,
 } from "../../src/index.ts";
+import { SPRINT_ZERO_HASH } from "../sprint-zero/reference-hash.ts";
 
 // ---------------------------------------------------------------------------
 // Constants and lookups
@@ -135,7 +137,6 @@ import {
 
 const MAX = Number.MAX_SAFE_INTEGER;
 const PPM = RATIO_SCALE;
-const SPRINT_ZERO_HASH = "fnv1a64:cc8a53a058022ea5";
 const UNKNOWN_FACILITY = asId("Facility", "fixture-nowhere");
 
 type Loose = Readonly<Record<string, unknown>>;

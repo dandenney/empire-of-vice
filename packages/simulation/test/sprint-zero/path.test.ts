@@ -157,9 +157,17 @@ describe("Sprint Zero: one case of moonshine", () => {
     expect(typesOf(returned)).toEqual(["VEHICLE_RETURNED"]);
 
     // The return goes through the coordinator (issue #32): one VEHICLE_RETURN
-    // transaction, no ledger entries, keyed by the delivery.
+    // transaction, keyed by the delivery, that pays the trip's transport cost
+    // in cash (ADR 0019 decision 2).
     const returnTx = resumed.state.ledger.transactions.at(-1)!;
-    expect(returnTx).toMatchObject({ kind: "VEHICLE_RETURN", idempotencyKey: "VEHICLE_RETURN:delivery-1", entries: [] });
+    expect(returnTx).toMatchObject({
+      kind: "VEHICLE_RETURN",
+      idempotencyKey: "VEHICLE_RETURN:delivery-1",
+      entries: [
+        { account: "TRANSPORT_EXPENSE", side: "DEBIT", amount: route.transportCost },
+        { account: "CASH", side: "CREDIT", amount: route.transportCost },
+      ],
+    });
     expect(returnTx.eventIds).toEqual(returned.map((e) => e.id));
     expectBalanced(resumed.state);
 

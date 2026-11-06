@@ -17,6 +17,7 @@
     "@eov/game-data": "workspace:*",
     "@eov/persistence": "workspace:*",
     "@eov/simulation": "workspace:*",
+    "pixi.js": "^8.22.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "zustand": "^5.0.16"
@@ -28,6 +29,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.2.1",
     "fast-check": "^4.10.2",
+    "typescript": "~6.0.3",
     "vite": "^8.3.5",
     "vitest": "^5.1.0"
   }

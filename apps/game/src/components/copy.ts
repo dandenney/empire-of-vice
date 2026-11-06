@@ -2,7 +2,7 @@
 // and shared components. The real wording, names, and tone are the human's
 // call (#48). Panels keep their own strings in their own copy.ts.
 
-import type { RejectionCode } from "@eov/contracts";
+import type { GameDate, QualityTier, RejectionCode, RejectionReason, SaveLoadError } from "@eov/contracts";
 import type { SpeedMultiplier } from "@eov/game-data";
 
 export const SHELL_COPY = {
@@ -21,7 +21,6 @@ export const SHELL_COPY = {
   error: (message: string) => `Error: ${message}`,
   fault: (message: string) => `The game paused itself after an error: ${message}`,
   panelNav: "Panels",
-  mapLabel: "Placeholder map",
 } as const;
 
 export const SPEED_COPY = {
@@ -42,7 +41,70 @@ export const COMMON_COPY = {
   invalid: (issues: string) => `Invalid request: ${issues}`,
   comingSoon: (title: string) => `${title}: coming in T04c.`,
   tick: (tick: number) => `tick ${tick}`,
+  /** YYYY-MM-DD HH:MM. */
+  gameDate: (date: GameDate) => `${date.year}-${pad2(date.month)}-${pad2(date.day)} ${pad2(date.hour)}:${pad2(date.minute)}`,
+  /** A rejection: its label, then the code and the reason's fields. */
+  reason: (label: string, code: string, fields: readonly string[]) => `${label} (${[code, ...fields].join(", ")})`,
+  reasonField: (name: string, value: string) => `${name}: ${value}`,
 } as const;
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/** Every field name any rejection reason carries, besides `code`. */
+export type RejectionField = RejectionReason extends infer R ? (R extends unknown ? Exclude<keyof R, "code"> : never) : never;
+
+/** The label for each rejection reason field. Placeholder: the raw field name. */
+export const REJECTION_FIELD_COPY: Readonly<Record<RejectionField, string>> = {
+  field: "field",
+  value: "value",
+  scheduledTick: "scheduledTick",
+  currentTick: "currentTick",
+  kind: "kind",
+  id: "id",
+  unlockId: "unlockId",
+  required: "required",
+  current: "current",
+  available: "available",
+  materialId: "materialId",
+  requested: "requested",
+  supplierId: "supplierId",
+  facilityId: "facilityId",
+  recipeId: "recipeId",
+  maximum: "maximum",
+  equipmentId: "equipmentId",
+  productId: "productId",
+  quality: "quality",
+  reservationId: "reservationId",
+  vehicleId: "vehicleId",
+  capacity: "capacity",
+  routeId: "routeId",
+  reopensAt: "reopensAt",
+  buyerId: "buyerId",
+  agreed: "agreed",
+  acceptable: "acceptable",
+  contractOfferId: "contractOfferId",
+  contractId: "contractId",
+  sourceCommandId: "sourceCommandId",
+};
+
+/** The label for each quality tier. Placeholder: the raw tier. */
+export const QUALITY_COPY: Readonly<Record<QualityTier, string>> = {
+  basic: "basic",
+  standard: "standard",
+  premium: "premium",
+};
+
+/** Why a save didn't reload. Placeholder: the raw code. */
+export const SAVE_LOAD_ERROR_COPY: Readonly<Record<SaveLoadError["code"], string>> = {
+  NOT_A_SAVE: "NOT_A_SAVE",
+  NEWER_VERSION: "NEWER_VERSION",
+  MISSING_MIGRATION: "MISSING_MIGRATION",
+  MIGRATION_FAILED: "MIGRATION_FAILED",
+  INVALID: "INVALID",
+  HASH_MISMATCH: "HASH_MISMATCH",
+};
 
 /** One line per rejection code. The reason's fields are listed after it. */
 export const REJECTION_COPY: Readonly<Record<RejectionCode, string>> = {

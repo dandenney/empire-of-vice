@@ -26,6 +26,8 @@ export const FINANCE_COPY = {
   netChange: "Net change",
   closingCash: "Closing cash",
   ticks: (from: number, to: number) => `ticks ${from}–${to}`,
+  /** "Income statement (ticks 0–5)". Separate parts, so each renders as its own text node, as before #58. */
+  statementCaption: (title: string, ticks: string): readonly string[] => [title, " (", ticks, ")"],
   transactions: "Recent transactions",
   noTransactions: "No transactions yet.",
   tick: "Tick",
@@ -33,6 +35,8 @@ export const FINANCE_COPY = {
   entries: "Entries",
   debit: "Dr",
   credit: "Cr",
+  /** "Dr Raw materials $10.00". Separate parts, so each renders as its own text node, as before #58. */
+  entryLine: (side: string, account: string, amount: string): readonly string[] => [side, " ", account, " ", amount],
 } as const;
 
 export const ASSET_COPY: Readonly<Record<keyof BalanceSheet["assets"], string>> = {

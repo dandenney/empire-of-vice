@@ -164,8 +164,13 @@ describe("cash flow guard", () => {
     eventIds: [],
   });
 
-  it.each<TransactionKind>(["OPENING_BALANCE", "RESERVATION", "VEHICLE_RETURN"])("throws when a %s transaction moves cash", (kind) => {
+  it.each<TransactionKind>(["OPENING_BALANCE", "RESERVATION"])("throws when a %s transaction moves cash", (kind) => {
     expect(() => cashFlowStatement(cents(0), [movingCash(kind)])).toThrow(FinanceProjectionError);
+  });
+
+  it("files a VEHICLE_RETURN that moves cash under TRANSPORT (ADR 0019 decision 2)", () => {
+    const flow = cashFlowStatement(cents(0), [movingCash("VEHICLE_RETURN")]);
+    expect(flow.lines.find((l) => l.category === "TRANSPORT")?.amount).toBe(cents(100));
   });
 
   it("doesn't throw for those kinds when they move no cash, or for a kind that does", () => {
