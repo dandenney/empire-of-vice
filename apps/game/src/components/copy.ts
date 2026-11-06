@@ -21,7 +21,6 @@ export const SHELL_COPY = {
   error: (message: string) => `Error: ${message}`,
   fault: (message: string) => `The game paused itself after an error: ${message}`,
   panelNav: "Panels",
-  mapLabel: "Placeholder map",
 } as const;
 
 export const SPEED_COPY = {
