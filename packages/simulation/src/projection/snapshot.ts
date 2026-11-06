@@ -41,6 +41,7 @@ import {
   type VehicleSnapshot,
 } from "@eov/contracts";
 import type { GameData, RecipeDefinition } from "@eov/game-data";
+import { projectContracts } from "../contracts/projection.ts";
 import { cashBalance } from "../economy/ledger/ledger.ts";
 import { priceInputs, quoteDeal } from "../economy/market/market.ts";
 import { availableMaterial } from "../inventory/pools.ts";
@@ -439,8 +440,7 @@ export function projectSnapshot(state: GameState, ctx: ProjectionContext, deps: 
     productionJobs: projectJobs(state, data),
     vehicles: projectVehicles(state, data),
     market: projectMarket(state, data, ctx.clock),
-    // S0 stub (T02e): no contract system yet. State's offer and contract lists are always empty.
-    contracts: { offers: [], active: [], closed: [] },
+    contracts: projectContracts(state, data),
     recentEvents: state.eventJournal.slice(-SNAPSHOT_RECENT_EVENTS),
   };
 }
