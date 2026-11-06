@@ -36,13 +36,13 @@ Main constrains the design:
    - **Posting.** `payOrAccrueEntries({ amount: transportCost, expense: "TRANSPORT_EXPENSE", payable: "WAGES_PAYABLE", cashAvailable: cashBalance })`. The driver is paid on return. A shortfall accrues, and the nightly payroll pays it down (ADR 0017).
    - **No dispatch funds check.** Dispatch is never rejected for lack of cash. Nightly payroll (ADR 0017 decision 9) can leave cash at exactly 0, and M001 has no asset sales, so a funds check would leave a player with stock but no cash unable to sell: a soft lock (GDD §9). Charging at return already accrues any shortfall. This applies to `SALE` and `CONTRACT_INSTALLMENT` dispatches alike. The existing rejection order is unchanged.
    - **Cash flow (ADR 0015).** `VEHICLE_RETURN`'s kind default in `projection/finance.ts` becomes `TRANSPORT`, so a partly accrued charge still files under `TRANSPORT`. The accrued part is later paid down by payroll and shows up under `WAGES`, like any `WAGES_PAYABLE` paydown. That is accepted for M001: the driver is paid with the payroll.
-   - **FIN-001 reference table.** The locked `fin-001.locked.test.ts` `KIND_DEFAULT` table has no `VEHICLE_RETURN` entry. Its property's Sprint Zero step sequences never return a truck with between 1 and 149¢ in cash, so it doesn't throw in practice. If it ever does, that's a locked-test fix round under factory.md §7.3, not a T03 workaround.
+   - **FIN-001 reference table.** The locked `fin-001.locked.test.ts` `KIND_DEFAULT` table has no `VEHICLE_RETURN` entry. Its property's step sequences dispatch with `routeId: null` to the Crossroads, so the charge is the Crossroads default's $1.50, and they never return a truck with between 1 and 149¢ in cash, so it doesn't throw in practice. If it ever does, that's a locked-test fix round under factory.md §7.3, not a T03 workaround.
    - **Doc comment.** The comment on `VEHICLE_RETURN` in `packages/contracts/src/ledger.ts` ("Moves no money") is updated to say it carries the trip's transport cost and any returned cargo. It's a doc-comment-only edit, which T03 owns.
 3. **Disruption.** Only trips on a route with `riskPpm > 0` can be disrupted, and only once per trip.
    - **When.** At the tick the outbound leg is due, in the vehicles phase (vehicle ID order), for a trip with `delayed = false`. The draw runs before the arrival is resolved. A delayed trip doesn't draw again when it finally arrives.
    - **First draw.** `a = nextInt(rng.routes, 1 000 000)`. The trip is disrupted if `a < riskPpm`.
    - **Second draw.** Only if disrupted: `b = nextInt(rng.routes, 1 000 000)`. The cargo is **seized** if `b < seizureSharePpm` (333 334), otherwise the trip is **delayed**.
-   - **No draws at 0.** A route with `riskPpm` 0 draws nothing.
+   - **No draws at 0.** A route with `riskPpm` 0 draws nothing, and commits no `DISPATCH:<id>:CLEAR` transaction. The arrival is resolved directly, as today.
    - **Data.** `seizureSharePpm` and `delayTicks` are per-route `RouteDefinition` fields (decision 1).
    - **Where the draw is committed.** The `rng.routes` advance is staged in the transaction that records the outcome, so it is committed exactly once:
      - **Delayed:** the `DISPATCH:<deliveryId>:DELAY` transaction.
@@ -59,6 +59,7 @@ Main constrains the design:
      - For a `SALE`, `releaseDeal` runs first (ADR 0016) and `DEAL_FELL_THROUGH { CARGO_LOST }` is emitted in the same transaction.
      - Then it sets `delivery.cargo = []`. The cargo is recorded in the `CARGO_LOST` event, not on the delivery.
      - The truck heads home empty on the return leg.
+   - **Return leg.** Whenever a truck turns home without completing its delivery (a seizure here, or a deal that falls through in decision 4), the same outcome transaction sets the trip to `leg: "RETURN"`, `departedAt: tick`, `arrivesAt: tick + route.durationTicks`, `delayed: false`. That's the same as `arriveForSale` does after a sale.
    - **What comes home.** The return transaction brings home `delivery.cargo` when `delivery.status` is `FAILED`, and nothing otherwise. A seized delivery has empty cargo, a too-late one still has its cargo, and a delivered one brings nothing. So each case leaves in-transit exactly once.
 4. **Deal deadline.**
    - **Setting it.** A `SALE` dispatch sets `dealDeadline = arrivesAt + route.dealGraceTicks` (120, PLACEHOLDER), using the arrival time set at dispatch.
@@ -70,9 +71,11 @@ Main constrains the design:
    - **Contract deliveries.** These have no deal deadline. A delayed one still delivers, though it may miss an installment deadline (ADR 0018 decision 6).
 5. **Route closures.**
    - **Closing.** The `ROUTE_CLOSURE` handler sets the route's `closure { reason, reopensAt }`, with `reopensAt = tick + durationTicks`, or `null` when there's no duration. It emits `ROUTE_CLOSED` and schedules `ROUTE_REOPENING` when the closure has a duration.
-   - **Reopening.** `ROUTE_REOPENING` clears the closure and emits `ROUTE_REOPENED` only when the route's current `closure?.reopensAt` equals the event's tick. Otherwise it is a no-op with no transaction, so a stale reopening from an earlier closure can't end a later one.
+   - **Reopening.** `ROUTE_REOPENING` clears the closure and emits `ROUTE_REOPENED` when `closure !== null && (closure.reopensAt === null || closure.reopensAt === tick)`. Otherwise it is a no-op with no transaction.
+     - A closure with no known end (`reopensAt` null, per `RouteClosedEvent.reopensAt`) stays closed until the scenario schedules a `ROUTE_REOPENING` for it, which then always clears it. So no closure is permanent unless the scenario chooses that.
+     - A stale reopening from an earlier closure can't end a later closure that has a duration.
    - **Overlapping closures.** A closure on a route that is already closed replaces the current closure. The stale reopening then fails the check above.
-   - **Transactions.** Each is a no-entry `DAILY_SETTLEMENT` keyed `DAILY_SETTLEMENT:ROUTE_CLOSURE:<routeId>:<tick>` or `DAILY_SETTLEMENT:ROUTE_REOPENING:<routeId>:<tick>`, as for shortages (ADR 0016).
+   - **Transactions.** Each is a no-entry `DAILY_SETTLEMENT` keyed `DAILY_SETTLEMENT:ROUTE_CLOSURE:<routeId>:<tick>` or `DAILY_SETTLEMENT:ROUTE_REOPENING:<routeId>:<tick>`, as for shortages (ADR 0016). A second closure of the same route on the same tick shares the key, so it's a duplicate and is ignored: the first one wins.
    - **Trips in flight** are unaffected. Dispatch onto a closed route is already rejected (`ROUTE_CLOSED`).
    - **Scheduling** closures is the scenario's job (T05, "1 simple disruption source").
 6. **Cargo stays single-line in M001.** Spot deals and contracts are each for one product, so cargo with more than one line is still rejected with `INVALID_QUANTITY`. Mixed loads are post-M001.
@@ -93,5 +96,9 @@ Main constrains the design:
 - No contract type change; the one contracts edit is a doc comment.
 - **Sprint Zero hash.** It moves for certain, from tick 0. `new-game.ts` builds `state.routes` from `data.routes`, so the three new routes change the starting state. The path also reaches the truck's return (`tools/economy-lab/src/sprint-zero.ts`, "Truck returns"), where `VEHICLE_RETURN` now carries entries. T03 updates the pins it owns and explains both causes, as T02d did.
 - **Snapshot test.** `test/projection/snapshot.test.ts` pins the three-route list, so T03 owns that expectation. T02c2 (#63) edits other sections of the same file.
+- **Unlocked tests that decision 2 changes.** Charging transport on `VEHICLE_RETURN` breaks these expectations, and T03 owns exactly them:
+  - `test/projection/robustness.test.ts`, the `VEHICLE_RETURN` case that expects `cashFlowStatement` to throw when a return moves cash. `VEHICLE_RETURN` now has the `TRANSPORT` default, so the case is dropped or inverted.
+  - `test/projection/snapshot.test.ts`, the test "reports a vehicle return as a transaction that moves no money". The return now pays the $1.50 charge on the Sprint Zero path.
+  - `test/sprint-zero/path.test.ts`, the `entries: []` assertion on `VEHICLE_RETURN:delivery-1`, and its "no-entry" comment.
 - T04b (map) and T04c (panels) can show each route's risk, cost, and duration from the existing route snapshot.
 - T05 schedules closures. T07a/T07 tune the numbers.
