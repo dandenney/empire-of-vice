@@ -1,22 +1,30 @@
-// S0 stub: extended by T03 (logistics and route disruption).
+// Logistics (T03, ADR 0019): dispatch, route disruption, deal deadlines, the
+// truck's return, and route closures.
 //
 // - DISPATCH_DELIVERY with purpose SALE strikes the deal at dispatch (ADR 0005):
-//   the buyer's demand and budget are committed, the cargo leaves finished goods
-//   at its pool cost, and that cost moves to goods in transit. Net worth doesn't
-//   change.
-// - The vehicles phase resolves arrivals. An outbound SALE arrival is paid cash
-//   on delivery: revenue and cost of goods sold are recognized now (FIN-001).
-//   The truck then drives home on the same route. Its return moves no money: a
-//   VEHICLE_RETURN transaction with no entries, emitting VEHICLE_RETURNED (ADR 0010).
-//
+//   the buyer's demand and budget are committed, unreserved cargo leaves
+//   finished goods at its pool cost, and that cost moves to goods in transit.
+//   The deal deadline is the arrival plus the route's `dealGraceTicks`.
 // - DISPATCH_DELIVERY with purpose CONTRACT_INSTALLMENT (T02e, ADR 0018
 //   decisions 5–6) draws the contract's reservations first (`takeForContract`)
-//   and commits nothing on the buyer. Its arrival is paid cash on delivery at the
-//   contract price and credits the contract's unsettled installments.
+//   and commits nothing on the buyer. Contract deliveries have no deal deadline.
+// - Dispatch is never rejected for lack of cash (ADR 0019 decision 2).
+// - The vehicles phase resolves trips in vehicle ID order. When an outbound leg
+//   on a risky route (`riskPpm` > 0) is due and hasn't been delayed, it draws
+//   on `rng.routes` (decision 3): clear, delayed, or seized. Each outcome
+//   commits its own keyed transaction, which also stages the RNG advance. Safe
+//   routes draw nothing.
+// - A sale arriving after its deal deadline falls through (decision 4). A
+//   seizure or a fall-through turns the truck home in the same transaction.
+// - An outbound arrival is otherwise paid cash on delivery: revenue and cost of
+//   goods sold are recognized now (FIN-001), and the truck drives home.
+// - The VEHICLE_RETURN transaction pays or accrues the trip's transport cost
+//   and unloads a failed delivery's cargo into the home pool, unreserved.
+// - ROUTE_CLOSURE / ROUTE_REOPENING world events close and reopen routes
+//   (decision 5).
 //
-// Stub limits (T03): SALE and CONTRACT_INSTALLMENT only (TRANSFER finds no route
-// between owned facilities in the stub data), one cargo line per trip, no
-// transport cost, no delays, losses, or deal deadlines.
+// Limits (M001): SALE and CONTRACT_INSTALLMENT only (TRANSFER is T03b, #76),
+// one cargo line per trip (decision 6).
 
 import {
   addMoney,
@@ -33,24 +41,38 @@ import {
   type DispatchDeliveryCommand,
   type FacilityId,
   type GameState,
-  type LedgerEntry,
   type LocationId,
   type RejectionReason,
+  type RngState,
   type RouteId,
+  type RouteState,
   type TransactionCoordinator,
+  type TransactionDraft,
   type VehicleState,
 } from "@eov/contracts";
 import type { GameData, RouteDefinition } from "@eov/game-data";
 import { contractForCargo, contractLoadRejection, creditCases, withCredit } from "../contracts/rules.ts";
-import { saleEntries } from "../economy/ledger/postings.ts";
-import { commitDeal, findCommitment, quoteDeal, settleDeal, type Deal } from "../economy/market/market.ts";
-import { allocateRemovalCost, availableProduct, findProductPool, removeProduct, takeForContract } from "../inventory/pools.ts";
+import { cashBalance } from "../economy/ledger/ledger.ts";
+import { cargoLossEntries, dispatchEntries, payOrAccrueEntries, returnFromTransitEntries, saleEntries } from "../economy/ledger/postings.ts";
+import { commitDeal, findCommitment, quoteDeal, releaseDeal, settleDeal, type Deal } from "../economy/market/market.ts";
+import { scheduleWorldEvent } from "../events/world-events.ts";
+import { addProduct, availableProduct, takeForContract, takeProduct } from "../inventory/pools.ts";
 import { allocateId, formatId } from "../kernel/ids.ts";
 import type { SystemRegistry, TickContext } from "../kernel/registry.ts";
+import { nextInt } from "../rng/xoshiro128.ts";
+
+/** The draw bound for route disruption: parts per million (ADR 0019 decision 3). */
+const PPM = 1_000_000;
 
 /** The route a trip takes: the requested one if it connects the two places, else the first listed (the default). */
 export function resolveRoute(data: GameData, from: LocationId, to: LocationId, requested: RouteId | null): RouteDefinition | null {
   return data.routes.find((r) => r.fromLocationId === from && r.toLocationId === to && (requested === null || r.id === requested)) ?? null;
+}
+
+function routeDefinition(data: GameData, routeId: RouteId): RouteDefinition {
+  const route = data.routes.find((r) => r.id === routeId);
+  if (!route) throw new RangeError(`Unknown route ${routeId}`);
+  return route;
 }
 
 interface DispatchPlan {
@@ -76,6 +98,18 @@ function withDelivery(state: GameState, deliveryId: DeliveryState["id"], status:
   return { ...state, deliveries: state.deliveries.map((d) => (d.id === deliveryId ? { ...d, status } : d)) };
 }
 
+function withCargo(state: GameState, deliveryId: DeliveryState["id"], cargo: DeliveryState["cargo"]): GameState {
+  return { ...state, deliveries: state.deliveries.map((d) => (d.id === deliveryId ? { ...d, cargo } : d)) };
+}
+
+function withRoute(state: GameState, routeId: RouteId, closure: RouteState["closure"]): GameState {
+  return { ...state, routes: state.routes.map((r) => (r.id === routeId ? { ...r, closure } : r)) };
+}
+
+function cargoLine(line: CargoLineState): CargoLine {
+  return { productId: line.productId, quality: line.quality, quantity: line.quantity };
+}
+
 function cargoCost(cargo: readonly CargoLineState[]) {
   return cargo.reduce((sum, line) => addMoney(sum, line.cost), ZERO_MONEY);
 }
@@ -89,7 +123,7 @@ function arriveForSale(
   coordinator: TransactionCoordinator,
   ctx: TickContext,
 ): GameState {
-  if (delivery.purpose.kind !== "SALE") throw new RangeError(`S0 stub: ${delivery.purpose.kind} deliveries aren't implemented (T03/T02e)`);
+  if (delivery.purpose.kind !== "SALE") throw new RangeError(`Delivery ${delivery.id} isn't a sale`);
   const { buyerId } = delivery.purpose;
   const route = data.routes.find((r) => r.id === delivery.routeId);
   if (!route) throw new RangeError(`Delivery ${delivery.id} uses unknown route ${delivery.routeId}`);
@@ -119,19 +153,12 @@ function arriveForSale(
       delayed: false,
     }),
   );
-  const entries: LedgerEntry[] = [];
-  if (revenue > 0) {
-    entries.push({ account: "CASH", side: "DEBIT", amount: revenue }, { account: "SALES_REVENUE", side: "CREDIT", amount: revenue });
-  }
-  if (cogs > 0) {
-    entries.push({ account: "COST_OF_GOODS_SOLD", side: "DEBIT", amount: cogs }, { account: "GOODS_IN_TRANSIT", side: "CREDIT", amount: cogs });
-  }
-  tx.post(entries);
+  tx.post(saleEntries({ revenue, costOfGoodsSold: cogs }));
   tx.emit({
     type: "SALE_COMPLETED",
     deliveryId: delivery.id,
     buyerId,
-    cargo: delivery.cargo.map((l) => ({ productId: l.productId, quality: l.quality, quantity: l.quantity })),
+    cargo: delivery.cargo.map(cargoLine),
     unitPrice: divideMoney(revenue, cases),
     revenue,
     costOfGoodsSold: cogs,
@@ -193,7 +220,7 @@ function arriveForContract(
     type: "SALE_COMPLETED",
     deliveryId: delivery.id,
     buyerId: contract.buyerId,
-    cargo: delivery.cargo.map((l) => ({ productId: l.productId, quality: l.quality, quantity: l.quantity })),
+    cargo: delivery.cargo.map(cargoLine),
     unitPrice: contract.unitPrice,
     revenue,
     costOfGoodsSold: cogs,
@@ -206,8 +233,14 @@ function arriveForContract(
 }
 
 /**
- * The truck is home. No money moves, so this commits a VEHICLE_RETURN transaction
- * with no entries (ADR 0010), keyed by the delivery so a return applies once.
+ * The truck is home (ADR 0019 decisions 2 and 4), in one VEHICLE_RETURN
+ * transaction keyed by the delivery so a return applies once:
+ * - the trip's transport cost is paid from cash, and any shortfall accrues to
+ *   WAGES_PAYABLE (the driver is paid with the nightly payroll);
+ * - a FAILED delivery's cargo (a sale that fell through) unloads into the home
+ *   pool unreserved, at its cost, even over storage capacity, and the delivery's
+ *   cargo is then emptied. A seized delivery's cargo is already empty, and a
+ *   delivered one brings nothing home.
  */
 function returnHome(
   state: GameState,
@@ -220,6 +253,7 @@ function returnHome(
   const def = data.vehicles.find((v) => v.id === vehicle.id);
   const home = data.facilities.find((f) => f.id === def?.homeFacilityId);
   if (!home) throw new RangeError(`Vehicle ${vehicle.id} has no home facility`);
+  const route = routeDefinition(data, trip.routeId);
   const tx = coordinator.begin(state, {
     kind: "VEHICLE_RETURN",
     idempotencyKey: idempotencyKey("VEHICLE_RETURN", trip.deliveryId),
@@ -228,11 +262,216 @@ function returnHome(
   });
   if (tx.status === "duplicate") return state;
 
+  const delivery = tx.state.deliveries.find((d) => d.id === trip.deliveryId);
+  if (!delivery) throw new RangeError(`Vehicle ${vehicle.id} is returning from unknown delivery ${trip.deliveryId}`);
+  const returned = delivery.status === "FAILED" ? delivery.cargo : [];
+
   tx.update((s) => withVehicle(s, vehicle.id, null));
-  tx.emit({ type: "VEHICLE_RETURNED", vehicleId: vehicle.id, deliveryId: trip.deliveryId, locationId: home.locationId, returnedCargo: [] });
+  if (returned.length > 0) {
+    tx.update((s) =>
+      returned.reduce((acc, line) => addProduct(acc, home.id, line.productId, line.quality, line.quantity, line.cost), s),
+    );
+    tx.update((s) => withCargo(s, delivery.id, []));
+  }
+  tx.post([
+    ...payOrAccrueEntries({
+      amount: route.transportCost,
+      expense: "TRANSPORT_EXPENSE",
+      payable: "WAGES_PAYABLE",
+      cashAvailable: cashBalance(tx.state),
+    }),
+    ...returnFromTransitEntries(cargoCost(returned)),
+  ]);
+  tx.emit({
+    type: "VEHICLE_RETURNED",
+    vehicleId: vehicle.id,
+    deliveryId: trip.deliveryId,
+    locationId: home.locationId,
+    returnedCargo: returned.map(cargoLine),
+  });
   const result = tx.commit();
   if (result.status !== "committed") throw new RangeError(`Return of ${vehicle.id} from ${trip.deliveryId} was rejected: ${result.reason.code}`);
   return result.state;
+}
+
+/** The return leg a truck takes when it turns home at `ctx.tick` (ADR 0019 decision 3). */
+function homewardTrip(delivery: DeliveryState, route: RouteDefinition, ctx: TickContext): VehicleState["trip"] {
+  return {
+    deliveryId: delivery.id,
+    routeId: route.id,
+    leg: "RETURN",
+    departedAt: ctx.tick,
+    arrivesAt: addTicks(ctx.tick, route.durationTicks),
+    delayed: false,
+  };
+}
+
+type Disruption = "CLEAR" | "DELAY" | "SEIZE";
+
+/**
+ * Decision 3's draws on a risky route: `a < riskPpm` disrupts the trip, then
+ * `b < seizureSharePpm` seizes the cargo, otherwise the trip is delayed.
+ */
+function drawDisruption(rng: RngState, route: RouteDefinition): { readonly outcome: Disruption; readonly rng: RngState } {
+  const a = nextInt(rng, PPM);
+  if (a.value >= route.riskPpm) return { outcome: "CLEAR", rng: a.rng };
+  const b = nextInt(a.rng, PPM);
+  return { outcome: b.value < route.seizureSharePpm ? "SEIZE" : "DELAY", rng: b.rng };
+}
+
+const withRoutesRng =
+  (rng: RngState) =>
+  (s: GameState): GameState => ({ ...s, rng: { ...s.rng, routes: rng } });
+
+function commitOrThrow(tx: TransactionDraft, what: string): GameState {
+  const result = tx.commit();
+  if (result.status !== "committed") throw new RangeError(`${what} was rejected: ${JSON.stringify(result.reason)}`);
+  return result.state;
+}
+
+/** A risky trip got through: a no-entry, no-event DISPATCH transaction commits the draw (decision 3). */
+function commitClear(state: GameState, delivery: DeliveryState, rng: RngState, coordinator: TransactionCoordinator, ctx: TickContext): GameState {
+  const tx = coordinator.begin(state, {
+    kind: "DISPATCH",
+    idempotencyKey: idempotencyKey("DISPATCH", delivery.id, "CLEAR"),
+    tick: ctx.tick,
+    causedBy: null,
+  });
+  if (tx.status === "duplicate") return state;
+  tx.update(withRoutesRng(rng));
+  return commitOrThrow(tx, `Clear run for ${delivery.id}`);
+}
+
+/** A risky trip is delayed: it arrives `delayTicks` later and won't draw again (decision 3). */
+function delayTrip(
+  state: GameState,
+  vehicle: VehicleState,
+  delivery: DeliveryState,
+  route: RouteDefinition,
+  rng: RngState,
+  coordinator: TransactionCoordinator,
+  ctx: TickContext,
+): GameState {
+  const trip = vehicle.trip!;
+  const tx = coordinator.begin(state, {
+    kind: "DISPATCH",
+    idempotencyKey: idempotencyKey("DISPATCH", delivery.id, "DELAY"),
+    tick: ctx.tick,
+    causedBy: null,
+  });
+  if (tx.status === "duplicate") return state;
+  const arrivesAt = addTicks(trip.arrivesAt, route.delayTicks);
+  tx.update(withRoutesRng(rng));
+  tx.update((s) => withVehicle(s, vehicle.id, { ...trip, arrivesAt, delayed: true }));
+  tx.emit({ type: "DELIVERY_DELAYED", deliveryId: delivery.id, routeId: route.id, previousArrivesAt: trip.arrivesAt, arrivesAt });
+  return commitOrThrow(tx, `Delay of ${delivery.id}`);
+}
+
+/**
+ * A risky trip's cargo is seized (decision 3): written off under CARGO_LOSS, a
+ * sale's deal released, the delivery FAILED with its cargo emptied, and the truck
+ * turned home empty, all in one transaction that also commits the draw.
+ */
+function seizeCargo(
+  state: GameState,
+  vehicle: VehicleState,
+  delivery: DeliveryState,
+  route: RouteDefinition,
+  rng: RngState,
+  data: GameData,
+  coordinator: TransactionCoordinator,
+  ctx: TickContext,
+): GameState {
+  const tx = coordinator.begin(state, {
+    kind: "CARGO_LOSS",
+    idempotencyKey: idempotencyKey("CARGO_LOSS", delivery.id),
+    tick: ctx.tick,
+    causedBy: null,
+  });
+  if (tx.status === "duplicate") return state;
+  const bookValue = cargoCost(delivery.cargo);
+  tx.update(withRoutesRng(rng));
+  tx.post(cargoLossEntries(bookValue));
+  tx.emit({
+    type: "CARGO_LOST",
+    deliveryId: delivery.id,
+    vehicleId: vehicle.id,
+    cargo: delivery.cargo.map(cargoLine),
+    bookValue,
+    transactionId: tx.transactionId,
+  });
+  if (delivery.purpose.kind === "SALE") {
+    const { buyerId } = delivery.purpose;
+    // releaseDeal reads the delivery's cargo, so it runs before the cargo is emptied.
+    tx.update((s) => releaseDeal(s, data, buyerId, delivery.id));
+    tx.emit({ type: "DEAL_FELL_THROUGH", deliveryId: delivery.id, buyerId, reason: "CARGO_LOST" });
+  }
+  tx.update((s) => withCargo(withDelivery(s, delivery.id, "FAILED"), delivery.id, []));
+  tx.update((s) => withVehicle(s, vehicle.id, homewardTrip(delivery, route, ctx)));
+  return commitOrThrow(tx, `Seizure of ${delivery.id}`);
+}
+
+/**
+ * A sale arrived after its deal deadline (decision 4): the deal is released,
+ * the delivery FAILED, and the truck turns home with its cargo still aboard.
+ * No reputation change for a failed spot deal.
+ */
+function fallThrough(
+  state: GameState,
+  vehicle: VehicleState,
+  delivery: DeliveryState,
+  route: RouteDefinition,
+  data: GameData,
+  coordinator: TransactionCoordinator,
+  ctx: TickContext,
+): GameState {
+  if (delivery.purpose.kind !== "SALE") throw new RangeError(`Delivery ${delivery.id} has no deal to fall through`);
+  const { buyerId } = delivery.purpose;
+  const tx = coordinator.begin(state, {
+    kind: "DISPATCH",
+    idempotencyKey: idempotencyKey("DISPATCH", delivery.id, "FELL_THROUGH"),
+    tick: ctx.tick,
+    causedBy: null,
+  });
+  if (tx.status === "duplicate") return state;
+  tx.update((s) => releaseDeal(s, data, buyerId, delivery.id));
+  tx.update((s) => withDelivery(s, delivery.id, "FAILED"));
+  tx.update((s) => withVehicle(s, vehicle.id, homewardTrip(delivery, route, ctx)));
+  tx.emit({ type: "DEAL_FELL_THROUGH", deliveryId: delivery.id, buyerId, reason: "TOO_LATE" });
+  return commitOrThrow(tx, `Fall-through of ${delivery.id}`);
+}
+
+/**
+ * An outbound leg is due. On a risky route that hasn't been delayed yet, draw
+ * the disruption first (decision 3); a delay or seizure ends this tick's work for
+ * the trip. Then a sale past its deal deadline falls through (decision 4), and
+ * anything else arrives.
+ */
+function resolveOutbound(
+  state: GameState,
+  vehicle: VehicleState,
+  data: GameData,
+  coordinator: TransactionCoordinator,
+  ctx: TickContext,
+): GameState {
+  const trip = vehicle.trip!;
+  const delivery = state.deliveries.find((d) => d.id === trip.deliveryId);
+  if (!delivery) throw new RangeError(`Vehicle ${vehicle.id} is carrying unknown delivery ${trip.deliveryId}`);
+  const route = routeDefinition(data, trip.routeId);
+  let s = state;
+  if (!trip.delayed && route.riskPpm > 0) {
+    const draw = drawDisruption(s.rng.routes, route);
+    if (draw.outcome === "DELAY") return delayTrip(s, vehicle, delivery, route, draw.rng, coordinator, ctx);
+    if (draw.outcome === "SEIZE") return seizeCargo(s, vehicle, delivery, route, draw.rng, data, coordinator, ctx);
+    s = commitClear(s, delivery, draw.rng, coordinator, ctx);
+    // `vehicle` and `delivery` below are pre-CLEAR snapshots; safe only because CLEAR changes nothing but `rng.routes`.
+  }
+  if (delivery.purpose.kind === "SALE" && delivery.dealDeadline !== null && ctx.tick > delivery.dealDeadline) {
+    return fallThrough(s, vehicle, delivery, route, data, coordinator, ctx);
+  }
+  return delivery.purpose.kind === "CONTRACT_INSTALLMENT"
+    ? arriveForContract(s, vehicle, delivery, data, coordinator, ctx)
+    : arriveForSale(s, vehicle, delivery, data, coordinator, ctx);
 }
 
 /**
@@ -284,7 +523,7 @@ function planDispatch(state: GameState, command: DispatchDeliveryCommand, data: 
     return { code: "VEHICLE_CAPACITY_EXCEEDED", vehicleId, requested: first.quantity, capacity: def.capacityCases };
   }
   if (purpose.kind === "CONTRACT_INSTALLMENT") return planContractDispatch(state, command, data, purpose.contractId, home.id, home.locationId);
-  // S0 stub: the stub map has no route between owned facilities (T03).
+  // Transfers and the warehouse are T03b (#76): no route between owned facilities yet.
   if (purpose.kind === "TRANSFER") {
     if (!data.facilities.some((f) => f.id === purpose.destinationFacilityId)) {
       return { code: "UNKNOWN_ENTITY", kind: "Facility", id: purpose.destinationFacilityId };
@@ -339,6 +578,7 @@ export function registerLogistics(registry: SystemRegistry, data: GameData, coor
           cargo: [{ ...line, cost: taken.cost }],
           purpose,
           status: "OUTBOUND",
+          // Contract deliveries have no deal deadline (ADR 0019 decision 4).
           dealDeadline: null,
         };
         tx.update(() => {
@@ -348,44 +588,33 @@ export function registerLogistics(registry: SystemRegistry, data: GameData, coor
         tx.update((s) =>
           withVehicle(s, vehicleId, { deliveryId, routeId: route.id, leg: "OUTBOUND", departedAt: ctx.tick, arrivesAt, delayed: false }),
         );
-        if (taken.cost > 0) {
-          tx.post([
-            { account: "GOODS_IN_TRANSIT", side: "DEBIT", amount: taken.cost },
-            { account: "FINISHED_GOODS", side: "CREDIT", amount: taken.cost },
-          ]);
-        }
+        tx.post(dispatchEntries(taken.cost));
         tx.emit({ type: "DELIVERY_DISPATCHED", deliveryId, vehicleId, routeId: route.id, cargo: [line], purpose, arrivesAt });
         for (const reservationId of taken.consumed) tx.emit({ type: "RESERVATION_RELEASED", reservationId, reason: "CONSUMED" });
       } else {
+        // A spot sale: unreserved stock only (ADR 0013), the deal struck now (ADR 0005).
         const { route, deal, line, homeId } = plan;
-        const pool = findProductPool(tx.state, homeId, line.productId, line.quality)!;
-        const cost = allocateRemovalCost(pool.totalCost, pool.quantity, line.quantity);
+        const taken = takeProduct(tx.state, homeId, line.productId, line.quality, line.quantity);
         const arrivesAt = addTicks(ctx.tick, route.durationTicks);
         const delivery: DeliveryState = {
           id: deliveryId,
           vehicleId,
           fromFacilityId: homeId,
           routeId: route.id,
-          cargo: [{ ...line, cost }],
+          cargo: [{ ...line, cost: taken.cost }],
           purpose,
           status: "OUTBOUND",
-          dealDeadline: null,
+          dealDeadline: addTicks(arrivesAt, route.dealGraceTicks),
         };
-        tx.update((s) => {
-          const minted = allocateId(s, "Delivery").state;
-          const unloaded = removeProduct(minted, homeId, line.productId, line.quality, line.quantity, cost);
-          return { ...unloaded, deliveries: [...unloaded.deliveries, delivery].sort(compareById) };
+        tx.update(() => {
+          const minted = allocateId(taken.state, "Delivery").state;
+          return { ...minted, deliveries: [...minted.deliveries, delivery].sort(compareById) };
         });
         tx.update((s) =>
           withVehicle(s, vehicleId, { deliveryId, routeId: route.id, leg: "OUTBOUND", departedAt: ctx.tick, arrivesAt, delayed: false }),
         );
         tx.update((s) => commitDeal(s, deal, deliveryId, line));
-        if (cost > 0) {
-          tx.post([
-            { account: "GOODS_IN_TRANSIT", side: "DEBIT", amount: cost },
-            { account: "FINISHED_GOODS", side: "CREDIT", amount: cost },
-          ]);
-        }
+        tx.post(dispatchEntries(taken.cost));
         tx.emit({ type: "DELIVERY_DISPATCHED", deliveryId, vehicleId, routeId: route.id, cargo: [line], purpose, arrivesAt });
       }
 
@@ -399,17 +628,46 @@ export function registerLogistics(registry: SystemRegistry, data: GameData, coor
     for (const vehicle of state.vehicles) {
       const trip = vehicle.trip;
       if (!trip || trip.arrivesAt > ctx.tick) continue;
-      if (trip.leg === "RETURN") {
-        s = returnHome(s, vehicle, data, coordinator, ctx);
-        continue;
-      }
-      const delivery = s.deliveries.find((d) => d.id === trip.deliveryId);
-      if (!delivery) throw new RangeError(`Vehicle ${vehicle.id} is carrying unknown delivery ${trip.deliveryId}`);
-      s =
-        delivery.purpose.kind === "CONTRACT_INSTALLMENT"
-          ? arriveForContract(s, vehicle, delivery, data, coordinator, ctx)
-          : arriveForSale(s, vehicle, delivery, data, coordinator, ctx);
+      s = trip.leg === "RETURN" ? returnHome(s, vehicle, data, coordinator, ctx) : resolveOutbound(s, vehicle, data, coordinator, ctx);
     }
     return s;
+  });
+
+  // Route closures (ADR 0019 decision 5): no-entry DAILY_SETTLEMENT transactions
+  // keyed by route and tick, so a same-tick duplicate closure is ignored.
+  registry.onWorldEvent("ROUTE_CLOSURE", (state, event, ctx) => {
+    const { routeId, reason } = event;
+    const tx = coordinator.begin(state, {
+      kind: "DAILY_SETTLEMENT",
+      idempotencyKey: idempotencyKey("DAILY_SETTLEMENT", "ROUTE_CLOSURE", routeId, ctx.tick),
+      tick: ctx.tick,
+      causedBy: null,
+    });
+    if (tx.status === "duplicate") return state;
+    if (!tx.state.routes.some((r) => r.id === routeId)) throw new RangeError(`ROUTE_CLOSURE for unknown route ${routeId}`);
+    const reopensAt = event.durationTicks === null ? null : addTicks(ctx.tick, event.durationTicks);
+    // A closure on a route that is already closed replaces the current one.
+    tx.update((s) => withRoute(s, routeId, { reason, reopensAt }));
+    if (reopensAt !== null) tx.update((s) => scheduleWorldEvent(s, { kind: "ROUTE_REOPENING", tick: reopensAt, routeId }));
+    tx.emit({ type: "ROUTE_CLOSED", routeId, reason, reopensAt });
+    return commitOrThrow(tx, `ROUTE_CLOSURE of ${routeId}`);
+  });
+
+  registry.onWorldEvent("ROUTE_REOPENING", (state, event, ctx) => {
+    const { routeId } = event;
+    const closure = state.routes.find((r) => r.id === routeId)?.closure ?? null;
+    // Clears an open-ended closure or the one this reopening was scheduled for.
+    // A stale reopening from a replaced closure is a no-op with no transaction.
+    if (closure === null || (closure.reopensAt !== null && closure.reopensAt !== ctx.tick)) return state;
+    const tx = coordinator.begin(state, {
+      kind: "DAILY_SETTLEMENT",
+      idempotencyKey: idempotencyKey("DAILY_SETTLEMENT", "ROUTE_REOPENING", routeId, ctx.tick),
+      tick: ctx.tick,
+      causedBy: null,
+    });
+    if (tx.status === "duplicate") return state;
+    tx.update((s) => withRoute(s, routeId, null));
+    tx.emit({ type: "ROUTE_REOPENED", routeId });
+    return commitOrThrow(tx, `ROUTE_REOPENING of ${routeId}`);
   });
 }

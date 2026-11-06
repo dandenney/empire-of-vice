@@ -37,8 +37,9 @@
 //
 // Pinned literals: the GDD §7 / ADR 0018 defaults in the data test (3, 2 880,
 // 950 000, 200 000, 3 960, null; Kessler's basic × 8, Lakeview standard × 6; the
-// roadhouse offers none), the ADR 0002 rounding examples (fixture prices), and
-// the Sprint Zero hash fnv1a64:cc8a53a058022ea5. Everything else is derived from
+// roadhouse offers none) and the ADR 0002 rounding examples (fixture prices).
+// The Sprint Zero hash test checks the shared reference hash `SPRINT_ZERO_HASH`
+// from `../sprint-zero/reference-hash.ts`. Everything else is derived from
 // game-data, state, and the ADR 0018 formulas.
 //
 // Fixtures. Finished stock, cash, and a penalty payable are booked through a
@@ -130,13 +131,13 @@ import {
   type GameSetup,
   type KernelSimulation,
 } from "../../src/index.ts";
+import { SPRINT_ZERO_HASH } from "../sprint-zero/reference-hash.ts";
 
 // ---------------------------------------------------------------------------
 // Contract data (loose reads; see the header for the assumed shape)
 // ---------------------------------------------------------------------------
 
 const DAY = TICKS_PER_DAY;
-const SPRINT_ZERO_HASH = "fnv1a64:cc8a53a058022ea5";
 
 type Loose = Record<string, unknown>;
 

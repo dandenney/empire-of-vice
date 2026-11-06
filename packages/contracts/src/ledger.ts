@@ -65,7 +65,10 @@ export type TransactionKind =
   | "INSTALLMENT_SETTLEMENT"
   | "RESERVATION"
   | "ASSET_SALE"
-  /** A truck back at its home facility. Moves no money: an empty-entries transaction (ADR 0010). */
+  /**
+   * A truck back at its home facility. Carries the trip's transport cost (paid,
+   * or accrued to WAGES_PAYABLE) and any cargo it brings home (ADR 0019 decision 2).
+   */
   | "VEHICLE_RETURN";
 
 /**
