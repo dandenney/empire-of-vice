@@ -29,6 +29,8 @@ export interface ShortageMarketEffect {
  * from the market RNG stream; it then lasts `durationDays`.
  */
 export interface ShortageDefinition {
+  /** The event's in-world name, as the player sees it. */
+  readonly name: string;
   /** At least 2, so the start is always after the day-1 roll. */
   readonly earliestStartDay: number;
   /** At least `earliestStartDay`. */
@@ -55,6 +57,8 @@ export interface SupplierStockDefinition {
 export interface SupplierDefinition {
   readonly id: SupplierId;
   readonly name: string;
+  /** One line of in-world period flavor, shown in the Market panel. No mechanics or numbers. */
+  readonly flavor: string;
   readonly locationId: LocationId;
   readonly stock: readonly SupplierStockDefinition[];
 }
@@ -65,6 +69,7 @@ export const SUPPLIERS: readonly SupplierDefinition[] = [
   {
     id: MILLERS_FEED,
     name: "Miller's Feed & Seed", // PLACEHOLDER (story)
+    flavor: "Feed corn and sugar by the sack off the loading dock; old Miller never asks what your chickens drink.",
     locationId: MILLERS_FEED_LOCATION, // PLACEHOLDER (story)
     stock: [
       {
@@ -72,6 +77,7 @@ export const SUPPLIERS: readonly SupplierDefinition[] = [
         dailyStock: 160, // PLACEHOLDER (tuning; T07a validates)
         unitPrice: cents(250), // PLACEHOLDER (tuning; T07a validates)
         shortage: {
+          name: "Corn blight downstate",
           earliestStartDay: 4, // PLACEHOLDER (tuning; T07a validates)
           latestStartDay: 7, // PLACEHOLDER (tuning; T07a validates)
           durationDays: 3, // PLACEHOLDER (tuning; T07a validates)

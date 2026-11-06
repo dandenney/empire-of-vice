@@ -35,6 +35,8 @@ export interface BuyerWantDefinition {
 export interface BuyerDefinition {
   readonly id: BuyerId;
   readonly name: string;
+  /** One line of in-world period flavor, shown in the Market panel. No mechanics or numbers. */
+  readonly flavor: string;
   readonly locationId: LocationId;
   /** The family reputation (0–100) the buyer needs before dealing (ADR 0016). */
   readonly minimumReputation: number;
@@ -50,7 +52,8 @@ export const LAKEVIEW_HOTEL = asId("Buyer", "lakeview-hotel");
 export const BUYERS: readonly BuyerDefinition[] = [
   {
     id: CROSSROADS_ROADHOUSE,
-    name: "The Crossroads Roadhouse", // PLACEHOLDER (story)
+    name: "The Crossroads Roadhouse",
+    flavor: "Sawdust floors, a piano missing keys, and a proprietor who counts his cash twice before spending it.",
     locationId: CROSSROADS, // PLACEHOLDER (story)
     minimumReputation: 0, // PLACEHOLDER (tuning; T07a validates)
     dailyBudget: cents(15_000), // PLACEHOLDER (tuning; T07a validates)
@@ -61,7 +64,8 @@ export const BUYERS: readonly BuyerDefinition[] = [
   },
   {
     id: KESSLERS_BACK_ROOM,
-    name: "Kessler's Back Room", // PLACEHOLDER (story)
+    name: "Kessler's Back Room",
+    flavor: "Past the soda fountain and the cough syrup, Kessler fills \"prescriptions\" for anyone who knows to ask.",
     locationId: KESSLER_PHARMACY, // PLACEHOLDER (story)
     minimumReputation: 0, // PLACEHOLDER (tuning; T07a validates)
     dailyBudget: cents(25_000), // PLACEHOLDER (tuning; T07a validates)
@@ -72,7 +76,8 @@ export const BUYERS: readonly BuyerDefinition[] = [
   },
   {
     id: LAKEVIEW_HOTEL,
-    name: "Lakeview Hotel", // PLACEHOLDER (story)
+    name: "Lakeview Hotel",
+    flavor: "Marble lobby, lake breeze, an orchestra in the ballroom; the bell captain deals only with names he knows.",
     locationId: LAKEVIEW, // PLACEHOLDER (story)
     minimumReputation: 10, // PLACEHOLDER (tuning; T07a validates)
     dailyBudget: cents(30_000), // PLACEHOLDER (tuning; T07a validates)
