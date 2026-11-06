@@ -134,9 +134,13 @@ describe("snapshot projection", () => {
       ["lakeview", "BUYER"],
       ["millers-feed", "SUPPLIER"],
     ]);
+    // A safe default and a risky alternative per buyer (ADR 0019 decision 1), by ID.
     expect(s.routes.map((r) => [r.id, r.status])).toEqual([
       ["county-road", { open: true }],
+      ["crossroads-back-road", { open: true }],
+      ["kessler-back-road", { open: true }],
       ["lake-shore-drive", { open: true }],
+      ["lakeview-back-road", { open: true }],
       ["state-highway", { open: true }],
     ]);
   });
@@ -223,31 +227,46 @@ describe("snapshot projection", () => {
     expect(snapshots.home!.vehicles[0]!.trip).toBeNull();
   });
 
-  it("records the profit: $14.00 revenue, $11.00 cost of goods, $3.00 net", () => {
+  it("records the profit: $14.00 revenue, $11.00 cost of goods, $1.50 transport, $1.50 net", () => {
     const { snapshots } = playPath();
     const profit = snapshots.home!.finance.toDate.profit;
-    expect(profit).toMatchObject({ revenue: cents(1_400), costOfGoodsSold: cents(1_100), grossProfit: cents(300), gains: 0, netProfit: cents(300) });
+    // The state highway's $1.50 transport is paid when the truck gets home (ADR 0019 decision 2).
+    expect(profit).toMatchObject({ revenue: cents(1_400), costOfGoodsSold: cents(1_100), grossProfit: cents(300), gains: 0, netProfit: cents(150) });
     expect(profit.expenses.map((e) => e.category)).toEqual(["WAGES", "OVERHEAD", "TRANSPORT", "PENALTIES", "LOSSES"]);
     // Profit and cash flow differ: cash paid for materials and labor before the sale.
     expect(snapshots.produced!.finance.toDate.profit.netProfit).toBe(0);
     expect(snapshots.produced!.finance.toDate.cashFlow.netChange).toBe(cents(-1_100));
     const flow = snapshots.home!.finance.toDate.cashFlow;
-    expect(Object.fromEntries(flow.lines.map((l) => [l.category, l.amount]))).toMatchObject({ SALES: cents(1_400), MATERIALS: cents(-700), WAGES: cents(-400) });
+    expect(Object.fromEntries(flow.lines.map((l) => [l.category, l.amount]))).toMatchObject({
+      SALES: cents(1_400),
+      MATERIALS: cents(-700),
+      WAGES: cents(-400),
+      TRANSPORT: cents(-150),
+    });
     expect(flow.closingCash).toBe(snapshots.home!.finance.cash);
-    expect(snapshots.home!.finance.netWorth).toBe(cents(250_300));
+    expect(snapshots.home!.finance.netWorth).toBe(cents(250_150));
   });
 
-  it("reports a vehicle return as a transaction that moves no money", () => {
+  it("reports a vehicle return as the transaction that pays the trip's transport cost", () => {
     const { snapshots } = playPath();
     const sold = snapshots.sold!.finance;
     const home = snapshots.home!.finance;
     const returned = home.recentTransactions.at(-1)!;
-    expect(returned).toMatchObject({ kind: "VEHICLE_RETURN", entries: [] });
+    // ADR 0019 decision 2: the driver is paid on return, in cash while there is cash.
+    expect(returned).toMatchObject({
+      kind: "VEHICLE_RETURN",
+      entries: [
+        { account: "TRANSPORT_EXPENSE", side: "DEBIT", amount: cents(150) },
+        { account: "CASH", side: "CREDIT", amount: cents(150) },
+      ],
+    });
     expect(sold.recentTransactions.map((t) => t.kind)).not.toContain("VEHICLE_RETURN");
-    // It lands in today's and to-date periods without changing cash, profit, or the balance sheet.
-    expect(home.toDate.cashFlow).toEqual(sold.toDate.cashFlow);
-    expect(home.toDate.profit).toEqual(sold.toDate.profit);
-    expect(home.balanceSheet).toEqual(sold.balanceSheet);
+    // Cash flow files it under TRANSPORT. Cash and profit drop by the charge; nothing else moves.
+    expect(home.toDate.cashFlow.netChange).toBe(sold.toDate.cashFlow.netChange - cents(150));
+    expect(Object.fromEntries(home.toDate.cashFlow.lines.map((l) => [l.category, l.amount]))).toMatchObject({ TRANSPORT: cents(-150) });
+    expect(home.toDate.profit.netProfit).toBe(sold.toDate.profit.netProfit - cents(150));
+    expect(home.balanceSheet.assets).toEqual({ ...sold.balanceSheet.assets, cash: sold.balanceSheet.assets.cash - cents(150) });
+    expect(home.balanceSheet.liabilities).toEqual(sold.balanceSheet.liabilities);
   });
 
   it("reconciles: equity = net worth = assets − liabilities, and net worth − profit = opening equity", () => {
@@ -266,7 +285,8 @@ describe("snapshot projection", () => {
   it("splits finance into today and the previous day at midnight", () => {
     const { sim } = playPath();
     const sameDay = sim.snapshot();
-    expect(sameDay.finance.today.profit.netProfit).toBe(cents(300));
+    // $3.00 gross profit less the $1.50 transport paid at the truck's return (ADR 0019 decision 2).
+    expect(sameDay.finance.today.profit.netProfit).toBe(cents(150));
     // The midnight settlement (T02c2, #63) expenses tonight's wages and overhead into the day that ended.
     const wages =
       GAME_DATA.characters.reduce((n, c) => n + c.dailyWage, 0) +
@@ -278,7 +298,7 @@ describe("snapshot projection", () => {
     expect(nextDay.finance.today).toMatchObject({ fromTick: 1_440, toTick: 1_440 });
     expect(nextDay.finance.today.profit.netProfit).toBe(0);
     expect(nextDay.finance.previousDay).toMatchObject({ fromTick: 0, toTick: 1_440 });
-    expect(nextDay.finance.previousDay!.profit.netProfit).toBe(cents(300) - wages - overhead);
+    expect(nextDay.finance.previousDay!.profit.netProfit).toBe(cents(150) - wages - overhead);
     expect(nextDay.finance.today.cashFlow.openingCash).toBe(nextDay.finance.previousDay!.cashFlow.closingCash);
   });
 

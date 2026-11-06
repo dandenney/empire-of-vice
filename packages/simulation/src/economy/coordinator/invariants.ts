@@ -76,9 +76,13 @@ export function checkInvariants(state: GameState, transaction: LedgerTransaction
   }
 
   // Inventory accounts match the inventory they represent.
+  // Goods in transit: outbound cargo, plus a FAILED delivery's cargo while a
+  // vehicle's trip still carries it home (a sale that fell through, ADR 0019
+  // decision 4; the return unloads it and empties the delivery's cargo).
+  const onTrips = new Set(state.vehicles.map((v) => v.trip?.deliveryId));
   let inTransit = ZERO_MONEY;
   for (const d of state.deliveries) {
-    if (d.status !== "OUTBOUND") continue;
+    if (d.status !== "OUTBOUND" && !(d.status === "FAILED" && onTrips.has(d.id))) continue;
     for (const line of d.cargo) inTransit = addMoney(inTransit, line.cost);
   }
   const inventoryChecks = [

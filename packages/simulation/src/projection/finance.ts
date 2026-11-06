@@ -104,8 +104,8 @@ const CASH_FLOW_CATEGORY: Readonly<Record<TransactionKind, CashFlowCategory | nu
   INSTALLMENT_SETTLEMENT: "SALES",
   RESERVATION: null,
   ASSET_SALE: "ASSET_SALES",
-  // A truck getting home commits a transaction with no entries (ADR 0010).
-  VEHICLE_RETURN: null,
+  // A truck getting home pays its trip's transport cost (ADR 0019 decision 2).
+  VEHICLE_RETURN: "TRANSPORT",
 };
 
 export class FinanceProjectionError extends Error {
