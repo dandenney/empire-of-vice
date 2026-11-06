@@ -464,6 +464,7 @@ function resolveOutbound(
     if (draw.outcome === "DELAY") return delayTrip(s, vehicle, delivery, route, draw.rng, coordinator, ctx);
     if (draw.outcome === "SEIZE") return seizeCargo(s, vehicle, delivery, route, draw.rng, data, coordinator, ctx);
     s = commitClear(s, delivery, draw.rng, coordinator, ctx);
+    // `vehicle` and `delivery` below are pre-CLEAR snapshots; safe only because CLEAR changes nothing but `rng.routes`.
   }
   if (delivery.purpose.kind === "SALE" && delivery.dealDeadline !== null && ctx.tick > delivery.dealDeadline) {
     return fallThrough(s, vehicle, delivery, route, data, coordinator, ctx);
