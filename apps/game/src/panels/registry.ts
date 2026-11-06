@@ -8,6 +8,7 @@ import type { GameSnapshot, LocationId, LocationOccupant } from "@eov/contracts"
 import { createElement, type ComponentType } from "react";
 import { PanelPlaceholder } from "../components/panel-placeholder.tsx";
 import type { PanelId } from "../state/ui-store.ts";
+import { PLACEHOLDER_PANEL_COPY } from "./copy.ts";
 import { DASHBOARD_COPY } from "./dashboard/copy.ts";
 import { DashboardPanel } from "./dashboard/dashboard-panel.tsx";
 import { FINANCE_COPY } from "./finance/copy.ts";
@@ -26,8 +27,8 @@ export interface PanelDefinition {
   readonly component: ComponentType<PanelProps>;
 }
 
-/** PLACEHOLDER copy (story decision): the Market panel's title, until T04c gives it a copy.ts. */
-const MARKET_TITLE = "Market";
+/** The Market panel's title, until T04c gives it a copy.ts. */
+const MARKET_TITLE = PLACEHOLDER_PANEL_COPY.marketTitle;
 
 const MarketPlaceholder: ComponentType<PanelProps> = () => createElement(PanelPlaceholder, { title: MARKET_TITLE });
 

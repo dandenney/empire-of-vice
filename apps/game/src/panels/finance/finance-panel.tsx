@@ -60,9 +60,7 @@ function IncomeStatementTable({ report }: { readonly report: PeriodReport }) {
   const p = report.profit;
   return (
     <table data-testid="finance-income-statement">
-      <caption>
-        {C.incomeStatement} ({C.ticks(report.fromTick, report.toTick)})
-      </caption>
+      <caption>{C.statementCaption(C.incomeStatement, C.ticks(report.fromTick, report.toTick))}</caption>
       <tbody>
         <Line label={C.revenue} amount={p.revenue} testId="finance-revenue" />
         <Line label={C.costOfGoodsSold} amount={p.costOfGoodsSold} testId="finance-cogs" />
@@ -81,9 +79,7 @@ function CashFlowTable({ report }: { readonly report: PeriodReport }) {
   const c = report.cashFlow;
   return (
     <table data-testid="finance-cash-flow">
-      <caption>
-        {C.cashFlow} ({C.ticks(report.fromTick, report.toTick)})
-      </caption>
+      <caption>{C.statementCaption(C.cashFlow, C.ticks(report.fromTick, report.toTick))}</caption>
       <tbody>
         <Line label={C.openingCash} amount={c.openingCash} testId="finance-opening-cash" />
         {c.lines.map((l) => (
@@ -118,9 +114,7 @@ function TransactionsTable({ transactions }: { readonly transactions: FinanceSna
             <td>
               <ul>
                 {t.entries.map((e, i) => (
-                  <li key={i}>
-                    {e.side === "DEBIT" ? C.debit : C.credit} {ACCOUNT_COPY[e.account]} {formatMoney(e.amount)}
-                  </li>
+                  <li key={i}>{C.entryLine(e.side === "DEBIT" ? C.debit : C.credit, ACCOUNT_COPY[e.account], formatMoney(e.amount))}</li>
                 ))}
               </ul>
             </td>

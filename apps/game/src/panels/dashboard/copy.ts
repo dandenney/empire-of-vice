@@ -4,6 +4,7 @@ export const DASHBOARD_COPY = {
   title: "Dashboard",
   date: "Date",
   day: (dayIndex: number) => `day ${dayIndex}`,
+  dateLine: (date: string, day: string, tick: string) => `${date} (${day}, ${tick})`,
   cash: "Cash",
   netWorth: "Net worth",
   netWorthNote: "Assets minus liabilities, right now",

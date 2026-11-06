@@ -24,6 +24,7 @@
 
 import { TICKS_PER_HOUR } from "@eov/contracts";
 import { REAL_MS_PER_GAME_HOUR_AT_1X, SPEED_MULTIPLIERS, type SpeedMultiplier } from "@eov/game-data";
+import { WORKER_COPY } from "./copy.ts";
 
 /** 0 is paused; otherwise a speed multiplier from game-data. */
 export type Speed = 0 | SpeedMultiplier;
@@ -91,7 +92,7 @@ export class SpeedScheduler {
    * while the tab is hidden.
    */
   setSpeed(speed: Speed): boolean {
-    if (!isSpeed(speed)) throw new RangeError(`Not a speed: ${String(speed)}`);
+    if (!isSpeed(speed)) throw new RangeError(WORKER_COPY.notASpeed(String(speed)));
     this.#accrue();
     if (speed !== 0 && !this.#visible) return false;
     this.#speed = speed;
