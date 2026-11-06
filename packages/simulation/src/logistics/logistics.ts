@@ -9,9 +9,14 @@
 //   The truck then drives home on the same route. Its return moves no money: a
 //   VEHICLE_RETURN transaction with no entries, emitting VEHICLE_RETURNED (ADR 0010).
 //
-// Stub limits (T03, T02d, T02e): SALE only (TRANSFER finds no route between owned
-// facilities in the stub data; CONTRACT_INSTALLMENT has no contracts yet), one
-// cargo line per trip, no transport cost, no delays, losses, or deal deadlines.
+// - DISPATCH_DELIVERY with purpose CONTRACT_INSTALLMENT (T02e, ADR 0018
+//   decisions 5–6) draws the contract's reservations first (`takeForContract`)
+//   and commits nothing on the buyer. Its arrival is paid cash on delivery at the
+//   contract price and credits the contract's unsettled installments.
+//
+// Stub limits (T03): SALE and CONTRACT_INSTALLMENT only (TRANSFER finds no route
+// between owned facilities in the stub data), one cargo line per trip, no
+// transport cost, no delays, losses, or deal deadlines.
 
 import {
   addMoney,
@@ -19,8 +24,10 @@ import {
   compareById,
   divideMoney,
   idempotencyKey,
+  multiplyMoney,
   ZERO_MONEY,
   type CargoLine,
+  type ContractId,
   type CargoLineState,
   type DeliveryState,
   type DispatchDeliveryCommand,
@@ -34,8 +41,10 @@ import {
   type VehicleState,
 } from "@eov/contracts";
 import type { GameData, RouteDefinition } from "@eov/game-data";
+import { contractForCargo, contractLoadRejection, creditCases, withCredit } from "../contracts/rules.ts";
+import { saleEntries } from "../economy/ledger/postings.ts";
 import { commitDeal, findCommitment, quoteDeal, settleDeal, type Deal } from "../economy/market/market.ts";
-import { allocateRemovalCost, availableProduct, findProductPool, removeProduct } from "../inventory/pools.ts";
+import { allocateRemovalCost, availableProduct, findProductPool, removeProduct, takeForContract } from "../inventory/pools.ts";
 import { allocateId, formatId } from "../kernel/ids.ts";
 import type { SystemRegistry, TickContext } from "../kernel/registry.ts";
 
@@ -47,6 +56,14 @@ export function resolveRoute(data: GameData, from: LocationId, to: LocationId, r
 interface DispatchPlan {
   readonly route: RouteDefinition;
   readonly deal: Deal;
+  readonly line: CargoLine;
+  readonly homeId: FacilityId;
+}
+
+/** A contract installment's dispatch (ADR 0018 decision 5): no deal, cargo drawn for the contract. */
+interface ContractDispatchPlan {
+  readonly route: RouteDefinition;
+  readonly contractId: ContractId;
   readonly line: CargoLine;
   readonly homeId: FacilityId;
 }
@@ -127,6 +144,68 @@ function arriveForSale(
 }
 
 /**
+ * An outbound CONTRACT_INSTALLMENT arrives (ADR 0018 decision 6): cash on
+ * delivery at the contract price, the cases credited to unsettled installments
+ * whose deadline is still ahead (or now), in index order. Extra cases are paid
+ * for but credit nothing. The truck heads home, as after a sale.
+ */
+function arriveForContract(
+  state: GameState,
+  vehicle: VehicleState,
+  delivery: DeliveryState,
+  data: GameData,
+  coordinator: TransactionCoordinator,
+  ctx: TickContext,
+): GameState {
+  if (delivery.purpose.kind !== "CONTRACT_INSTALLMENT") throw new RangeError(`Delivery ${delivery.id} isn't a contract installment`);
+  const { contractId } = delivery.purpose;
+  const route = data.routes.find((r) => r.id === delivery.routeId);
+  if (!route) throw new RangeError(`Delivery ${delivery.id} uses unknown route ${delivery.routeId}`);
+  const tx = coordinator.begin(state, {
+    kind: "SALE",
+    idempotencyKey: idempotencyKey("SALE", delivery.id),
+    tick: ctx.tick,
+    causedBy: null,
+  });
+  if (tx.status === "duplicate") return state;
+
+  const contract = tx.state.contracts.find((c) => c.id === contractId);
+  if (!contract) throw new RangeError(`Delivery ${delivery.id} is for unknown contract ${contractId}`);
+  const cases = delivery.cargo.reduce((n, line) => n + line.quantity, 0);
+  const revenue = multiplyMoney(contract.unitPrice, cases);
+  const cogs = cargoCost(delivery.cargo);
+  const credit = creditCases(contract.installments, cases, ctx.tick);
+
+  tx.update((s) => ({ ...s, contracts: s.contracts.map((c) => (c.id === contractId ? withCredit(c, credit) : c)) }));
+  tx.update((s) => withDelivery(s, delivery.id, "DELIVERED"));
+  tx.update((s) =>
+    withVehicle(s, vehicle.id, {
+      deliveryId: delivery.id,
+      routeId: delivery.routeId,
+      leg: "RETURN",
+      departedAt: ctx.tick,
+      arrivesAt: addTicks(ctx.tick, route.durationTicks),
+      delayed: false,
+    }),
+  );
+  tx.post(saleEntries({ revenue, costOfGoodsSold: cogs }));
+  tx.emit({
+    type: "SALE_COMPLETED",
+    deliveryId: delivery.id,
+    buyerId: contract.buyerId,
+    cargo: delivery.cargo.map((l) => ({ productId: l.productId, quality: l.quality, quantity: l.quantity })),
+    unitPrice: contract.unitPrice,
+    revenue,
+    costOfGoodsSold: cogs,
+    contractId,
+    transactionId: tx.transactionId,
+  });
+  const result = tx.commit();
+  if (result.status !== "committed") throw new RangeError(`Contract delivery ${delivery.id} was rejected: ${result.reason.code}`);
+  return result.state;
+}
+
+/**
  * The truck is home. No money moves, so this commits a VEHICLE_RETURN transaction
  * with no entries (ADR 0010), keyed by the delivery so a return applies once.
  */
@@ -156,8 +235,40 @@ function returnHome(
   return result.state;
 }
 
+/**
+ * A contract installment's checks after the vehicle and cargo shape (ADR 0018
+ * decision 5): the contract and cargo, the route to the buyer as for a sale,
+ * then the quantity cap before the stock check. No transport funds check
+ * (ADR 0019 decision 1).
+ */
+function planContractDispatch(
+  state: GameState,
+  command: DispatchDeliveryCommand,
+  data: GameData,
+  contractId: ContractId,
+  homeId: FacilityId,
+  homeLocationId: LocationId,
+): ContractDispatchPlan | RejectionReason {
+  const first = command.cargo[0]!;
+  const line: CargoLine = { productId: first.productId, quality: first.quality, quantity: first.quantity };
+  const contract = contractForCargo(state, contractId, line);
+  if ("code" in contract) return contract;
+  const buyer = data.buyers.find((b) => b.id === contract.buyerId);
+  if (!buyer) return { code: "UNKNOWN_ENTITY", kind: "Buyer", id: contract.buyerId };
+  if (command.routeId !== null && !data.routes.some((r) => r.id === command.routeId)) {
+    return { code: "UNKNOWN_ENTITY", kind: "Route", id: command.routeId };
+  }
+  const route = resolveRoute(data, homeLocationId, buyer.locationId, command.routeId);
+  if (!route) return { code: "NO_ROUTE", vehicleId: command.vehicleId };
+  const closure = state.routes.find((r) => r.id === route.id)?.closure ?? null;
+  if (closure) return { code: "ROUTE_CLOSED", routeId: route.id, reopensAt: closure.reopensAt };
+  const load = contractLoadRejection(state, contract, homeId, line);
+  if (load) return load;
+  return { route, contractId, line, homeId };
+}
+
 /** Validates a dispatch against current state (business rules). Returns what to stage, or why not. */
-function planDispatch(state: GameState, command: DispatchDeliveryCommand, data: GameData): DispatchPlan | RejectionReason {
+function planDispatch(state: GameState, command: DispatchDeliveryCommand, data: GameData): DispatchPlan | ContractDispatchPlan | RejectionReason {
   const { vehicleId, cargo, purpose } = command;
   const vehicle = state.vehicles.find((v) => v.id === vehicleId);
   const def = data.vehicles.find((v) => v.id === vehicleId);
@@ -172,8 +283,8 @@ function planDispatch(state: GameState, command: DispatchDeliveryCommand, data: 
   if (first.quantity > def.capacityCases) {
     return { code: "VEHICLE_CAPACITY_EXCEEDED", vehicleId, requested: first.quantity, capacity: def.capacityCases };
   }
-  // S0 stub: no contracts exist yet (T02e), and the stub map has no route between owned facilities (T03).
-  if (purpose.kind === "CONTRACT_INSTALLMENT") return { code: "CONTRACT_NOT_ACTIVE", contractId: purpose.contractId };
+  if (purpose.kind === "CONTRACT_INSTALLMENT") return planContractDispatch(state, command, data, purpose.contractId, home.id, home.locationId);
+  // S0 stub: the stub map has no route between owned facilities (T03).
   if (purpose.kind === "TRANSFER") {
     if (!data.facilities.some((f) => f.id === purpose.destinationFacilityId)) {
       return { code: "UNKNOWN_ENTITY", kind: "Facility", id: purpose.destinationFacilityId };
@@ -215,6 +326,36 @@ export function registerLogistics(registry: SystemRegistry, data: GameData, coor
       const plan = planDispatch(tx.state, command, data);
       if ("code" in plan) {
         tx.reject(plan);
+      } else if ("contractId" in plan) {
+        // A contract installment (ADR 0018 decision 5): the contract's reservations first, no buyer commitment.
+        const { route, contractId, line, homeId } = plan;
+        const taken = takeForContract(tx.state, homeId, contractId, line.productId, line.quality, line.quantity);
+        const arrivesAt = addTicks(ctx.tick, route.durationTicks);
+        const delivery: DeliveryState = {
+          id: deliveryId,
+          vehicleId,
+          fromFacilityId: homeId,
+          routeId: route.id,
+          cargo: [{ ...line, cost: taken.cost }],
+          purpose,
+          status: "OUTBOUND",
+          dealDeadline: null,
+        };
+        tx.update(() => {
+          const minted = allocateId(taken.state, "Delivery").state;
+          return { ...minted, deliveries: [...minted.deliveries, delivery].sort(compareById) };
+        });
+        tx.update((s) =>
+          withVehicle(s, vehicleId, { deliveryId, routeId: route.id, leg: "OUTBOUND", departedAt: ctx.tick, arrivesAt, delayed: false }),
+        );
+        if (taken.cost > 0) {
+          tx.post([
+            { account: "GOODS_IN_TRANSIT", side: "DEBIT", amount: taken.cost },
+            { account: "FINISHED_GOODS", side: "CREDIT", amount: taken.cost },
+          ]);
+        }
+        tx.emit({ type: "DELIVERY_DISPATCHED", deliveryId, vehicleId, routeId: route.id, cargo: [line], purpose, arrivesAt });
+        for (const reservationId of taken.consumed) tx.emit({ type: "RESERVATION_RELEASED", reservationId, reason: "CONSUMED" });
       } else {
         const { route, deal, line, homeId } = plan;
         const pool = findProductPool(tx.state, homeId, line.productId, line.quality)!;
@@ -264,7 +405,10 @@ export function registerLogistics(registry: SystemRegistry, data: GameData, coor
       }
       const delivery = s.deliveries.find((d) => d.id === trip.deliveryId);
       if (!delivery) throw new RangeError(`Vehicle ${vehicle.id} is carrying unknown delivery ${trip.deliveryId}`);
-      s = arriveForSale(s, vehicle, delivery, data, coordinator, ctx);
+      s =
+        delivery.purpose.kind === "CONTRACT_INSTALLMENT"
+          ? arriveForContract(s, vehicle, delivery, data, coordinator, ctx)
+          : arriveForSale(s, vehicle, delivery, data, coordinator, ctx);
     }
     return s;
   });
