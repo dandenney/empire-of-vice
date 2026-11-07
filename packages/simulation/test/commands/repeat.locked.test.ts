@@ -39,6 +39,7 @@
 import {
   asId,
   cents,
+  compareIds,
   idempotencyKey,
   tick,
   TICKS_PER_DAY,
@@ -589,12 +590,13 @@ describe("REPEAT_OPERATION: NOT_REPEATABLE { sourceCommandId }", () => {
     const facility = g.sim.state.facilities.find((f) => f.id === DISTILLERY_MAIN)!;
     const workforceId = applied(g, { type: "SET_WORKFORCE", facilityId: DISTILLERY_MAIN, workerCount: facility.workerCount + 1 });
 
-    const item = GAME_DATA.equipment.find(
-      (e) =>
-        !facility.equipment.some((owned) => owned.equipmentId === e.id) &&
-        (e.requiredUnlockId === null || g.sim.state.family.unlocked.includes(e.requiredUnlockId)),
-    );
-    if (!item) throw new Error("No purchasable equipment");
+    // The first unowned item in data order. If it's gated (ADR 0020 decision 3), grant its unlock first.
+    const item = GAME_DATA.equipment.find((e) => !facility.equipment.some((owned) => owned.equipmentId === e.id));
+    if (!item) throw new Error("No unowned equipment");
+    const unlockId = item.requiredUnlockId;
+    if (unlockId !== null && !g.sim.state.family.unlocked.includes(unlockId)) {
+      edit(g, (s) => ({ ...s, family: { ...s.family, unlocked: [...s.family.unlocked, unlockId].sort(compareIds) } }));
+    }
     edit(g, (s) => withCash(s, cashOf(s) + item.price));
     const equipmentId = applied(g, { type: "PURCHASE_EQUIPMENT", facilityId: DISTILLERY_MAIN, equipmentId: item.id });
 
