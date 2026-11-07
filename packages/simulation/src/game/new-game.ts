@@ -78,6 +78,26 @@ function validateScenario(scenario: ScenarioDefinition, data: GameData): readonl
   return expected;
 }
 
+/**
+ * The routes a scenario's game has state for (T03b, #76): those whose two ends
+ * the scenario occupies, with an owned facility, a supplier, or a buyer, as the
+ * snapshot does for locations. A route to an unowned warehouse gets no state.
+ * A scheduled closure must name one of these routes.
+ */
+function occupiedRoutes(scenario: ScenarioDefinition, data: GameData): GameData["routes"] {
+  const occupied = new Set<string>();
+  for (const f of scenario.facilities) occupied.add(find(data.facilities, f.id, "facility").locationId);
+  for (const id of scenario.supplierIds) occupied.add(find(data.suppliers, id, "supplier").locationId);
+  for (const id of scenario.buyerIds) occupied.add(find(data.buyers, id, "buyer").locationId);
+  const routes = data.routes.filter((r) => occupied.has(r.fromLocationId) && occupied.has(r.toLocationId));
+  scenario.scheduledEvents.forEach((event, i) => {
+    if (!routes.some((r) => r.id === event.routeId)) {
+      throw new ScenarioSetupError(`Scenario scheduledEvents[${i}] (${event.kind}) names route ${event.routeId}, which has an end the scenario doesn't occupy`);
+    }
+  });
+  return routes;
+}
+
 /** The scenario's state at tick 0, including the booked opening balance. */
 export function createInitialState(
   scenario: ScenarioDefinition,
@@ -124,7 +144,7 @@ export function createInitialState(
     markets,
     suppliers: initialSuppliers(data, scenario),
     buyers: initialBuyers(data, scenario, markets),
-    routes: data.routes.map((r) => ({ id: r.id, closure: null })).sort(byId),
+    routes: occupiedRoutes(scenario, data).map((r) => ({ id: r.id, closure: null })).sort(byId),
     contractOffers: [],
     contracts: [],
     ledger: { transactions: [] },

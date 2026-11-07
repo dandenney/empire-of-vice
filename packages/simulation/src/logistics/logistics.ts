@@ -23,8 +23,13 @@
 // - ROUTE_CLOSURE / ROUTE_REOPENING world events close and reopen routes
 //   (decision 5).
 //
-// Limits (M001): SALE and CONTRACT_INSTALLMENT only (TRANSFER is T03b, #76),
-// one cargo line per trip (decision 6).
+// - DISPATCH_DELIVERY with purpose TRANSFER (T03b, #76) moves unreserved stock
+//   from the vehicle's home to another owned facility at book value. It rolls no
+//   route risk and touches no buyer. On arrival the destination takes what its
+//   storage has room for (TRANSFER_COMPLETED), and the rest goes home unreserved.
+//
+// Limits (M001): transfers leave only from the vehicle's home, and a trip carries
+// one cargo line (decision 6).
 
 import {
   addMoney,
@@ -33,6 +38,7 @@ import {
   divideMoney,
   idempotencyKey,
   multiplyMoney,
+  subtractMoney,
   ZERO_MONEY,
   type CargoLine,
   type ContractId,
@@ -56,7 +62,8 @@ import { cashBalance } from "../economy/ledger/ledger.ts";
 import { cargoLossEntries, dispatchEntries, payOrAccrueEntries, returnFromTransitEntries, saleEntries } from "../economy/ledger/postings.ts";
 import { commitDeal, findCommitment, quoteDeal, releaseDeal, settleDeal, type Deal } from "../economy/market/market.ts";
 import { scheduleWorldEvent } from "../events/world-events.ts";
-import { addProduct, availableProduct, takeForContract, takeProduct } from "../inventory/pools.ts";
+import { addProduct, allocateRemovalCost, availableProduct, takeForContract, takeProduct } from "../inventory/pools.ts";
+import { storageAvailable } from "../production/capacity.ts";
 import { allocateId, formatId } from "../kernel/ids.ts";
 import type { SystemRegistry, TickContext } from "../kernel/registry.ts";
 import { nextInt } from "../rng/xoshiro128.ts";
@@ -88,6 +95,14 @@ interface ContractDispatchPlan {
   readonly contractId: ContractId;
   readonly line: CargoLine;
   readonly homeId: FacilityId;
+}
+
+/** A transfer's dispatch (T03b, #76): unreserved stock from home, bound for another owned facility. */
+interface TransferDispatchPlan {
+  readonly route: RouteDefinition;
+  readonly line: CargoLine;
+  readonly homeId: FacilityId;
+  readonly destinationFacilityId: FacilityId;
 }
 
 function withVehicle(state: GameState, vehicleId: VehicleState["id"], trip: VehicleState["trip"]): GameState {
@@ -233,11 +248,69 @@ function arriveForContract(
 }
 
 /**
+ * An outbound TRANSFER arrives (T03b, #76), in one TRANSFER transaction keyed by
+ * the delivery. The destination takes as many cases as its storage has room for
+ * (`storageAvailable`: capacity less cases held and running jobs' output), into
+ * its pool unreserved at their book value (Dr FINISHED_GOODS / Cr GOODS_IN_TRANSIT,
+ * so net worth doesn't change, FIN-001), and TRANSFER_COMPLETED reports them.
+ * The truck heads home either way:
+ * - everything unloaded: the delivery is DELIVERED and keeps its cargo as the record;
+ * - anything left aboard: the delivery is FAILED and its cargo is what's left,
+ *   at the cost it still carries, which VEHICLE_RETURN unloads into the home pool
+ *   unreserved (ADR 0013 decision 6). Nothing unloaded emits no TRANSFER_COMPLETED.
+ */
+function arriveForTransfer(
+  state: GameState,
+  vehicle: VehicleState,
+  delivery: DeliveryState,
+  data: GameData,
+  coordinator: TransactionCoordinator,
+  ctx: TickContext,
+): GameState {
+  if (delivery.purpose.kind !== "TRANSFER") throw new RangeError(`Delivery ${delivery.id} isn't a transfer`);
+  const { destinationFacilityId } = delivery.purpose;
+  const route = routeDefinition(data, delivery.routeId);
+  const line = delivery.cargo[0];
+  if (delivery.cargo.length !== 1 || !line) throw new RangeError(`Transfer ${delivery.id} must carry one cargo line`);
+  const tx = coordinator.begin(state, {
+    kind: "TRANSFER",
+    idempotencyKey: idempotencyKey("TRANSFER", delivery.id),
+    tick: ctx.tick,
+    causedBy: null,
+  });
+  if (tx.status === "duplicate") return state;
+
+  const unloaded = Math.min(line.quantity, storageAvailable(tx.state, data, destinationFacilityId));
+  const unloadedCost = unloaded > 0 ? allocateRemovalCost(line.cost, line.quantity, unloaded) : ZERO_MONEY;
+  const left = line.quantity - unloaded;
+  if (unloaded > 0) {
+    tx.update((s) => addProduct(s, destinationFacilityId, line.productId, line.quality, unloaded, unloadedCost));
+    tx.post(returnFromTransitEntries(unloadedCost));
+    tx.emit({
+      type: "TRANSFER_COMPLETED",
+      deliveryId: delivery.id,
+      destinationFacilityId,
+      cargo: [{ productId: line.productId, quality: line.quality, quantity: unloaded }],
+      bookValue: unloadedCost,
+    });
+  }
+  if (left === 0) {
+    tx.update((s) => withDelivery(s, delivery.id, "DELIVERED"));
+  } else {
+    const aboard: CargoLineState = { ...line, quantity: left, cost: subtractMoney(line.cost, unloadedCost) };
+    tx.update((s) => withCargo(withDelivery(s, delivery.id, "FAILED"), delivery.id, [aboard]));
+  }
+  tx.update((s) => withVehicle(s, vehicle.id, homewardTrip(delivery, route, ctx)));
+  return commitOrThrow(tx, `Transfer ${delivery.id}`);
+}
+
+/**
  * The truck is home (ADR 0019 decisions 2 and 4), in one VEHICLE_RETURN
  * transaction keyed by the delivery so a return applies once:
  * - the trip's transport cost is paid from cash, and any shortfall accrues to
  *   WAGES_PAYABLE (the driver is paid with the nightly payroll);
- * - a FAILED delivery's cargo (a sale that fell through) unloads into the home
+ * - a FAILED delivery's cargo (a sale that fell through, or what a transfer
+ *   couldn't unload) unloads into the home
  *   pool unreserved, at its cost, even over storage capacity, and the delivery's
  *   cargo is then emptied. A seized delivery's cargo is already empty, and a
  *   delivered one brings nothing home.
@@ -458,6 +531,8 @@ function resolveOutbound(
   const delivery = state.deliveries.find((d) => d.id === trip.deliveryId);
   if (!delivery) throw new RangeError(`Vehicle ${vehicle.id} is carrying unknown delivery ${trip.deliveryId}`);
   const route = routeDefinition(data, trip.routeId);
+  // Transfers never roll route risk (T03b, #76): they arrive on time.
+  if (delivery.purpose.kind === "TRANSFER") return arriveForTransfer(state, vehicle, delivery, data, coordinator, ctx);
   let s = state;
   if (!trip.delayed && route.riskPpm > 0) {
     const draw = drawDisruption(s.rng.routes, route);
@@ -506,8 +581,48 @@ function planContractDispatch(
   return { route, contractId, line, homeId };
 }
 
+/**
+ * A transfer's checks after the vehicle and cargo shape (T03b, #76): the
+ * destination must be a facility this game owns (else UNKNOWN_ENTITY), other
+ * than the vehicle's home, with a route from home that this game has state for
+ * (else NO_ROUTE), open, and enough unreserved stock at home. The destination's
+ * storage is checked on arrival, not here.
+ */
+function planTransferDispatch(
+  state: GameState,
+  command: DispatchDeliveryCommand,
+  data: GameData,
+  destinationId: FacilityId,
+  homeId: FacilityId,
+  homeLocationId: LocationId,
+): TransferDispatchPlan | RejectionReason {
+  const destination = data.facilities.find((f) => f.id === destinationId);
+  if (!destination || !state.facilities.some((f) => f.id === destinationId)) {
+    return { code: "UNKNOWN_ENTITY", kind: "Facility", id: destinationId };
+  }
+  if (destinationId === homeId) return { code: "NO_ROUTE", vehicleId: command.vehicleId };
+  if (command.routeId !== null && !data.routes.some((r) => r.id === command.routeId)) {
+    return { code: "UNKNOWN_ENTITY", kind: "Route", id: command.routeId };
+  }
+  const route = resolveRoute(data, homeLocationId, destination.locationId, command.routeId);
+  const routeState = route ? state.routes.find((r) => r.id === route.id) : undefined;
+  if (!route || !routeState) return { code: "NO_ROUTE", vehicleId: command.vehicleId };
+  if (routeState.closure) return { code: "ROUTE_CLOSED", routeId: route.id, reopensAt: routeState.closure.reopensAt };
+  const first = command.cargo[0]!;
+  const line: CargoLine = { productId: first.productId, quality: first.quality, quantity: first.quantity };
+  const available = availableProduct(state, homeId, line.productId, line.quality);
+  if (available < line.quantity) {
+    return { code: "INSUFFICIENT_STOCK", productId: line.productId, quality: line.quality, requested: line.quantity, available };
+  }
+  return { route, line, homeId, destinationFacilityId: destinationId };
+}
+
 /** Validates a dispatch against current state (business rules). Returns what to stage, or why not. */
-function planDispatch(state: GameState, command: DispatchDeliveryCommand, data: GameData): DispatchPlan | ContractDispatchPlan | RejectionReason {
+function planDispatch(
+  state: GameState,
+  command: DispatchDeliveryCommand,
+  data: GameData,
+): DispatchPlan | ContractDispatchPlan | TransferDispatchPlan | RejectionReason {
   const { vehicleId, cargo, purpose } = command;
   const vehicle = state.vehicles.find((v) => v.id === vehicleId);
   const def = data.vehicles.find((v) => v.id === vehicleId);
@@ -523,13 +638,7 @@ function planDispatch(state: GameState, command: DispatchDeliveryCommand, data: 
     return { code: "VEHICLE_CAPACITY_EXCEEDED", vehicleId, requested: first.quantity, capacity: def.capacityCases };
   }
   if (purpose.kind === "CONTRACT_INSTALLMENT") return planContractDispatch(state, command, data, purpose.contractId, home.id, home.locationId);
-  // Transfers and the warehouse are T03b (#76): no route between owned facilities yet.
-  if (purpose.kind === "TRANSFER") {
-    if (!data.facilities.some((f) => f.id === purpose.destinationFacilityId)) {
-      return { code: "UNKNOWN_ENTITY", kind: "Facility", id: purpose.destinationFacilityId };
-    }
-    return { code: "NO_ROUTE", vehicleId };
-  }
+  if (purpose.kind === "TRANSFER") return planTransferDispatch(state, command, data, purpose.destinationFacilityId, home.id, home.locationId);
   const buyer = data.buyers.find((b) => b.id === purpose.buyerId);
   if (!buyer) return { code: "UNKNOWN_ENTITY", kind: "Buyer", id: purpose.buyerId };
   if (command.routeId !== null && !data.routes.some((r) => r.id === command.routeId)) {
@@ -591,6 +700,30 @@ export function registerLogistics(registry: SystemRegistry, data: GameData, coor
         tx.post(dispatchEntries(taken.cost));
         tx.emit({ type: "DELIVERY_DISPATCHED", deliveryId, vehicleId, routeId: route.id, cargo: [line], purpose, arrivesAt });
         for (const reservationId of taken.consumed) tx.emit({ type: "RESERVATION_RELEASED", reservationId, reason: "CONSUMED" });
+      } else if ("destinationFacilityId" in plan) {
+        // A transfer (T03b, #76): unreserved stock only (ADR 0013), at book value, no deal and no deadline.
+        const { route, line, homeId } = plan;
+        const taken = takeProduct(tx.state, homeId, line.productId, line.quality, line.quantity);
+        const arrivesAt = addTicks(ctx.tick, route.durationTicks);
+        const delivery: DeliveryState = {
+          id: deliveryId,
+          vehicleId,
+          fromFacilityId: homeId,
+          routeId: route.id,
+          cargo: [{ ...line, cost: taken.cost }],
+          purpose,
+          status: "OUTBOUND",
+          dealDeadline: null,
+        };
+        tx.update(() => {
+          const minted = allocateId(taken.state, "Delivery").state;
+          return { ...minted, deliveries: [...minted.deliveries, delivery].sort(compareById) };
+        });
+        tx.update((s) =>
+          withVehicle(s, vehicleId, { deliveryId, routeId: route.id, leg: "OUTBOUND", departedAt: ctx.tick, arrivesAt, delayed: false }),
+        );
+        tx.post(dispatchEntries(taken.cost));
+        tx.emit({ type: "DELIVERY_DISPATCHED", deliveryId, vehicleId, routeId: route.id, cargo: [line], purpose, arrivesAt });
       } else {
         // A spot sale: unreserved stock only (ADR 0013), the deal struck now (ADR 0005).
         const { route, deal, line, homeId } = plan;
