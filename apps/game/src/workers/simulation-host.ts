@@ -66,8 +66,17 @@ export class SimulationHost {
       const ticks = this.#scheduler.step();
       if (ticks > 0) {
         sim.advance(ticks);
-        this.#collectEvents(sim);
+        const events = this.#collectEvents(sim);
         this.#dirty = true;
+        // The end of the game pauses (ADR 0020 decision 16): the batch has run, so
+        // the clock may be past the deciding tick by up to one batch. Resuming
+        // isn't refused.
+        if (events.some((e) => e.type === "VICTORY_ACHIEVED" || e.type === "GAME_LOST")) {
+          this.#scheduler.setSpeed(0);
+          this.#syncTimer();
+          this.#publish(sim);
+          return;
+        }
       }
       if (this.#dirty && this.#env.now() - this.#lastSnapshotAt >= SNAPSHOT_INTERVAL_MS) this.#publish(sim);
     } catch (error) {
@@ -148,12 +157,13 @@ export class SimulationHost {
     }
   }
 
-  /** Posts notify events at once; keeps log events for the next snapshot. */
-  #collectEvents(sim: Simulation): void {
+  /** Posts notify events at once; keeps log events for the next snapshot. Returns the events taken. */
+  #collectEvents(sim: Simulation): readonly GameEvent[] {
     const events = sim.takeEvents();
     const notify: GameEvent[] = events.filter((e) => EVENT_IMPORTANCE[e.type] === "notify");
     if (notify.length > 0) this.#env.post({ type: "EVENTS", importance: "notify", events: notify });
     for (const e of events) if (EVENT_IMPORTANCE[e.type] === "log") this.#pendingLog.push(e);
+    return events;
   }
 
   /** Events first (notify immediately), then the snapshot, then the waiting log batch. */
