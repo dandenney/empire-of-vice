@@ -14,6 +14,7 @@ import { registerInventory } from "../inventory/release.ts";
 import { createRegistry, type SystemRegistry } from "../kernel/registry.ts";
 import { registerLogistics } from "../logistics/logistics.ts";
 import { registerProduction } from "../production/production.ts";
+import { registerProgression } from "../progression/index.ts";
 import { PROJECTION_SYSTEM } from "../projection/index.ts";
 
 export type RegisterSystem = (registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator) => void;
@@ -32,6 +33,7 @@ export const SYSTEMS: readonly SystemEntry[] = [
   { name: "inventory (T02a)", register: registerInventory },
   { name: "contracts (T02e)", register: registerContracts },
   { name: "repeat orders (T05c)", register: registerRepeat },
+  { name: "progression (T05e)", register: registerProgression },
 ];
 
 /** A registry with every system in SYSTEMS, sharing one coordinator. */

@@ -92,15 +92,17 @@ describe("greedy spot strategy", () => {
     const { sim, sent, gateway } = recording();
     const bot = new GreedySpotStrategy(sim.snapshot());
     bot.act(gateway);
-    expect(sent.map((c) => c.type)).toEqual(["PURCHASE_EQUIPMENT", "SET_WORKFORCE", "PURCHASE_MATERIALS", "PURCHASE_MATERIALS", "START_PRODUCTION"]);
-    expect(sent[0]).toMatchObject({ equipmentId: STRATEGY.upgradeId });
-    const crew = GAME_DATA.equipment.filter((e) => e.id === STRATEGY.upgradeId || FIRST_SHIPMENT_SCENARIO.facilities[0]!.equipmentIds.includes(e.id));
-    expect(sent[1]).toMatchObject({ workerCount: crew.reduce((n, e) => n + e.crew, 0) });
+    // The upgrade is LOCKED until tier 2 (ADR 0020 decision 3), so the bot skips it
+    // (and the hire that goes with it) and only buys and produces.
+    const upgrade = sim.snapshot().facilities[0]!.equipmentOptions.find((e) => e.equipmentId === STRATEGY.upgradeId);
+    const gate = GAME_DATA.equipment.find((e) => e.id === STRATEGY.upgradeId)!.requiredUnlockId;
+    expect(upgrade?.blockedBy).toEqual({ code: "LOCKED", unlockId: gate });
+    expect(sent.map((c) => c.type)).toEqual(["PURCHASE_MATERIALS", "PURCHASE_MATERIALS", "START_PRODUCTION"]);
     expect(bot.log.rejections).toEqual({});
-    expect(bot.log.upgradeBoughtAt).toBe(1);
+    expect(bot.log.upgradeBoughtAt).toBeNull();
     // Nothing is in stock yet, so nothing is sold; acting again with a job running does nothing.
     bot.act(gateway);
-    expect(sent).toHaveLength(5);
+    expect(sent).toHaveLength(3);
   });
 
   it("sells to the best-paying buyer once a run completes", () => {

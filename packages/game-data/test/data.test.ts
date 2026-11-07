@@ -186,8 +186,8 @@ describe("families (ADR 0020 decision 12)", () => {
 });
 
 describe("GAME_DATA_VERSION", () => {
-  it("is bumped for T05b and recorded in GAME_DATA", () => {
-    expect(GAME_DATA_VERSION).toBe("0.2.0-t05b-progression");
+  it("is bumped for T05e and recorded in GAME_DATA", () => {
+    expect(GAME_DATA_VERSION).toBe("0.3.0-t05e-gating");
     expect(GAME_DATA.version).toBe(GAME_DATA_VERSION);
   });
 });
