@@ -203,8 +203,8 @@ describe("the warehouse (T03b, #76)", () => {
 });
 
 describe("GAME_DATA_VERSION", () => {
-  it("is bumped for T03b and recorded in GAME_DATA", () => {
-    expect(GAME_DATA_VERSION).toBe("0.4.0-t03b-warehouse");
+  it("is bumped for T05g and recorded in GAME_DATA", () => {
+    expect(GAME_DATA_VERSION).toBe("0.5.0-t05g-tuning");
     expect(GAME_DATA.version).toBe(GAME_DATA_VERSION);
   });
 });

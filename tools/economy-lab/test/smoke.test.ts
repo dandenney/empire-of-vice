@@ -1,9 +1,10 @@
-import type { CommandRequest, CommandResult, GameCommand, GameSnapshot } from "@eov/contracts";
+import { cents, type CommandRequest, type CommandResult, type GameCommand, type GameSnapshot } from "@eov/contracts";
 import { FIRST_SHIPMENT_SCENARIO, GAME_DATA } from "@eov/game-data";
 import { newGame } from "@eov/simulation";
 import { describe, expect, it } from "vitest";
+import { CONTRACT_STRATEGY, ContractTakerStrategy } from "../src/contract-taker.ts";
 import { GreedySpotStrategy, STRATEGY } from "../src/greedy-spot.ts";
-import { distribution, formatSmokeReport } from "../src/smoke-report.ts";
+import { distribution, formatSmokeReport, NOT_APPLICABLE } from "../src/smoke-report.ts";
 import { DEFAULT_DAYS, NET_WORTH_DAY, runSmokeSeed, TICKS_PER_REAL_MINUTE } from "../src/smoke-run.ts";
 import { parseSmokeArgs, runSmoke, SmokeArgsError } from "../src/smoke.ts";
 
@@ -124,16 +125,111 @@ describe("greedy spot strategy", () => {
   });
 });
 
+describe("greedy spot report (T05g)", () => {
+  it("labels the upgrade metrics not applicable and still counts insolvency and tiers", () => {
+    const { summary, reports } = runSmoke({ seeds: 2, firstSeed: 1, days: DEFAULT_DAYS });
+    expect(summary.strategy).toBe(STRATEGY.name);
+    expect(summary.takesContracts).toBe(false);
+    for (const r of reports) {
+      expect(r.takesContracts).toBe(false);
+      expect(r.firstUpgrade).toBeNull();
+      expect(r.contractsAccepted).toBe(0);
+      expect(r.victory).toBeNull();
+      // Never past the first tier: no contract, so never reputation 10.
+      expect(r.tierReached[GAME_DATA.progression.tiers[1]!.id]).toBeNull();
+    }
+    const text = formatSmokeReport(summary, reports);
+    expect(text).toContain(`| First affordable upgrade (bought) | ${NOT_APPLICABLE} |`);
+    expect(text).toContain(`| Upgrade earned (profit ≥ price) | ${NOT_APPLICABLE} |`);
+    expect(text).toContain("N/A first upgrade and upgrade earned");
+    expect(text).toContain("| Insolvent (GAME_LOST) |");
+    expect(text).toContain("insolvency (GAME_LOST): 0/2 seeds");
+  });
+
+  it("reads the victory net worth from game-data", () => {
+    const data = { ...GAME_DATA, progression: { ...GAME_DATA.progression, victory: { ...GAME_DATA.progression.victory, netWorth: cents(123_456) } } };
+    const { summary, reports } = runSmoke({ seeds: 1, firstSeed: 1, days: 2 });
+    expect(formatSmokeReport(summary, reports, data)).toContain("GDD §4 victory $1,234.56");
+  });
+});
+
+describe("contract-taking strategy (T05g)", () => {
+  const days = 15;
+
+  it("takes contracts, climbs every tier, buys both upgrades in order, and wins without a rejection", () => {
+    const r = runSmokeSeed(1, { days, strategy: CONTRACT_STRATEGY.name });
+    expect(r.strategy).toBe(CONTRACT_STRATEGY.name);
+    expect(r.takesContracts).toBe(true);
+    expect(r.contractsAccepted).toBeGreaterThanOrEqual(2);
+    expect(r.contractsCompleted).toBeGreaterThanOrEqual(1);
+    expect(r.installments.MISSED).toBe(0);
+    const [, tier2, tier3, tier4] = GAME_DATA.progression.tiers.map((t) => r.tierReached[t.id]);
+    expect(tier2).not.toBeNull();
+    expect(tier3).not.toBeNull();
+    expect(tier4).not.toBeNull();
+    // Each upgrade on or after the tier that unlocks it.
+    expect(r.firstUpgrade!.tick).toBeGreaterThanOrEqual(tier2!.tick);
+    expect(r.qualityUpgrade!.tick).toBeGreaterThanOrEqual(tier3!.tick);
+    expect(r.victory).not.toBeNull();
+    expect(r.victory!.tick).toBeGreaterThanOrEqual(tier3!.tick);
+    expect(r.lost).toBeNull();
+    expect(r.rejections).toEqual({});
+    expect(r.finalReputation).toBeGreaterThanOrEqual(GAME_DATA.progression.victory.reputation);
+  });
+
+  it("is deterministic and reports victory, tiers, and upgrade timing", () => {
+    const one = runSmoke({ seeds: 2, firstSeed: 1, days, strategy: CONTRACT_STRATEGY.name });
+    const two = runSmoke({ seeds: 2, firstSeed: 1, days, strategy: CONTRACT_STRATEGY.name });
+    const text = formatSmokeReport(one.summary, one.reports);
+    expect(formatSmokeReport(two.summary, two.reports)).toBe(text);
+    expect(one.summary.takesContracts).toBe(true);
+    expect(one.summary.victory?.n).toBe(2);
+    for (const t of GAME_DATA.progression.tiers) expect(text).toContain(`| Tier reached: ${t.id} |`);
+    expect(text).toContain("victory (");
+    expect(text).toContain("first meaningful upgrade (condenser bought at tier 2");
+    expect(text).not.toContain(NOT_APPLICABLE);
+  });
+
+  it("acts only through dispatch: buys inputs and starts a half-day run at the opening", () => {
+    const sim = newGame();
+    const sent: GameCommand[] = [];
+    const gateway = {
+      dispatch(request: CommandRequest): CommandResult {
+        sent.push(request.command);
+        return sim.dispatch(request);
+      },
+      snapshot: (): GameSnapshot => sim.snapshot(),
+    };
+    const bot = new ContractTakerStrategy(sim.snapshot());
+    bot.act(gateway);
+    expect(sent.map((c) => c.type)).toEqual(["PURCHASE_MATERIALS", "PURCHASE_MATERIALS", "START_PRODUCTION"]);
+    const start = sent[2]!;
+    if (start.type !== "START_PRODUCTION") throw new Error("expected a start");
+    expect(start.quantity).toBe(Math.ceil(sim.snapshot().facilities[0]!.productionCapacityPerDay / CONTRACT_STRATEGY.runsPerDay));
+    expect(bot.log.rejections).toEqual({});
+  });
+});
+
 describe("smoke CLI", () => {
   it("parses its flags", () => {
-    expect(parseSmokeArgs([])).toEqual({ seeds: 1, firstSeed: 1, days: DEFAULT_DAYS, json: false });
-    expect(parseSmokeArgs(["--seeds", "50"])).toEqual({ seeds: 50, firstSeed: 1, days: DEFAULT_DAYS, json: false });
+    const greedy = STRATEGY.name;
+    expect(parseSmokeArgs([])).toEqual({ seeds: 1, firstSeed: 1, days: DEFAULT_DAYS, strategy: greedy, json: false });
+    expect(parseSmokeArgs(["--seeds", "50"])).toEqual({ seeds: 50, firstSeed: 1, days: DEFAULT_DAYS, strategy: greedy, json: false });
     expect(parseSmokeArgs(["--", "--seeds=5", "--days", "3", "--first-seed", "100", "--json"])).toEqual({
       seeds: 5,
       firstSeed: 100,
       days: 3,
+      strategy: greedy,
       json: true,
     });
+    expect(parseSmokeArgs(["--seeds", "50", "--strategy", "contract-taker", "--days", "15"])).toEqual({
+      seeds: 50,
+      firstSeed: 1,
+      days: 15,
+      strategy: CONTRACT_STRATEGY.name,
+      json: false,
+    });
+    expect(parseSmokeArgs(["--strategy=greedy-spot"]).strategy).toBe(greedy);
   });
 
   it("rejects bad flags", () => {
@@ -141,6 +237,8 @@ describe("smoke CLI", () => {
     expect(() => parseSmokeArgs(["--seeds", "0"])).toThrow(SmokeArgsError);
     expect(() => parseSmokeArgs(["--days", "1.5"])).toThrow(SmokeArgsError);
     expect(() => parseSmokeArgs(["--speed", "4"])).toThrow(SmokeArgsError);
+    expect(() => parseSmokeArgs(["--strategy"])).toThrow(SmokeArgsError);
+    expect(() => parseSmokeArgs(["--strategy", "volume-producer"])).toThrow(SmokeArgsError);
   });
 });
 

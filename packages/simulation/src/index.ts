@@ -125,6 +125,5 @@ export {
   projectSnapshot,
   registerProjection,
   SNAPSHOT_RECENT_TRANSACTIONS,
-  UNDEFINED_IN_GAME_DATA,
   type ProjectionDeps,
 } from "./projection/index.ts";

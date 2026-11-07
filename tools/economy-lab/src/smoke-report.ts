@@ -1,5 +1,7 @@
 // The smoke report (T07a, issue #12): distributions over seeds, the GDD §13
 // targets, and flags on the placeholder market tuning (ADR 0016, #69 follow-up).
+// T05g (issue #106) adds tiers, victory, and insolvency, and marks the upgrade
+// metrics not applicable to a strategy that never takes contracts.
 //
 // Missed targets and flags are reported, never failed: the CLI exits non-zero
 // only when a seed crashes or breaks an invariant.
@@ -7,19 +9,23 @@
 import { formatMoney, TICKS_PER_DAY, type Money } from "@eov/contracts";
 import { GAME_DATA, MARKET_PRICE_BOUNDS, type GameData } from "@eov/game-data";
 import { STRATEGY } from "./greedy-spot.ts";
-import { NET_WORTH_DAY, TICKS_PER_REAL_MINUTE, type Milestone, type SeedReport } from "./smoke-run.ts";
+import { NET_WORTH_DAY, TICKS_PER_REAL_MINUTE, type InstallmentTally, type Milestone, type SeedReport } from "./smoke-run.ts";
 
 /**
- * GDD §13 provisional balance targets and the GDD §4 victory net worth, in ticks
- * at 1× (720 per real minute). Comparison targets for the report, not gameplay
- * numbers: nothing in the game reads them.
+ * GDD §13 provisional balance targets, in ticks at 1× (720 per real minute).
+ * Comparison targets for the report, not gameplay numbers: nothing in the game
+ * reads them. The victory thresholds are game-data's (`progression.victory`).
  */
 export const TARGETS = {
   firstProfitMaxTicks: 5 * TICKS_PER_REAL_MINUTE,
   firstUpgradeMinTicks: 10 * TICKS_PER_REAL_MINUTE,
   firstUpgradeMaxTicks: 15 * TICKS_PER_REAL_MINUTE,
-  victoryNetWorth: 500_000 as Money,
+  victoryMinTicks: 20 * TICKS_PER_REAL_MINUTE,
+  victoryMaxTicks: 30 * TICKS_PER_REAL_MINUTE,
 } as const;
+
+/** What the upgrade cells say for a strategy that never takes contracts. */
+export const NOT_APPLICABLE = "n/a (takes no contracts, so never reaches tier 2)";
 
 export interface Distribution {
   /** Seeds with a value (a milestone that was reached). */
@@ -39,7 +45,20 @@ export interface SmokeSummary {
   readonly seeds: number;
   readonly days: number;
   readonly strategy: string;
+  /** False when the strategy never takes contracts: the upgrade metrics are not applicable. */
+  readonly takesContracts: boolean;
   readonly failures: readonly SeedFailure[];
+  readonly qualityUpgrade: Distribution | null;
+  /** Ticks each tier was reached, by tier ID in ladder order, over the seeds that reached it. */
+  readonly tierReached: Readonly<Record<string, Distribution | null>>;
+  /** Ticks of `VICTORY_ACHIEVED`, over the seeds that won. */
+  readonly victory: Distribution | null;
+  /** Ticks of `GAME_LOST`, over the seeds that lost. */
+  readonly lost: Distribution | null;
+  readonly finalReputation: Distribution | null;
+  readonly contractsCompleted: Distribution | null;
+  /** Installment outcomes summed over seeds. */
+  readonly installments: InstallmentTally;
   readonly firstProfitableSale: Distribution | null;
   readonly firstNetProfit: Distribution | null;
   readonly firstUpgrade: Distribution | null;
@@ -69,14 +88,32 @@ const ticksOf = (reports: readonly SeedReport[], pick: (r: SeedReport) => Milest
 const perDay = (r: SeedReport, pick: (d: SeedReport["daily"][number]) => number): number =>
   r.daily.length === 0 ? 0 : Math.floor(r.daily.reduce((n, d) => n + pick(d), 0) / r.daily.length);
 
-export function summarize(reports: readonly SeedReport[], failures: readonly SeedFailure[], days: number): SmokeSummary {
+export function summarize(
+  reports: readonly SeedReport[],
+  failures: readonly SeedFailure[],
+  days: number,
+  strategy: string = STRATEGY.name,
+  data: GameData = GAME_DATA,
+): SmokeSummary {
   const curve: (Distribution | null)[] = [];
   for (let d = 0; d <= days; d++) curve.push(distribution(reports.flatMap((r) => (r.netWorthByDay[d] === undefined ? [] : [r.netWorthByDay[d]!]))));
+  const tierReached: Record<string, Distribution | null> = {};
+  for (const t of data.progression.tiers) tierReached[t.id] = ticksOf(reports, (r) => r.tierReached[t.id] ?? null);
+  const installments = { FULFILLED: 0, PARTIAL: 0, MISSED: 0 };
+  for (const r of reports) for (const k of Object.keys(installments) as (keyof InstallmentTally)[]) installments[k] += r.installments[k];
   return {
     seeds: reports.length + failures.length,
     days,
-    strategy: STRATEGY.name,
+    strategy,
+    takesContracts: reports[0]?.takesContracts ?? strategy !== STRATEGY.name,
     failures,
+    qualityUpgrade: ticksOf(reports, (r) => r.qualityUpgrade),
+    tierReached,
+    victory: ticksOf(reports, (r) => r.victory),
+    lost: ticksOf(reports, (r) => r.lost),
+    finalReputation: distribution(reports.map((r) => r.finalReputation)),
+    contractsCompleted: distribution(reports.map((r) => r.contractsCompleted)),
+    installments,
     firstProfitableSale: ticksOf(reports, (r) => r.firstProfitableSale),
     firstNetProfit: ticksOf(reports, (r) => r.firstNetProfit),
     firstUpgrade: ticksOf(reports, (r) => r.firstUpgrade),
@@ -97,6 +134,8 @@ export function summarize(reports: readonly SeedReport[], failures: readonly See
 
 const minutes = (ticks: number): string => (ticks / TICKS_PER_REAL_MINUTE).toFixed(1);
 const at = (ticks: number): string => `${ticks} (${minutes(ticks)} min)`;
+/** The game day (0-based) a tick falls in. */
+const dayOf = (ticks: number): number => Math.floor(ticks / TICKS_PER_DAY);
 const money = (cents: number): string => formatMoney(cents as Money);
 const ppm = (value: number): string => (value / 1_000_000).toFixed(3);
 
@@ -148,25 +187,57 @@ export function findings(summary: SmokeSummary, reports: readonly SeedReport[], 
   const inWindow = (d: Distribution | null): boolean =>
     d !== null && d.median >= TARGETS.firstUpgradeMinTicks && d.median <= TARGETS.firstUpgradeMaxTicks;
   const window = `${TARGETS.firstUpgradeMinTicks}–${TARGETS.firstUpgradeMaxTicks} ticks (10–15 min)`;
-  const fu = summary.firstUpgrade;
-  out.push(
-    `${inWindow(fu) ? "OK" : "MISS"} first affordable upgrade (bought; cash ≥ price + reserve): ` +
-      (fu ? `median ${at(fu.median)}, ${fu.n}/${total} seeds` : "never") +
-      ` (target ${window}).` +
-      (fu && fu.median < TARGETS.firstUpgradeMinTicks ? ` Opening cash already covers the ${money(reports[0]!.upgradePrice)} upgrade.` : ""),
-  );
-  const ue = summary.upgradeEarned;
-  out.push(
-    `${inWindow(ue) ? "OK" : "MISS"} upgrade earned (profit to date ≥ its price): ` +
-      (ue ? `median ${at(ue.median)}, ${ue.n}/${total} seeds` : `not reached in ${summary.days} days by any seed`) +
-      ` (target ${window}).`,
-  );
+  if (!summary.takesContracts) {
+    out.push(
+      `N/A first upgrade and upgrade earned: ${summary.strategy} takes no contracts, so it never earns the reputation tier 2 needs ` +
+        `(ADR 0020 decision 3 gates the condenser there). The contract-taking variant carries the upgrade timing.`,
+    );
+  } else {
+    const fu = summary.firstUpgrade;
+    out.push(
+      `${inWindow(fu) ? "OK" : "MISS"} first meaningful upgrade (condenser bought at tier 2; cash ≥ price + reserve): ` +
+        (fu ? `median ${at(fu.median)}, ${fu.n}/${total} seeds` : "never") +
+        ` (target ${window}).`,
+    );
+    const ue = summary.upgradeEarned;
+    out.push(
+      `${inWindow(ue) ? "OK" : "MISS"} upgrade earned (profit to date ≥ its price): ` +
+        (ue ? `median ${at(ue.median)}, ${ue.n}/${total} seeds` : `not reached in ${summary.days} days by any seed`) +
+        ` (target ${window}).`,
+    );
+  }
+  const victory = data.progression.victory;
   const fnw = summary.finalNetWorth!;
   const opening = reports[0]!.netWorthByDay[0]!;
   out.push(
-    `${fnw.median >= TARGETS.victoryNetWorth ? "OK" : "MISS"} net worth after ${summary.days} days: median ${money(fnw.median)} ` +
-      `(opening ${money(opening)}, GDD §4 victory ${money(TARGETS.victoryNetWorth)}). ` +
+    `${fnw.median >= victory.netWorth ? "OK" : "MISS"} net worth after ${summary.days} days: median ${money(fnw.median)} ` +
+      `(opening ${money(opening)}, GDD §4 victory ${money(victory.netWorth)}). ` +
       `Day ${NET_WORTH_DAY} median ${money(summary.netWorthAtDay5?.median ?? 0)} (ADR 0018 decision 9 input).`,
+  );
+
+  // Victory, tiers, and insolvency (ADR 0020 decisions 4, 7, 10, 15).
+  const v = summary.victory;
+  out.push(
+    `${v ? "OK" : "MISS"} victory (${money(victory.netWorth)} net worth, reputation ${victory.reputation}, ${victory.completedContracts} completed contract): ` +
+      (v
+        ? `${v.n}/${total} seeds won within ${summary.days} days; victory day median ${dayOf(v.median)} (${at(v.median)}), ` +
+          `earliest day ${dayOf(v.min)}, latest day ${dayOf(v.max)} (GDD §13 target ${TARGETS.victoryMinTicks}–${TARGETS.victoryMaxTicks} ticks, 20–30 min).`
+        : `no seed won within ${summary.days} days.`) +
+      (summary.takesContracts ? "" : ` ${summary.strategy} takes no contracts, so it can't complete one or reach reputation ${victory.reputation}.`),
+  );
+  const tiers = data.progression.tiers
+    .map((t) => {
+      const d = summary.tierReached[t.id];
+      return d ? `${t.id} ${d.n}/${total} (median day ${dayOf(d.median)}, ${minutes(d.median)} min)` : `${t.id} 0/${total}`;
+    })
+    .join("; ");
+  out.push(`INFO tiers reached: ${tiers}.`);
+  const lost = summary.lost;
+  const ins = summary.installments;
+  out.push(
+    `${lost ? "FLAG" : "OK"} insolvency (GAME_LOST): ${lost ? `${lost.n}/${total} seeds, first on day ${dayOf(lost.min)}` : `0/${total} seeds`}. ` +
+      `Installments ${ins.FULFILLED} fulfilled, ${ins.PARTIAL} partial, ${ins.MISSED} missed; ` +
+      `final reputation median ${summary.finalReputation?.median ?? 0}.`,
   );
 
   // Unit economics: the frame for every market flag below.
@@ -274,11 +345,21 @@ export function formatSmokeReport(summary: SmokeSummary, reports: readonly SeedR
   }
 
   lines.push("### Distribution", "", row(["Metric", "Median", "Min", "Max", "Seeds"]), row(["---", "---:", "---:", "---:", "---:"]));
+  const upgradeRow = (label: string, d: Distribution | null): string =>
+    summary.takesContracts ? distRow(label, d, total, at) : row([label, NOT_APPLICABLE, "", "", ""]);
   lines.push(
     distRow("First profitable sale", summary.firstProfitableSale, total, at),
     distRow("First profit to date (after wages)", summary.firstNetProfit, total, at),
-    distRow("First affordable upgrade (bought)", summary.firstUpgrade, total, at),
-    distRow("Upgrade earned (profit ≥ price)", summary.upgradeEarned, total, at),
+    upgradeRow("First affordable upgrade (bought)", summary.firstUpgrade),
+    upgradeRow("Upgrade earned (profit ≥ price)", summary.upgradeEarned),
+    upgradeRow("QC station bought (tier 3)", summary.qualityUpgrade),
+  );
+  for (const t of data.progression.tiers) lines.push(distRow(`Tier reached: ${t.id}`, summary.tierReached[t.id] ?? null, total, at));
+  lines.push(
+    distRow("Victory", summary.victory, total, at),
+    distRow("Insolvent (GAME_LOST)", summary.lost, total, at),
+    distRow("Final reputation", summary.finalReputation, total, String),
+    distRow("Contracts completed", summary.contractsCompleted, total, String),
     distRow("Cash trough", summary.cashTrough, total, money),
     distRow("Units sold", summary.unitsSold, total, String),
     distRow("Gross margin per day", summary.grossProfitPerDay, total, money),
@@ -320,16 +401,40 @@ export function formatSmokeReport(summary: SmokeSummary, reports: readonly SeedR
   lines.push(
     "### Per seed",
     "",
-    row(["Seed", "First profit", "Upgrade bought", "Upgrade earned", "Cash trough", "Units", "Gross/day", "Net/day", `NW day ${NET_WORTH_DAY}`, `NW day ${summary.days}`, "Shortage day"]),
-    row(["---:", "---:", "---:", "---:", "---:", "---:", "---:", "---:", "---:", "---:", "---:"]),
+    row([
+      "Seed",
+      "First profit",
+      "Upgrade bought",
+      "Upgrade earned",
+      "QC bought",
+      "Top tier",
+      "Victory",
+      "Lost",
+      "Rep",
+      "Cash trough",
+      "Units",
+      "Gross/day",
+      "Net/day",
+      `NW day ${NET_WORTH_DAY}`,
+      `NW day ${summary.days}`,
+      "Shortage day",
+    ]),
+    row(["---:", "---:", "---:", "---:", "---:", "---", "---:", "---:", "---:", "---:", "---:", "---:", "---:", "---:", "---:", "---:"]),
   );
+  const upgradeCell = (r: SeedReport, m: Milestone | null): string => (r.takesContracts ? milestoneCell(m) : "n/a");
   for (const r of reports) {
+    const top = [...data.progression.tiers].reverse().find((t) => r.tierReached[t.id]);
     lines.push(
       row([
         String(r.seed),
         milestoneCell(r.firstProfitableSale),
-        milestoneCell(r.firstUpgrade),
-        milestoneCell(r.upgradeEarned),
+        upgradeCell(r, r.firstUpgrade),
+        upgradeCell(r, r.upgradeEarned),
+        upgradeCell(r, r.qualityUpgrade),
+        top ? `${top.id} @${r.tierReached[top.id]!.tick}` : "none",
+        r.victory ? `day ${dayOf(r.victory.tick)} @${r.victory.tick}` : "no",
+        r.lost ? `day ${dayOf(r.lost.tick)}` : "no",
+        String(r.finalReputation),
         `${money(r.cashTrough.cash)} @${r.cashTrough.tick}`,
         String(r.unitsSold),
         money(perDay(r, (d) => d.grossProfit)),

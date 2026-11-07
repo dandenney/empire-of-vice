@@ -8,9 +8,6 @@
 // the rejection a real dispatch would return (a dispatch on a throwaway kernel
 // over the current state, discarded afterwards), so the UI never re-implements
 // a rule.
-//
-// Where the contract needs a value game-data doesn't define yet, see
-// UNDEFINED_IN_GAME_DATA below.
 
 import {
   addMoney,
@@ -54,17 +51,6 @@ import {
   supportsRecipe,
 } from "../production/index.ts";
 import { projectFinance } from "./finance.ts";
-
-/**
- * S0 stub: values the snapshot contract requires but game-data doesn't define
- * yet. Each is reported as 0 (a number) or the entity's ID (a name) rather than
- * a made-up figure, and each names the task that adds the definition. Listed in
- * the S0b PR as gaps.
- *
- * Empty since T05d (#103) defined the last one, equipment resale value. Kept
- * (exported from the package) so a future gap has a home.
- */
-export const UNDEFINED_IN_GAME_DATA = {} as const;
 
 export interface ProjectionDeps {
   readonly data: GameData;

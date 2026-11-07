@@ -39,7 +39,7 @@ export * from "./suppliers.ts";
 export * from "./vehicles.ts";
 
 /** Recorded in saves for diagnostics (ADR 0009). Bump when tuning changes. */
-export const GAME_DATA_VERSION = "0.4.0-t03b-warehouse";
+export const GAME_DATA_VERSION = "0.5.0-t05g-tuning";
 
 /** Every static definition, in one object the simulation's systems are built from. */
 export interface GameData {
