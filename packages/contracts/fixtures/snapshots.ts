@@ -231,7 +231,7 @@ export const startOfGameSnapshot: GameSnapshot = {
       name: "Hollow Creek Distillery",
       locationId: ids.locDistillery,
       kind: "DISTILLERY",
-      equipment: [{ id: ids.copperStill, name: "Copper still", bookValue: opening.copperStill }],
+      equipment: [{ id: ids.copperStill, name: "Copper still", bookValue: opening.copperStill, resaleValue: cents(15_000) }],
       equipmentSlots: { used: 1, total: 3 },
       equipmentOptions,
       workforce: { workers: 3, maximum: 6, dailyWagePerWorker: cents(150) },

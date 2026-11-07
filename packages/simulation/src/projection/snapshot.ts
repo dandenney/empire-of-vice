@@ -65,6 +65,8 @@ export const UNDEFINED_IN_GAME_DATA = {
   victoryNetWorth: ZERO_MONEY,
   victoryReputation: 0,
   victoryCompletedContracts: 0,
+  /** Owned equipment's resale value (T05d (#103), ADR 0020 decision 9). Reported as 0. */
+  equipmentResaleValue: ZERO_MONEY,
 } as const;
 
 export interface ProjectionDeps {
@@ -285,7 +287,12 @@ function projectFacility(state: GameState, facility: FacilityState, deps: Projec
     name: def.name,
     locationId: def.locationId,
     kind: distills ? "DISTILLERY" : "WAREHOUSE",
-    equipment: facility.equipment.map((e, i) => ({ id: e.equipmentId, name: owned[i]!.name, bookValue: e.bookValue })),
+    equipment: facility.equipment.map((e, i) => ({
+      id: e.equipmentId,
+      name: owned[i]!.name,
+      bookValue: e.bookValue,
+      resaleValue: UNDEFINED_IN_GAME_DATA.equipmentResaleValue,
+    })),
     equipmentSlots: { used: facility.equipment.length, total: facilitySpec(data, facility.id).equipmentSlots },
     equipmentOptions: equipmentOptions(state, facility, deps, ctx),
     workforce: { workers: facility.workerCount, maximum: facilitySpec(data, facility.id).maximumWorkers, dailyWagePerWorker: data.workforce.workerDailyWage },

@@ -28,6 +28,7 @@ There are eight commands, covering every GDD §4 player action:
 | `SET_WORKFORCE` | 6. Hire workers, and lay them off during recovery (GDD §9) |
 | `RELEASE_RESERVATION` | GDD §7: free reserved stock, accepting the risk of missing an installment |
 | `REPEAT_OPERATION` | GDD §9: earned automation level 2 |
+| `SELL_EQUIPMENT` | GDD §9 and §14.9: recovery by selling owned equipment at its resale value (ADR 0020 decision 9). Not repeatable |
 
 Changes from earlier drafts:
 

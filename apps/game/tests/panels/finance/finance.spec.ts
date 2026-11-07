@@ -59,7 +59,8 @@ test("shows the income statement and cash flow by category for each period", asy
 
 test("lists recent transactions with their kind and entries, newest first", async ({ page }) => {
   await newGameWithPurchase(page);
-  const transactions = (await snapshot(page)).finance.recentTransactions;
+  // The ledger skips PROGRESSION rows (ADR 0020 decision 14).
+  const transactions = (await snapshot(page)).finance.recentTransactions.filter((t) => t.kind !== "PROGRESSION");
   const rows = page.getByTestId("finance-transaction");
   await expect(rows).toHaveCount(transactions.length);
   const newest = transactions.at(-1)!;
