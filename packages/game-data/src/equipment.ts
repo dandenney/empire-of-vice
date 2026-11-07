@@ -3,6 +3,7 @@
 // placeholder copy. T07a/T07 tune the numbers; T05 sets the QC station's unlock.
 
 import { asId, cents, ratio, type EquipmentId, type Money, type Ratio, type UnlockId } from "@eov/contracts";
+import { CAPACITY_EQUIPMENT, QUALITY_EQUIPMENT } from "./progression.ts";
 
 export interface EquipmentDefinition {
   readonly id: EquipmentId;
@@ -52,7 +53,7 @@ export const EQUIPMENT: readonly EquipmentDefinition[] = [
     throughputBonus: ratio(400_000), // PLACEHOLDER: +40%
     storageBonus: 0, // PLACEHOLDER
     crew: 1, // PLACEHOLDER
-    requiredUnlockId: null,
+    requiredUnlockId: CAPACITY_EQUIPMENT, // ADR 0020 decision 3: tier 2
   },
   {
     id: QC_STATION,
@@ -62,7 +63,7 @@ export const EQUIPMENT: readonly EquipmentDefinition[] = [
     throughputBonus: ratio(0), // PLACEHOLDER
     storageBonus: 0, // PLACEHOLDER
     crew: 0, // PLACEHOLDER
-    requiredUnlockId: null, // T05 sets this
+    requiredUnlockId: QUALITY_EQUIPMENT, // ADR 0020 decision 3: tier 3
   },
   {
     id: STORAGE_EXPANSION,
@@ -72,6 +73,6 @@ export const EQUIPMENT: readonly EquipmentDefinition[] = [
     throughputBonus: ratio(0), // PLACEHOLDER
     storageBonus: 100, // PLACEHOLDER: +100 cases
     crew: 0, // PLACEHOLDER
-    requiredUnlockId: null,
+    requiredUnlockId: CAPACITY_EQUIPMENT, // ADR 0020 decision 3: tier 2
   },
 ];
