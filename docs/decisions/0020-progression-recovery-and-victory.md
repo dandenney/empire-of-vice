@@ -210,7 +210,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
 11. **`REPEAT_OPERATION`** (ADR 0004 leaves these points open):
     - **Source.** The envelope in `state.commandLog` whose `id` is `sourceCommandId`.
     - **Chain.** If the source is itself a `REPEAT_OPERATION`, follow it back to the underlying command. Every link must already be in the log when the repeat applies. So each link points to a strictly earlier log entry, and the chain can't loop. (Apply-time rejections are logged too, ADR 0004; that's why the next point checks for a transaction.)
-    - **"Previously successful" means applied:** the ledger holds a transaction with `causedBy` equal to that command's ID. Every applied repeatable command commits one, keyed by the command, job, or delivery. This must hold at every link of the chain.
+    - **"Previously successful" means applied** (amended in T05c, #102), judged by the underlying command's type at every link of the chain. A `PURCHASE_MATERIALS` link is applied when the ledger holds its `MATERIAL_PURCHASE:<commandId>` transaction. A `START_PRODUCTION` or `DISPATCH_DELIVERY` link counts as applied once it's in the command log, and so no longer queued. Rationale: nothing in state ties a job or delivery to its command, but the copy is fully validated by its own handler anyway, and a `causedBy` contract field would move every hash pin.
     - **`NOT_REPEATABLE { sourceCommandId }`** covers every source problem:
       - not in the log (unknown, still queued, or rejected at dispatch);
       - a type outside `RepeatableCommand`;
