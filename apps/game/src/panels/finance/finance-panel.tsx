@@ -93,9 +93,12 @@ function CashFlowTable({ report }: { readonly report: PeriodReport }) {
 }
 
 function TransactionsTable({ transactions }: { readonly transactions: FinanceSnapshot["recentTransactions"] }) {
-  if (transactions.length === 0) return <p>{C.noTransactions}</p>;
+  // The money ledger skips PROGRESSION rows: reputation, tier, unlock, and outcome
+  // changes aren't financial transactions (ADR 0020 decision 14, #99 point 4).
+  const money = transactions.filter((t) => t.kind !== "PROGRESSION");
+  if (money.length === 0) return <p>{C.noTransactions}</p>;
   // Newest first; the snapshot lists them oldest first.
-  const rows: readonly LedgerTransaction[] = [...transactions].reverse();
+  const rows: readonly LedgerTransaction[] = [...money].reverse();
   return (
     <table data-testid="finance-transactions">
       <caption>{C.transactions}</caption>

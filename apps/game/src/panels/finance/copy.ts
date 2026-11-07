@@ -89,6 +89,9 @@ export const TRANSACTION_KIND_COPY: Readonly<Record<TransactionKind, string>> = 
   RESERVATION: "Reservation",
   ASSET_SALE: "Asset sale",
   VEHICLE_RETURN: "Truck returned",
+  // Internal label the type needs; the transactions table skips PROGRESSION rows,
+  // so no screen shows it (ADR 0020 decision 14).
+  PROGRESSION: "Progression",
 };
 
 export const ACCOUNT_COPY: Readonly<Record<LedgerAccount, string>> = {

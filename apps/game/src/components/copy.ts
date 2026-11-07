@@ -123,6 +123,8 @@ export const REJECTION_COPY: Readonly<Record<RejectionCode, string>> = {
   WORKFORCE_LIMIT_EXCEEDED: "Too many workers",
   NO_EQUIPMENT_SLOT: "No free equipment slot",
   EQUIPMENT_ALREADY_OWNED: "Already owned",
+  // Approved on #99 (ADR 0020).
+  EQUIPMENT_NOT_OWNED: "You can't sell equipment you don't own.",
   INSUFFICIENT_STOCK: "Not enough stock",
   RESERVATION_NOT_ACTIVE: "Reservation isn't active",
   VEHICLE_UNAVAILABLE: "Truck unavailable",

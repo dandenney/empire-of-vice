@@ -253,7 +253,13 @@ export interface FacilitySnapshot {
   readonly name: string;
   readonly locationId: LocationId;
   readonly kind: "DISTILLERY" | "WAREHOUSE";
-  readonly equipment: readonly { readonly id: EquipmentId; readonly name: string; readonly bookValue: Money }[];
+  /** `resaleValue`: what SELL_EQUIPMENT would pay for the item now (ADR 0020 decision 9). */
+  readonly equipment: readonly {
+    readonly id: EquipmentId;
+    readonly name: string;
+    readonly bookValue: Money;
+    readonly resaleValue: Money;
+  }[];
   readonly equipmentSlots: { readonly used: number; readonly total: number };
   /** What could be bought here, with the reason it can't (if it can't) precomputed. */
   readonly equipmentOptions: readonly EquipmentOption[];

@@ -101,6 +101,17 @@ export interface PurchaseEquipmentCommand {
 }
 
 /**
+ * Recovery by selling assets (GDD §9, §14.9; ADR 0020 decision 9). Sells one owned
+ * equipment item at its resale value. The truck and the building can't be sold.
+ * Not repeatable.
+ */
+export interface SellEquipmentCommand {
+  readonly type: "SELL_EQUIPMENT";
+  readonly facilityId: FacilityId;
+  readonly equipmentId: EquipmentId;
+}
+
+/**
  * GDD §4 action 6, and cutting costs during recovery (GDD §9). Sets the number of
  * generic workers at a facility, so one command covers both hiring and laying off.
  */
@@ -134,7 +145,8 @@ export type GameCommand =
   | PurchaseEquipmentCommand
   | SetWorkforceCommand
   | ReleaseReservationCommand
-  | RepeatOperationCommand;
+  | RepeatOperationCommand
+  | SellEquipmentCommand;
 
 export type GameCommandType = GameCommand["type"];
 
@@ -150,6 +162,7 @@ export const GAME_COMMAND_TYPES = [
   "SET_WORKFORCE",
   "RELEASE_RESERVATION",
   "REPEAT_OPERATION",
+  "SELL_EQUIPMENT",
 ] as const satisfies readonly GameCommandType[];
 
 // ---------------------------------------------------------------------------
@@ -222,6 +235,8 @@ export type RejectionReason =
   | { readonly code: "WORKFORCE_LIMIT_EXCEEDED"; readonly facilityId: FacilityId; readonly requested: number; readonly maximum: number }
   | { readonly code: "NO_EQUIPMENT_SLOT"; readonly facilityId: FacilityId; readonly equipmentId: EquipmentId }
   | { readonly code: "EQUIPMENT_ALREADY_OWNED"; readonly facilityId: FacilityId; readonly equipmentId: EquipmentId }
+  /** SELL_EQUIPMENT for an item the facility doesn't have (ADR 0020 decision 9). */
+  | { readonly code: "EQUIPMENT_NOT_OWNED"; readonly facilityId: FacilityId; readonly equipmentId: EquipmentId }
   // Inventory
   | { readonly code: "INSUFFICIENT_STOCK"; readonly productId: ProductId; readonly quality: QualityTier; readonly requested: number; readonly available: number }
   | { readonly code: "RESERVATION_NOT_ACTIVE"; readonly reservationId: ReservationId }
