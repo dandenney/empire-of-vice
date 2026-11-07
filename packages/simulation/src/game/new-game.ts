@@ -4,9 +4,12 @@
 // The scenario supplies the seed and the start date (ADR 0012), and the opening
 // balance sheet is booked as an OPENING_BALANCE transaction through the
 // coordinator, so even the first ledger entry passes the commit-time invariants.
+// The scenario is checked against game-data first, and its world events are
+// scheduled at tick 0 (ADR 0020 decision 12).
 
 import {
   addMoney,
+  compareIds,
   idempotencyKey,
   tick,
   ZERO_MONEY,
@@ -18,10 +21,12 @@ import {
   type Money,
   type SaveGame,
   type TransactionCoordinator,
+  type UnlockId,
 } from "@eov/contracts";
 import { FIRST_SHIPMENT_SCENARIO, GAME_DATA, type GameData, type ScenarioDefinition } from "@eov/game-data";
 import { createCoordinator } from "../economy/coordinator/coordinator.ts";
 import { initialBuyers, initialMarkets, initialSuppliers } from "../economy/market/market.ts";
+import { scheduleWorldEvent } from "../events/world-events.ts";
 import { createSimulation, loadSimulation, type KernelSimulation, type SimulationOptions } from "../kernel/simulation.ts";
 import { seedRngStreams } from "../rng/xoshiro128.ts";
 import { createGameRegistry, SYSTEMS, type SystemEntry } from "./systems.ts";
@@ -45,12 +50,41 @@ function find<T extends { readonly id: string }>(list: readonly T[], id: string,
   return found;
 }
 
+/**
+ * The scenario checks that need game-data (ADR 0020 decision 12), so a bad
+ * scenario fails when it loads, not inside a tick. Returns the family's
+ * starting unlocks, sorted by `compareIds`.
+ */
+function validateScenario(scenario: ScenarioDefinition, data: GameData): readonly UnlockId[] {
+  for (const [i, event] of scenario.scheduledEvents.entries()) {
+    const where = `Scenario scheduledEvents[${i}] (${event.kind})`;
+    if (!data.routes.some((r) => r.id === event.routeId)) throw new ScenarioSetupError(`${where} names unknown route ${event.routeId}`);
+    if (event.tick < 1) throw new ScenarioSetupError(`${where} is at tick ${event.tick}; scheduled events start at tick 1`);
+    if (!Number.isSafeInteger(event.durationTicks) || event.durationTicks < 1) {
+      throw new ScenarioSetupError(`${where} has duration ${event.durationTicks}; it must be at least 1 tick`);
+    }
+  }
+  find(data.families, scenario.family.id, "family");
+  const tiers = data.progression.tiers;
+  const tierIndex = tiers.findIndex((t) => t.id === scenario.family.tierId);
+  if (tierIndex < 0) throw new ScenarioSetupError(`Scenario references unknown tier ${scenario.family.tierId}`);
+  const expected = [...new Set(tiers.slice(0, tierIndex + 1).flatMap((t) => t.unlocks))].sort(compareIds);
+  const given = [...scenario.family.unlocked].sort(compareIds);
+  if (given.length !== expected.length || given.some((u, i) => u !== expected[i])) {
+    throw new ScenarioSetupError(
+      `Scenario family.unlocked [${given.join(", ")}] isn't tier ${scenario.family.tierId}'s cumulative unlocks [${expected.join(", ")}]`,
+    );
+  }
+  return expected;
+}
+
 /** The scenario's state at tick 0, including the booked opening balance. */
 export function createInitialState(
   scenario: ScenarioDefinition,
   data: GameData,
   coordinator: TransactionCoordinator = createCoordinator(),
 ): GameState {
+  const unlocked = validateScenario(scenario, data);
   const facilities: FacilityState[] = scenario.facilities
     .map((f) => {
       find(data.facilities, f.id, "facility");
@@ -65,7 +99,7 @@ export function createInitialState(
   const markets = initialMarkets(data);
   const nextId = Object.fromEntries(DYNAMIC_ID_KINDS.map((k) => [k, 1])) as Record<DynamicIdKind, number>;
 
-  const blank: GameState = {
+  const empty: GameState = {
     scenarioId: scenario.id,
     seed: scenario.seed,
     tick: tick(0),
@@ -76,7 +110,7 @@ export function createInitialState(
       id: scenario.family.id,
       reputation: scenario.family.reputation,
       tierId: scenario.family.tierId,
-      unlocked: [...scenario.family.unlocked].sort(),
+      unlocked: [...unlocked],
       firstQualifyingDeliveryMade: false,
       consecutiveFulfilledInstallments: 0,
     },
@@ -99,6 +133,11 @@ export function createInitialState(
     scheduledEvents: [],
     eventJournal: [],
   };
+  // The scenario's world events, in file order (ADR 0020 decision 12).
+  const blank = scenario.scheduledEvents.reduce<GameState>(
+    (s, e) => scheduleWorldEvent(s, { kind: e.kind, tick: e.tick, routeId: e.routeId, reason: e.reason, durationTicks: e.durationTicks }),
+    empty,
+  );
 
   // Opening balance sheet: cash and buildings from the scenario, equipment and
   // vehicles at their definitions' values, equity balancing the sheet.

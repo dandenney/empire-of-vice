@@ -255,6 +255,9 @@ export class GreedySpotStrategy {
     const offers: { buyerId: BuyerId; unitPrice: Money; acceptable: number; demand: number }[] = [];
     for (const buyer of s.market.buyers) {
       if (!buyer.willDeal) continue;
+      // Skip a buyer whose default route (the first listed, what routeId null resolves to) is closed.
+      const route = this.#data.routes.find((r) => r.fromLocationId === facility.locationId && r.toLocationId === buyer.locationId);
+      if (route && s.routes.find((r) => r.id === route.id)?.status.open === false) continue;
       const want = buyer.wants.find((w) => w.productId === productId && w.minimumQuality === quality);
       if (!want || want.maxAcceptableQuantity <= 0) continue;
       offers.push({ buyerId: buyer.id, unitPrice: want.unitPrice, acceptable: want.maxAcceptableQuantity, demand: want.demandRemaining });
