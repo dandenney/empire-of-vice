@@ -300,7 +300,8 @@ describe("snapshot projection", () => {
     const wages =
       GAME_DATA.characters.reduce((n, c) => n + c.dailyWage, 0) +
       sim.state.facilities.reduce((n, f) => n + f.workerCount * GAME_DATA.workforce.workerDailyWage, 0);
-    const overhead = GAME_DATA.facilityProduction.reduce((n, f) => n + f.dailyOverhead, 0);
+    // Owned facilities only: game-data also lists the unowned warehouse (T03b, #76).
+    const overhead = sim.state.facilities.reduce((n, f) => n + GAME_DATA.facilityProduction.find((p) => p.facilityId === f.id)!.dailyOverhead, 0);
     sim.advance(1_440 - sim.state.tick);
     const nextDay = sim.snapshot();
     expect(nextDay.clock.dayIndex).toBe(1);
