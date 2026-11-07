@@ -87,6 +87,7 @@ const commands: GameCommand[] = [
   { type: "SET_WORKFORCE", facilityId: ids.distillery, workerCount: 0 },
   { type: "RELEASE_RESERVATION", reservationId: "res-4" as never },
   { type: "REPEAT_OPERATION", sourceCommandId: "cmd-1" as never },
+  { type: "SELL_EQUIPMENT", facilityId: ids.distillery, equipmentId: ids.copperStill },
 ];
 
 describe("commands", () => {
@@ -179,5 +180,77 @@ describe("S0a contract gaps (issues #32, #33)", () => {
     };
     expect(gameEventSchema.parse(roundTrip(event))).toEqual(event);
     expect(gameEventSchema.safeParse({ ...event, reason: "USED_UP" }).success).toBe(false);
+  });
+});
+
+describe("T05a asset sales and PROGRESSION (ADR 0020 decision 14)", () => {
+  const sell: GameCommand = { type: "SELL_EQUIPMENT", facilityId: ids.distillery, equipmentId: ids.copperStill };
+
+  it("accepts SELL_EQUIPMENT", () => {
+    expect(gameCommandSchema.parse(roundTrip(sell))).toEqual(sell);
+    expect(commandRequestSchema.safeParse({ command: sell }).success).toBe(true);
+  });
+
+  it.each([
+    ["missing equipmentId", withoutKey(sell, "equipmentId")],
+    ["missing facilityId", withoutKey(sell, "facilityId")],
+    ["bad equipment ID", { ...sell, equipmentId: "Copper Still" }],
+    ["unknown key", { ...sell, price: 15_000 }],
+  ])("rejects SELL_EQUIPMENT with %s", (_label, bad) => {
+    expect(gameCommandSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("accepts EQUIPMENT_NOT_OWNED and rejects malformed ones", () => {
+    const reason: RejectionReason = { code: "EQUIPMENT_NOT_OWNED", facilityId: ids.distillery, equipmentId: ids.condenser };
+    expect(rejectionReasonSchema.parse(roundTrip(reason))).toEqual(reason);
+    expect(rejectionReasonSchema.safeParse(withoutKey(reason, "equipmentId")).success).toBe(false);
+    expect(rejectionReasonSchema.safeParse({ ...reason, facilityId: "Hollow Creek" }).success).toBe(false);
+    expect(rejectionReasonSchema.safeParse({ ...reason, extra: true }).success).toBe(false);
+  });
+
+  const sold: GameEvent = {
+    id: asId("Event", "evt-20"),
+    tick: tick(2_000),
+    causedBy: asId("Command", "cmd-5"),
+    type: "EQUIPMENT_SOLD",
+    facilityId: ids.distillery,
+    equipmentId: ids.copperStill,
+    bookValue: cents(30_000),
+    proceeds: cents(15_000),
+    transactionId: asId("Transaction", "txn-21"),
+  };
+
+  it("accepts EQUIPMENT_SOLD", () => {
+    expect(gameEventSchema.parse(roundTrip(sold))).toEqual(sold);
+  });
+
+  it.each([
+    ["fractional proceeds", { ...sold, proceeds: 150.5 }],
+    ["book value as a string", { ...sold, bookValue: "300.00" }],
+    ["missing transactionId", withoutKey(sold, "transactionId")],
+    ["unknown key", { ...sold, buyerId: ids.speakeasy }],
+  ])("rejects EQUIPMENT_SOLD with %s", (_label, bad) => {
+    expect(gameEventSchema.safeParse(bad).success).toBe(false);
+  });
+
+  const progression: LedgerTransaction = {
+    id: asId("Transaction", "txn-22"),
+    tick: tick(2_100),
+    kind: "PROGRESSION",
+    idempotencyKey: "PROGRESSION:delivery-4",
+    entries: [],
+    eventIds: [asId("Event", "evt-23")],
+  };
+
+  it("accepts a PROGRESSION transaction", () => {
+    expect(ledgerTransactionSchema.parse(roundTrip(progression))).toEqual(progression);
+  });
+
+  it.each([
+    ["misspelled kind", { ...progression, kind: "PROGRESS" }],
+    ["missing idempotency key", withoutKey(progression, "idempotencyKey")],
+    ["single entry", { ...progression, entries: [{ account: "CASH", side: "DEBIT", amount: 100 }] }],
+  ])("rejects a PROGRESSION transaction with %s", (_label, bad) => {
+    expect(ledgerTransactionSchema.safeParse(bad).success).toBe(false);
   });
 });

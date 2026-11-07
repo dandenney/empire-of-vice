@@ -105,7 +105,9 @@ describe("snapshot projection", () => {
     expect(s.finance.toDate.cashFlow.openingCash).toBe(cents(100_000));
     expect(s.finance.recentTransactions.map((t) => t.kind)).toEqual(["OPENING_BALANCE"]);
     expect(distillery(s)).toMatchObject({ name: "Hollow Creek distillery", locationId: HOLLOW_CREEK, kind: "DISTILLERY", productionCapacityPerDay: 10 });
-    expect(distillery(s).equipment).toEqual([{ id: COPPER_STILL, name: "Copper still", bookValue: cents(30_000) }]);
+    expect(distillery(s).equipment).toEqual([
+      { id: COPPER_STILL, name: "Copper still", bookValue: cents(30_000), resaleValue: UNDEFINED_IN_GAME_DATA.equipmentResaleValue },
+    ]);
     expect(s.vehicles).toEqual([{ id: MODEL_TT_TRUCK, name: "Model TT truck", capacity: 20, homeLocationId: HOLLOW_CREEK, trip: null }]);
     expect(s.market.suppliers[0]!.materials.map((m) => [m.materialName, m.unitPrice, m.available, m.shortage])).toEqual([
       ["Corn", cents(250), 160, false],
