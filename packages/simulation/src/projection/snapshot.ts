@@ -44,7 +44,15 @@ import { priceInputs, quoteDeal } from "../economy/market/market.ts";
 import { availableMaterial } from "../inventory/pools.ts";
 import type { ProjectionContext, SystemRegistry } from "../kernel/registry.ts";
 import { createSimulation } from "../kernel/simulation.ts";
-import { facilityMaxSafeQuantity, facilitySpec, productionCapacityPerDay, storageAvailable, storageCapacity, supportsRecipe } from "../production/index.ts";
+import {
+  facilityMaxSafeQuantity,
+  facilitySpec,
+  productionCapacityPerDay,
+  resaleValue,
+  storageAvailable,
+  storageCapacity,
+  supportsRecipe,
+} from "../production/index.ts";
 import { projectFinance } from "./finance.ts";
 
 /**
@@ -52,11 +60,11 @@ import { projectFinance } from "./finance.ts";
  * yet. Each is reported as 0 (a number) or the entity's ID (a name) rather than
  * a made-up figure, and each names the task that adds the definition. Listed in
  * the S0b PR as gaps.
+ *
+ * Empty since T05d (#103) defined the last one, equipment resale value. Kept
+ * (exported from the package) so a future gap has a home.
  */
-export const UNDEFINED_IN_GAME_DATA = {
-  /** Owned equipment's resale value (T05d (#103), ADR 0020 decision 9). Reported as 0. */
-  equipmentResaleValue: ZERO_MONEY,
-} as const;
+export const UNDEFINED_IN_GAME_DATA = {} as const;
 
 export interface ProjectionDeps {
   readonly data: GameData;
@@ -283,7 +291,7 @@ function projectFacility(state: GameState, facility: FacilityState, deps: Projec
       id: e.equipmentId,
       name: owned[i]!.name,
       bookValue: e.bookValue,
-      resaleValue: UNDEFINED_IN_GAME_DATA.equipmentResaleValue,
+      resaleValue: resaleValue(e.bookValue, data),
     })),
     equipmentSlots: { used: facility.equipment.length, total: facilitySpec(data, facility.id).equipmentSlots },
     equipmentOptions: equipmentOptions(state, facility, deps, ctx),

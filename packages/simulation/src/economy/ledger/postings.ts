@@ -102,6 +102,22 @@ export function equipmentPurchaseEntries(cost: Money): readonly LedgerEntry[] {
   return entries(["EQUIPMENT", "DEBIT", cost], ["CASH", "CREDIT", cost]);
 }
 
+export interface AssetSaleAmounts {
+  /** The item's book value, taken off the EQUIPMENT account. */
+  readonly bookValue: Money;
+  /** Cash received. At most the book value: M001 has no gain on a sale (ADR 0020 decision 9). */
+  readonly proceeds: Money;
+}
+
+/**
+ * Selling equipment below book value: Dr CASH the proceeds / Dr LOSSES the
+ * shortfall / Cr EQUIPMENT the book value. Net worth falls by the shortfall.
+ */
+export function assetSaleEntries(sale: AssetSaleAmounts): readonly LedgerEntry[] {
+  if (sale.proceeds > sale.bookValue) throw new RangeError(`Asset sale proceeds ${sale.proceeds} exceed book value ${sale.bookValue}`);
+  return entries(["CASH", "DEBIT", sale.proceeds], ["LOSSES", "DEBIT", subtractMoney(sale.bookValue, sale.proceeds)], ["EQUIPMENT", "CREDIT", sale.bookValue]);
+}
+
 /** Cargo lost on the road: Dr LOSSES / Cr GOODS_IN_TRANSIT. */
 export function cargoLossEntries(cost: Money): readonly LedgerEntry[] {
   return entries(["LOSSES", "DEBIT", cost], ["GOODS_IN_TRANSIT", "CREDIT", cost]);

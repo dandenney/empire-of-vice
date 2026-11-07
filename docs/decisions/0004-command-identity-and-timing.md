@@ -16,7 +16,7 @@ Three questions needed answers:
 
 ### The command set (`commands.ts`)
 
-There are eight commands, covering every GDD §4 player action:
+There are nine commands, covering every GDD §4 player action:
 
 | Command | GDD §4 action |
 |---|---|

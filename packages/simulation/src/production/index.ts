@@ -19,5 +19,6 @@ export {
   throughput,
   type CrewTerms,
 } from "./capacity.ts";
+export { resaleValue, validateResaleRatio } from "./equipment.ts";
 export { registerProduction } from "./production.ts";
 export { dailyOverheadDue, dailyWagesDue } from "./settlement.ts";
