@@ -69,7 +69,13 @@ export type TransactionKind =
    * A truck back at its home facility. Carries the trip's transport cost (paid,
    * or accrued to WAGES_PAYABLE) and any cargo it brings home (ADR 0019 decision 2).
    */
-  | "VEHICLE_RETURN";
+  | "VEHICLE_RETURN"
+  /**
+   * Reputation, tier, unlock, and outcome changes (ADR 0020 decision 14). It never
+   * has entries and isn't a money line: the finance ledger skips these rows, and the
+   * player-facing category comes from the event, not this kind (#99 point 4).
+   */
+  | "PROGRESSION";
 
 /**
  * One committed coordinator transaction (ADR 0010). The ledger log doubles as the

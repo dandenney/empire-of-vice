@@ -91,6 +91,11 @@ export const gameCommandSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("SET_WORKFORCE"), facilityId: idSchema("Facility"), workerCount: count }),
   z.strictObject({ type: z.literal("RELEASE_RESERVATION"), reservationId: idSchema("Reservation") }),
   z.strictObject({ type: z.literal("REPEAT_OPERATION"), sourceCommandId: idSchema("Command") }),
+  z.strictObject({
+    type: z.literal("SELL_EQUIPMENT"),
+    facilityId: idSchema("Facility"),
+    equipmentId: idSchema("Equipment"),
+  }),
 ]) satisfies z.ZodType<GameCommand>;
 
 /** What the worker gateway validates before calling `Simulation.dispatch`. */
@@ -135,6 +140,7 @@ export const rejectionReasonSchema = z.discriminatedUnion("code", [
   z.strictObject({ code: z.literal("WORKFORCE_LIMIT_EXCEEDED"), facilityId: idSchema("Facility"), requested: count, maximum: count }),
   z.strictObject({ code: z.literal("NO_EQUIPMENT_SLOT"), facilityId: idSchema("Facility"), equipmentId: idSchema("Equipment") }),
   z.strictObject({ code: z.literal("EQUIPMENT_ALREADY_OWNED"), facilityId: idSchema("Facility"), equipmentId: idSchema("Equipment") }),
+  z.strictObject({ code: z.literal("EQUIPMENT_NOT_OWNED"), facilityId: idSchema("Facility"), equipmentId: idSchema("Equipment") }),
   z.strictObject({
     code: z.literal("INSUFFICIENT_STOCK"),
     productId: idSchema("Product"),
@@ -229,6 +235,13 @@ export const gameEventSchema = z.discriminatedUnion("type", [
     facilityId: idSchema("Facility"),
     equipmentId: idSchema("Equipment"),
     price: moneySchema,
+    transactionId: idSchema("Transaction"),
+  }),
+  ev("EQUIPMENT_SOLD", {
+    facilityId: idSchema("Facility"),
+    equipmentId: idSchema("Equipment"),
+    bookValue: moneySchema,
+    proceeds: moneySchema,
     transactionId: idSchema("Transaction"),
   }),
   ev("WORKFORCE_CHANGED", { facilityId: idSchema("Facility"), from: count, to: count }),
@@ -350,7 +363,7 @@ const ledgerAccountSchema = z.enum(Object.keys(LEDGER_ACCOUNTS) as [LedgerAccoun
 const transactionKindSchema = z.enum([
   "OPENING_BALANCE", "MATERIAL_PURCHASE", "PRODUCTION", "PRODUCTION_WRITE_OFF", "EQUIPMENT_PURCHASE",
   "DISPATCH", "SALE", "TRANSFER", "CARGO_LOSS", "DAILY_SETTLEMENT", "INSTALLMENT_SETTLEMENT",
-  "RESERVATION", "ASSET_SALE", "VEHICLE_RETURN",
+  "RESERVATION", "ASSET_SALE", "VEHICLE_RETURN", "PROGRESSION",
 ] as const satisfies readonly TransactionKind[]);
 
 const ledgerEntrySchema = z.strictObject({

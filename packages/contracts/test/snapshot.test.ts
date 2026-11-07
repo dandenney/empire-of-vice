@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { LEDGER_ACCOUNTS, type GameSnapshot, type LedgerAccount } from "../src/index.ts";
+import { LEDGER_ACCOUNTS, type FacilitySnapshot, type GameSnapshot, type LedgerAccount, type Money } from "../src/index.ts";
 import type { IsPlainData } from "./plain-data.ts";
 
 
@@ -7,6 +7,10 @@ describe("GameSnapshot", () => {
   it("is plain JSON-safe data with no optional fields", () => {
     // Optional fields are disallowed too: snapshots use explicit nulls, so every key is always present.
     expectTypeOf<IsPlainData<GameSnapshot>>().toEqualTypeOf<true>();
+  });
+
+  it("owned equipment carries its resale value (ADR 0020 decision 14)", () => {
+    expectTypeOf<FacilitySnapshot["equipment"][number]["resaleValue"]>().toEqualTypeOf<Money>();
   });
 
   it("the plain-data check rejects what it should", () => {

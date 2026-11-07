@@ -106,6 +106,8 @@ const CASH_FLOW_CATEGORY: Readonly<Record<TransactionKind, CashFlowCategory | nu
   ASSET_SALE: "ASSET_SALES",
   // A truck getting home pays its trip's transport cost (ADR 0019 decision 2).
   VEHICLE_RETURN: "TRANSPORT",
+  // Reputation, tier, unlock, and outcome rows never have entries (ADR 0020 decision 14).
+  PROGRESSION: null,
 };
 
 export class FinanceProjectionError extends Error {

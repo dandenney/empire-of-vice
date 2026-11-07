@@ -142,6 +142,21 @@ export type EquipmentPurchasedEvent = GameEventOf<
   }
 >;
 
+/**
+ * An owned equipment item sold for recovery (ADR 0020 decision 9). `proceeds` is the
+ * resale value; `bookValue - proceeds` is booked to LOSSES.
+ */
+export type EquipmentSoldEvent = GameEventOf<
+  "EQUIPMENT_SOLD",
+  {
+    readonly facilityId: FacilityId;
+    readonly equipmentId: EquipmentId;
+    readonly bookValue: Money;
+    readonly proceeds: Money;
+    readonly transactionId: TransactionId;
+  }
+>;
+
 export type WorkforceChangedEvent = GameEventOf<
   "WORKFORCE_CHANGED",
   { readonly facilityId: FacilityId; readonly from: number; readonly to: number }
@@ -363,7 +378,11 @@ export type VictoryAchievedEvent = GameEventOf<
   { readonly netWorth: Money; readonly reputation: number; readonly completedContractId: ContractId }
 >;
 
-/** Explicit failure, so there's never a silent soft-lock (GDD §9). Conditions decided in T05. */
+/**
+ * Explicit failure, so there's never a silent soft-lock (GDD §9). The insolvency
+ * conditions, recovery, and the minimum restart path are decided in ADR 0020
+ * (decisions 9 and 10).
+ */
 export type GameLostEvent = GameEventOf<"GAME_LOST", { readonly reason: "INSOLVENT" }>;
 
 // ---------------------------------------------------------------------------
@@ -378,6 +397,7 @@ export type GameEvent =
   | ProductionCompletedEvent
   | ProductionFailedEvent
   | EquipmentPurchasedEvent
+  | EquipmentSoldEvent
   | WorkforceChangedEvent
   | DeliveryDispatchedEvent
   | DeliveryDelayedEvent
@@ -423,6 +443,7 @@ export const EVENT_IMPORTANCE: Readonly<Record<GameEventType, "notify" | "log">>
   PRODUCTION_COMPLETED: "notify",
   PRODUCTION_FAILED: "notify",
   EQUIPMENT_PURCHASED: "log",
+  EQUIPMENT_SOLD: "log",
   WORKFORCE_CHANGED: "log",
   DELIVERY_DISPATCHED: "log",
   DELIVERY_DELAYED: "notify",
