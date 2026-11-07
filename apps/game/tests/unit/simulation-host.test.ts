@@ -2,7 +2,9 @@
 // drives the simulation, snapshots are throttled, and notify events go out at
 // once (issue #11, ADR 0014).
 
-import type { GameSnapshot } from "@eov/contracts";
+import { cents, compareById, idempotencyKey, tick, type GameSnapshot, type GameState, type LedgerEntry, type SaveGame } from "@eov/contracts";
+import { GAME_DATA } from "@eov/game-data";
+import { accountBalances, allocateId, createCoordinator, createSimulation, newGame, simulationOptions } from "@eov/simulation";
 import { describe, expect, it } from "vitest";
 import type { WorkerMessage, WorkerRequest } from "../../src/workers/protocol.ts";
 import { SimulationHost, SNAPSHOT_INTERVAL_MS, TIMER_INTERVAL_MS, type HostEnvironment } from "../../src/workers/simulation-host.ts";
@@ -261,4 +263,122 @@ describe("SimulationHost", () => {
     };
     expect(hashAt(1)).toBe(hashAt(4));
   });
+
+  // ADR 0020 decision 16: the end of the game pauses the scheduler.
+  it.each([
+    { name: "GAME_LOST", save: brokeSave, eventType: "GAME_LOST", outcome: "LOST" },
+    { name: "VICTORY_ACHIEVED", save: winningSave, eventType: "VICTORY_ACHIEVED", outcome: "WON" },
+  ] as const)("pauses on $name in a timer step (speed 0, timer cleared, snapshot at once), and the player can resume", ({ save, eventType, outcome }) => {
+    const { env, send } = setup();
+    send({ type: "LOAD_GAME", save: save() });
+    send({ type: "SET_SPEED", speed: 4 });
+    const messages: WorkerMessage[] = [];
+    while (!messages.some((m) => m.type === "EVENTS" && m.events.some((e) => e.type === eventType))) {
+      env.elapse(TIMER_INTERVAL_MS);
+      messages.push(...env.take());
+      if (env.ms > 600_000) throw new Error(`${eventType} never fired`);
+    }
+    // The step that emitted the event published a paused snapshot showing the outcome.
+    const at = messages.findIndex((m) => m.type === "EVENTS" && m.events.some((e) => e.type === eventType));
+    const after = snapshots(messages.slice(at));
+    expect(after).toHaveLength(1);
+    expect(after[0]!.scheduler).toEqual({ speed: 0, autoPaused: false });
+    expect(after[0]!.snapshot.outcome.status).toBe(outcome);
+    expect(env.timers.size).toBe(0);
+    const ended = lastTick(messages);
+
+    // Paused: time passes, nothing runs.
+    env.elapse(10_000);
+    expect(env.take()).toEqual([]);
+
+    // Resuming isn't refused, and the outcome is kept.
+    const resumed = send({ type: "SET_SPEED", speed: 1 });
+    expect(snapshots(resumed)[0]!.scheduler.speed).toBe(1);
+    env.elapse(1_000);
+    const later = env.take();
+    expect(lastTick(later)).toBe(ended + 12);
+    expect(snapshots(later).at(-1)!.snapshot.outcome.status).toBe(outcome);
+  });
+
+  it("doesn't pause on ordinary steps with neither outcome event", () => {
+    const { env, send } = setup();
+    send({ type: "NEW_GAME" });
+    send({ type: "SET_SPEED", speed: 4 });
+    env.elapse(10_000);
+    expect(snapshots(env.take()).every((m) => m.scheduler.speed === 4)).toBe(true);
+    expect(env.timers.size).toBe(1);
+  });
 });
+
+// ---------------------------------------------------------------------------
+// Saves that end the game (fixtures booked through the coordinator, so the
+// ledger matches state)
+// ---------------------------------------------------------------------------
+
+function fixture(state: GameState, entries: readonly LedgerEntry[], change: (s: GameState) => GameState = (s) => s): GameState {
+  const tx = createCoordinator().begin(state, {
+    kind: "OPENING_BALANCE",
+    idempotencyKey: idempotencyKey("OPENING_BALANCE", "fixture", state.ledger.transactions.length),
+    tick: state.tick,
+    causedBy: null,
+  });
+  if (tx.status === "duplicate") throw new Error("Fixture key collision");
+  tx.update(change);
+  if (entries.length > 0) tx.post(entries);
+  const result = tx.commit();
+  if (result.status !== "committed") throw new Error(`Fixture rejected: ${JSON.stringify(result.reason)}`);
+  return result.state;
+}
+
+const saveOf = (state: GameState): SaveGame => createSimulation(state, simulationOptions()).serialize();
+
+/** A new game with its cash moved to owner equity: no cash and no goods, so it's lost at the first midnight. */
+function brokeSave(): SaveGame {
+  const state = newGame().state;
+  const cash = cents(accountBalances(state.ledger.transactions).CASH);
+  return saveOf(
+    fixture(state, [
+      { account: "OWNER_EQUITY", side: "DEBIT", amount: cash },
+      { account: "CASH", side: "CREDIT", amount: cash },
+    ]),
+  );
+}
+
+/** A new game meeting every victory condition in game-data, so it's won on the first tick. */
+function winningSave(): SaveGame {
+  const victory = GAME_DATA.progression.victory;
+  const definition = GAME_DATA.contracts.buyers[0]!;
+  let state = newGame().state;
+  for (let i = 0; i < victory.completedContracts; i++) {
+    const offer = allocateId(state, "ContractOffer");
+    const contract = allocateId(offer.state, "Contract");
+    const completed = {
+      id: contract.id,
+      offerId: offer.id,
+      buyerId: definition.buyerId,
+      productId: definition.productId,
+      minimumQuality: definition.minimumQuality,
+      quantityPerInstallment: definition.quantityPerInstallment,
+      unitPrice: cents(1_000),
+      installmentCount: 1,
+      intervalTicks: GAME_DATA.contracts.terms.intervalTicks,
+      penaltyRatePpm: GAME_DATA.contracts.terms.penaltyRatePpm,
+      status: "COMPLETED" as const,
+      installments: [
+        { deadline: tick(0), required: definition.quantityPerInstallment, delivered: definition.quantityPerInstallment, outcome: "FULFILLED" as const, penalty: cents(0) },
+      ],
+      reservationIds: [],
+    };
+    state = { ...contract.state, contracts: [...contract.state.contracts, completed].sort(compareById) };
+  }
+  const amount = cents(victory.netWorth);
+  state = fixture(
+    state,
+    [
+      { account: "CASH", side: "DEBIT", amount },
+      { account: "OWNER_EQUITY", side: "CREDIT", amount },
+    ],
+    (s) => ({ ...s, family: { ...s.family, reputation: victory.reputation } }),
+  );
+  return saveOf(state);
+}
