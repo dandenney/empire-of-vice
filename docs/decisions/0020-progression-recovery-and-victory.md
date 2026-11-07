@@ -144,13 +144,13 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
      - removes the item from the facility;
      - emits `EQUIPMENT_SOLD`.
      - **Cash flow.** It files under `ASSET_SALES` (ADR 0015): the `EQUIPMENT` and `LOSSES` lines disagree, so the kind default applies.
-     - **The edge case.** If rounding leaves no `LOSSES` line, the only non-cash account is `EQUIPMENT`, and the sale files under `EQUIPMENT`. That's accepted. It can't happen at a 50% ratio with any book value ≥ 2¢, and every M001 item is priced in dollars.
+     - **The edge case.** If rounding leaves no `LOSSES` line, the only non-cash account is `EQUIPMENT`, and the sale files under `EQUIPMENT`. That's accepted, whatever the ratio: any ratio and book value whose rounding leaves a 0¢ line (for example a ratio near 1 000 000 ppm, which gives a 0¢ loss) falls under the zero-line omission and this filing. At today's 50% it can't happen for any book value ≥ 2¢, and every M001 item is priced in dollars.
      - `GAIN_ON_ASSET_SALE` stays unused in M001.
    - **What a sale doesn't change.** A running job's `completesAt` was fixed at its start, so selling equipment mid-run doesn't affect it. Workers stay employed; the player can lay them off. Selling a storage expansion may leave the facility over capacity, which is allowed, as for returned cargo (ADR 0019 decision 4).
    - **Not sellable.** The truck (selling it would end every route to revenue) and the building.
    - **Buying the item back.** The first purchase of an item at a facility keeps the key `EQUIPMENT_PURCHASE:<facility>:<equipment>`, which the PROD-001 locked test asserts. A purchase made when that key already exists uses `EQUIPMENT_PURCHASE:<facility>:<equipment>:<commandId>`. Without this, buying back a sold item would be swallowed as a duplicate.
    - **Snapshot.** Each owned equipment entry shows its `resaleValue`.
-10. **Insolvency (`GAME_LOST { INSOLVENT }`), the minimum restart path, and no soft-lock (§14.9).** Revised in review round 1.
+10. **Insolvency (`GAME_LOST { INSOLVENT }`), the minimum restart path, and no soft-lock (§14.9).** Revised in review rounds 1 and 2.
     - **"In play."** Supplier prices and materials mean the suppliers in `state.suppliers` (the scenario's `supplierIds`), not every game-data supplier. Buyers mean those in `state.buyers`.
     - **An eligible sale.** Finished goods of product *p* and quality *q* have an eligible sale when some buyer in play:
       - wants (*p*, a minimum quality ≤ *q*);
@@ -159,10 +159,11 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
 
       The policy never uses risky routes, because a seizure would end the attempt without a sale.
     - **The recovery policy** applies to any state that isn't `LOST`, in this order. On each step it acts or waits, and waiting is always bounded by the horizon below.
-      1. **Wait** for every running production job to complete, and for every delivery whose `cargo` isn't empty to finish. That includes `FAILED` cargo riding home after a fall-through.
-      2. **Sell goods.** If finished goods are on hand, release any contract reservations on them (`RELEASE_RESERVATION`). Dispatch up to the truck's capacity, at the buyer's current quote, to the first eligible buyer in buyer-ID order, on the first eligible safe route listed for it.
+      1. **Wait** for every running production job to complete, for every `OUTBOUND` delivery to finish, and for every `FAILED` delivery that still holds cargo (a fall-through riding home) to bring it back. A `DELIVERED` delivery keeps its `cargo` for good (`arriveForSale` and `arriveForContract` change only its status), so it's never waited on.
+      2. **Sell goods.** If finished goods are on hand, release any contract reservations on them (`RELEASE_RESERVATION`). Pick the first eligible buyer in buyer-ID order and the first eligible safe route listed for it. Dispatch, at the buyer's current quote, `min(goods, the truck's capacity, acceptable)` cases, where `acceptable = min(demandRemaining, floor(budgetRemaining / quote))` for the matched want, as `quoteDeal` computes it. A larger dispatch would be rejected with `BUYER_WILL_TAKE_LESS`.
          - If the truck is out, wait for it.
-         - If no buyer is eligible, or today's demand or budget is used up, wait until a buyer is eligible: a closure ends, or the next midnight resets demand.
+         - If no buyer is eligible, or `acceptable` is 0 because today's demand or budget is used up, wait until a buyer is eligible: a closure ends, or the next midnight resets demand.
+         - The policy waits on its first eligible buyer; it doesn't try the next one. That's enough for the bound, and it gives the locked helper one deterministic choice.
       3. **Restart.** If there are no goods, pick the cheapest feasible restart recipe *R* (below; ties go to recipe-ID order), then:
          1. sell every owned item at the facility that *R* doesn't require (`SELL_EQUIPMENT`);
          2. buy each required item the facility lacks (`PURCHASE_EQUIPMENT`);
@@ -175,7 +176,8 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
     - **When the family is insolvent.** At the midnight check, while `PLAYING`, all of these hold:
       - **No goods:**
         - every product pool is empty;
-        - every delivery's `cargo` is empty, which covers `OUTBOUND` deliveries and `FAILED` cargo on a truck heading home;
+        - no delivery is `OUTBOUND`, and no `FAILED` delivery still holds cargo (a fall-through riding home). Equivalently, every delivery whose status isn't `DELIVERED` has empty cargo.
+          - **Why it's scoped by status.** A `DELIVERED` delivery keeps its cargo forever: `withDelivery` changes only the status, and only `seizeCargo` and `returnHome` (for `FAILED` deliveries) clear cargo. The logistics locked test's `inTransit` helper skips `DELIVERED` deliveries for the same reason. So a game with an earlier `DELIVERED` sale can still reach `LOST`;
         - no production job is running.
       - **No recipe offers a restart.** Recipe *R*, at an owned facility, is a restart route if it is feasible and `funds(R) ≥ cost(R)`, where the three terms are step 3's paid steps at base prices:
         - `cost(R)` = the price of each required item the facility lacks, plus, for each input, the shortfall against materials on hand × that material's lowest base `unitPrice` among the suppliers in play (game-data, ignoring shortages), plus `laborPerCase + overheadPerCase`.
@@ -189,17 +191,22 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
       |---|---|
       | *t* | |
       | each running job | `completesAt` |
-      | each delivery with cargo | the return arrival of its truck: `arrivesAt`, plus the route's `durationTicks` while still outbound, plus `delayTicks` if a risky trip may still be delayed |
+      | each `OUTBOUND` delivery | the return arrival of its truck: the trip's `arrivesAt`, plus the route's `durationTicks`, plus `delayTicks` if a risky trip may still be delayed |
+      | each `FAILED` delivery that still holds cargo | its truck's homeward `arrivesAt` |
       | each active shortage | its end tick |
-      | each route closure | its `reopensAt` |
+      | each `SHORTAGE_START` scheduled in `state.scheduledEvents` | its `tick + durationTicks` |
+      | each active route closure | its `reopensAt` |
+      | each `ROUTE_CLOSURE` scheduled in `state.scheduledEvents` | its `tick + durationTicks` |
+
+      `DELIVERED` deliveries have no row: their truck is home or on another trip, which that trip's own row covers. Closures and shortages count whether active or still scheduled, so the bound holds even if T05g moves the rival window or a buyer's `minimumReputation` makes a different buyer the policy's first.
 
       The slack is `2 × TICKS_PER_DAY` (a full day of buyer demand and the next midnight's reset), plus a one-case job's duration at a workforce of 1 (ADR 0017's crew formula, for the slowest recipe), plus a round trip on the longest safe route.
 
-      Every term is finite in M001: closures always have durations (decision 12), and shortages have `durationDays`.
-    - **No soft-lock (GDD §9).** T05f writes this as a locked fast-check property. From every midnight state reached by random valid command sequences, running the recovery policy on a copy reaches `SALE_COMPLETED` or `GAME_LOST` by tick `H`. Reaching neither is a soft-lock. Wages draining cash while the policy waits can produce `GAME_LOST`, and that's an acceptable outcome.
+      Every term is finite in M001: closures always have durations (decision 12), and shortages have `durationDays`. The slack's single one-case job assumes the restart job can't fail: every recipe's `failureChance` stays 0 in M001 (decision 15). A nonzero chance would need a retry term in the slack.
+    - **No soft-lock (GDD §9).** T05f writes this as a locked fast-check property. From every midnight state reached by random valid command sequences, running the recovery policy on a copy reaches `SALE_COMPLETED` or `GAME_LOST` by tick `H`. Reaching neither is a soft-lock. Wages draining cash while the policy waits can produce `GAME_LOST`, and that's an acceptable outcome. T05f's tests include a game with an earlier `DELIVERED` sale that still reaches `GAME_LOST`.
     - **No false loss** is the property's other half, part of the same locked test. Whenever `GAME_LOST` fires:
       - the test recomputes `funds(R) < cost(R)` for every feasible *R* independently;
-      - if no shortage is active, the policy run on a copy is rejected with `INSUFFICIENT_FUNDS` at some paid step before production starts: `PURCHASE_EQUIPMENT`, `PURCHASE_MATERIALS`, or `START_PRODUCTION` itself (its conversion check).
+      - if no shortage is active, the policy run on a copy is rejected with `INSUFFICIENT_FUNDS` at some paid step before production starts: `PURCHASE_EQUIPMENT`, `PURCHASE_MATERIALS`, or `START_PRODUCTION` itself (its conversion check). If no *R* is feasible, the policy has nothing to run and this clause holds vacuously. In M001 the basic recipe is always feasible: the copper still is ungated, and decision 15's floor keeps a reputation-0 buyer for basic moonshine.
 11. **`REPEAT_OPERATION`** (ADR 0004 leaves these points open):
     - **Source.** The envelope in `state.commandLog` whose `id` is `sourceCommandId`.
     - **Chain.** If the source is itself a `REPEAT_OPERATION`, follow it back to the underlying command. Every link must already be in the log when the repeat applies. So each link points to a strictly earlier log entry, and the chain can't loop. (Apply-time rejections are logged too, ADR 0004; that's why the next point checks for a transaction.)
@@ -238,24 +245,31 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
     - **`packages/contracts/src/events.ts`:**
       - `EquipmentSoldEvent = GameEventOf<"EQUIPMENT_SOLD", { facilityId: FacilityId; equipmentId: EquipmentId; bookValue: Money; proceeds: Money; transactionId: TransactionId }>`, in `GameEvent`, with `EVENT_IMPORTANCE` `"log"`.
       - `GameLostEvent`'s doc comment cites this ADR.
-    - **`packages/contracts/src/ledger.ts`:** `TransactionKind` gains `"PROGRESSION"`, for reputation, tier, unlock, and outcome changes. It never has entries.
+    - **`packages/contracts/src/ledger.ts`:** `TransactionKind` gains `"PROGRESSION"`, for reputation, tier, unlock, and outcome changes. It never has entries, and it isn't a money line (#99 point 4: don't imply that reputation is a financial transaction).
     - **`packages/contracts/src/snapshot.ts`:** `FacilitySnapshot.equipment` entries gain `resaleValue: Money`.
     - **`packages/contracts/src/schemas.ts`:** matching schemas.
     - **Consumers** updated in the same task, so main stays green:
       - `packages/contracts/fixtures/**`;
       - `CASH_FLOW_CATEGORY` (`PROGRESSION: null`) in `projection/finance.ts`;
       - the `resaleValue` projection, reported 0 through `UNDEFINED_IN_GAME_DATA` until T05d (the S0b pattern);
-      - copy in `REJECTION_COPY` and `TRANSACTION_KIND_COPY` (`apps/game`), using #99's approved strings: `EQUIPMENT_NOT_OWNED` gets #99's rejection line, and the `PROGRESSION` kind is labelled "Reputation".
+      - `REJECTION_COPY` (`apps/game`): `EQUIPMENT_NOT_OWNED` gets #99's approved rejection line.
+      - **The money ledger filters out `PROGRESSION` rows.** On main, the finance panel's transactions table (`finance-panel.tsx`) renders every row of `recentTransactions` and labels it by kind from `TRANSACTION_KIND_COPY`, an exhaustive `Record<TransactionKind, string>`. T05a makes that table skip `PROGRESSION` transactions. `TRANSACTION_KIND_COPY.PROGRESSION` gets the neutral internal label "Progression", which the type needs but no screen shows. The snapshot doesn't change.
+      - **The transaction kind isn't the player-facing category.** #99 point 4's categories come from the event, not the kind: "Reputation" for `REPUTATION_CHANGED` and "Standing" for `TIER_REACHED`. T06 shows them in the activity feed, kept apart from money lines. `UNLOCK_GRANTED`, `VICTORY_ACHIEVED`, and `GAME_LOST` get no ledger category: T06's end screen shows the outcome, and no new copy is invented for them.
     - **Saves.** Additive enum members only, so existing saves stay valid (ADR 0009), and `SAVE_FORMAT` doesn't change.
     - **Not folded in.** ADR 0017's two stand-ins (a workforce kind and a workforce-in-use code) would move PROD-001 locked expectations.
 15. **Tuning, and the victory-feasibility criterion.**
     - **T05g owns the first tuning pass**, in game-data only. GDD §14: tune values, don't weaken rules.
     - **Its levers:** product base prices, market baselines and drift, buyer quotes, demand, budgets, and minimum reputations, supplier prices and stock, recipe inputs, labor and overhead, equipment prices, wages and overhead, the building value, reputation amounts, the resale ratio, and the rival window.
-    - **Two levers have a floor.** At least one contract buyer, and for each producible quality (basic and standard) at least one spot buyer that takes it, must keep `minimumReputation` 0. Kessler's covers all three today. Decision 6's reachability and decision 10's eligible sale and restart feasibility rely on them.
+    - **Some levers have a floor.**
+      - At least one contract buyer, and for each producible quality (basic and standard) at least one spot buyer that takes it, must keep `minimumReputation` 0. Kessler's covers all three today.
+      - Each such reputation-0 spot buyer's `dailyBudget` must cover one case at the highest quote the market price bounds allow. Otherwise decision 10's step 2 could wait forever.
+
+      Decision 6's reachability and decision 10's eligible sale, restart feasibility, and horizon rely on these floors.
     - **Not levers without a locked-test round:**
       - the contract terms and quantities;
       - the route table and truck capacity;
       - crews, the condenser bonus, and the basic recipe's 144 ticks;
+      - recipe `failureChance`, which stays 0 for every recipe in M001 (decision 10's horizon assumes a one-case restart job can't fail);
       - market price bounds;
       - the opening cash, seed, and start date;
       - victory's thresholds (GDD-approved).
@@ -303,7 +317,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
   - T05c: repeat
   - T05d: asset sales
   - T05e: reputation and tiers
-  - T05f: victory and insolvency
+  - T05f: victory and insolvency. Its insolvency criteria use decision 10's status-scoped goods condition and include a game with an earlier `DELIVERED` sale that still reaches `LOST`.
   - T05g: tuning
   - T05h: contract test gaps
 - **Sprint Zero hash** (`fnv1a64:50c5ae9cdf05ff0d`; pinned in `test/sprint-zero/reference-hash.ts`, `apps/game/tests/e2e/sprint-zero.spec.ts`, and `tools/economy-lab/test/sprint-zero.test.ts`):
@@ -341,12 +355,12 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
   - route-ID validation at load → T05b
 - **#76 (T03b):** its last criterion is answered by decision 13.
 - **Story sign-off (#99).** The user answered every story question on #99 (comment of 2026-11-06T20:29). ADR 0020 points there instead of copying the text. Where each string goes:
-  - **T05b (game-data):** the tier names and "The Kerrigans".
-  - **T05a (app copy):** the `EQUIPMENT_NOT_OWNED` rejection and the `PROGRESSION` kind label "Reputation".
+  - **T05b (game-data):** the tier names and "The Kerrigans". T05b schedules the Dwyer Crew's closure as data (`reason: "RIVAL"`) but carries none of its notification strings.
+  - **T05a (app copy):** the `EQUIPMENT_NOT_OWNED` rejection. `PROGRESSION` rows are filtered from the money ledger, and the kind's label is the neutral internal "Progression" (decision 14), not a #99 string.
   - **T06 (#14):**
     - the Dwyer's Roadblock notification, its title, and the reopening line
     - the `EQUIPMENT_SOLD` notification
-    - the reputation and standing activity lines
+    - the reputation and standing activity lines, under the categories "Reputation" (`REPUTATION_CHANGED`) and "Standing" (`TIER_REACHED`), taken from the event (decision 14)
     - the end-of-game text, with the loss lead as above
 
   Any new faction, character, or lore beyond #99 still needs a story question.
