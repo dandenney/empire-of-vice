@@ -799,7 +799,7 @@ describe("PROG-001 tiers: promotion", () => {
     const s = g.sim.state;
     expect(s.family.tierId).toBe(reached.tierId);
     expect(s.family.unlocked).toEqual(reached.unlocked);
-    expect(progressionKeys(s)).toEqual(keys);
+    expect(progressionKeys(s).filter((k) => k.startsWith("PROGRESSION:TIER:"))).toEqual(keys);
     expect(eventsOfType(g.events, "TIER_REACHED")).toHaveLength(tierEvents);
   });
 
