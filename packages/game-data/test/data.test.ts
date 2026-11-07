@@ -185,9 +185,26 @@ describe("families (ADR 0020 decision 12)", () => {
   });
 });
 
+describe("the warehouse (T03b, #76)", () => {
+  it("lists the distillery and a storage-only warehouse, which the First Shipment scenario doesn't own", () => {
+    expect(GAME_DATA.facilities.map((f) => f.id)).toEqual(["distillery-main", "riverside-warehouse"]);
+    expect(GAME_DATA.locations.map((l) => l.id)).toContain("riverside-depot");
+    expect(GAME_DATA.facilityProduction.find((f) => f.facilityId === "riverside-warehouse")).toMatchObject({ equipmentSlots: 0, maximumWorkers: 0 });
+    expect(FIRST_SHIPMENT_SCENARIO.facilities.map((f) => f.id)).toEqual(["distillery-main"]);
+  });
+
+  it("lists a safe route each way between the distillery and the warehouse", () => {
+    const between = GAME_DATA.routes.filter((r) => [r.fromLocationId, r.toLocationId].includes("riverside-depot" as never));
+    expect(between.map((r) => [r.id, r.fromLocationId, r.toLocationId, r.riskPpm])).toEqual([
+      ["depot-road", "hollow-creek", "riverside-depot", 0],
+      ["depot-road-return", "riverside-depot", "hollow-creek", 0],
+    ]);
+  });
+});
+
 describe("GAME_DATA_VERSION", () => {
-  it("is bumped for T05e and recorded in GAME_DATA", () => {
-    expect(GAME_DATA_VERSION).toBe("0.3.0-t05e-gating");
+  it("is bumped for T03b and recorded in GAME_DATA", () => {
+    expect(GAME_DATA_VERSION).toBe("0.4.0-t03b-warehouse");
     expect(GAME_DATA.version).toBe(GAME_DATA_VERSION);
   });
 });

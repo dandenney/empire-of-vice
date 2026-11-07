@@ -3,7 +3,7 @@
 // are the story decision on #77; the risky routes' waypoints are still PLACEHOLDER.
 
 import { asId, cents, type LocationId, type Money, type RouteId, type WorldPoint } from "@eov/contracts";
-import { CROSSROADS, HOLLOW_CREEK, KESSLER_PHARMACY, LAKEVIEW } from "./map.ts";
+import { CROSSROADS, HOLLOW_CREEK, KESSLER_PHARMACY, LAKEVIEW, RIVERSIDE_DEPOT } from "./map.ts";
 
 export interface RouteDefinition {
   readonly id: RouteId;
@@ -46,6 +46,9 @@ export const LAKE_SHORE_DRIVE = asId("Route", "lake-shore-drive");
 export const CROSSROADS_BACK_ROAD = asId("Route", "crossroads-back-road");
 export const KESSLER_BACK_ROAD = asId("Route", "kessler-back-road");
 export const LAKEVIEW_BACK_ROAD = asId("Route", "lakeview-back-road");
+/** Distillery to warehouse and back (T03b, #76). PLACEHOLDER. */
+export const DEPOT_ROAD = asId("Route", "depot-road");
+export const DEPOT_ROAD_RETURN = asId("Route", "depot-road-return");
 
 /**
  * The first route listed between two locations is the default (DISPATCH_DELIVERY
@@ -125,6 +128,31 @@ export const ROUTES: readonly RouteDefinition[] = [
     durationTicks: 200, // PLACEHOLDER
     transportCost: cents(267), // PLACEHOLDER
     riskPpm: RISKY_ROUTE_RISK_PPM,
+    ...M001_ROUTE_TUNING,
+  },
+  // Between owned facilities (T03b, #76): safe both ways, for TRANSFER. Names PLACEHOLDER.
+  {
+    id: DEPOT_ROAD,
+    name: "Depot Road",
+    description: null,
+    fromLocationId: HOLLOW_CREEK,
+    toLocationId: RIVERSIDE_DEPOT,
+    waypoints: [{ x: 10, y: 12 }, { x: 16, y: 20 }],
+    durationTicks: 90, // PLACEHOLDER
+    transportCost: cents(100), // PLACEHOLDER
+    riskPpm: 0,
+    ...M001_ROUTE_TUNING,
+  },
+  {
+    id: DEPOT_ROAD_RETURN,
+    name: "Depot Road",
+    description: null,
+    fromLocationId: RIVERSIDE_DEPOT,
+    toLocationId: HOLLOW_CREEK,
+    waypoints: [{ x: 16, y: 20 }, { x: 10, y: 12 }],
+    durationTicks: 90, // PLACEHOLDER
+    transportCost: cents(100), // PLACEHOLDER
+    riskPpm: 0,
     ...M001_ROUTE_TUNING,
   },
 ];
