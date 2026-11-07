@@ -525,16 +525,36 @@ describe("T03 routes: data (decision 1)", () => {
     }
   });
 
+  /**
+   * The game-data routes whose two ends the First Shipment scenario occupies
+   * (an owned facility, a supplier, or a buyer): the routes a default game has
+   * state for (#76). Computed from GAME_DATA and the scenario, not from state.
+   */
+  function occupiedRoutes(): readonly RouteDefinition[] {
+    const sc = FIRST_SHIPMENT_SCENARIO;
+    const locationOf = (list: readonly { readonly id: string; readonly locationId: string }[], id: string): string => {
+      const found = list.find((x) => x.id === id);
+      if (found === undefined) throw new Error(`${id} isn't in game-data`);
+      return found.locationId;
+    };
+    const occupied = new Set<string>([
+      ...sc.facilities.map((f) => locationOf(GAME_DATA.facilities, f.id)),
+      ...sc.supplierIds.map((id) => locationOf(GAME_DATA.suppliers, id)),
+      ...sc.buyerIds.map((id) => locationOf(GAME_DATA.buyers, id)),
+    ]);
+    return GAME_DATA.routes.filter((r) => occupied.has(r.fromLocationId) && occupied.has(r.toLocationId));
+  }
+
   it("starts every route open, and the truck carries 20 cases", () => {
     const s = newGame().state;
-    expect(s.routes.map((r) => r.id)).toEqual(GAME_DATA.routes.map((r) => r.id).sort(compareIds));
+    expect(s.routes.map((r) => r.id)).toEqual(occupiedRoutes().map((r) => r.id).sort(compareIds));
     expect(s.routes.every((r) => r.closure === null)).toBe(true);
     expect(truckDef.capacityCases).toBe(20);
   });
 
   it("shows each route's duration, cost and risk from game-data in the snapshot", () => {
     const snap = newGame().snapshot();
-    for (const route of GAME_DATA.routes) {
+    for (const route of occupiedRoutes()) {
       expect(snap.routes.find((r) => r.id === route.id), route.id).toMatchObject({
         durationTicks: route.durationTicks,
         transportCost: route.transportCost,
