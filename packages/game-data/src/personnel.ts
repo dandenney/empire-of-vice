@@ -1,9 +1,21 @@
-// Leaders and the generic workforce (T02c2, issue #63; GDD §10; ADR 0017 decisions 7, 9, 10).
+// Leaders and the generic workforce (T02c2, issue #63; GDD §10; ADR 0017 decisions 7, 9, 10),
+// and families (T05b, issue #101; ADR 0020 decision 12).
 // Definition types per ADR 0012. The family's leaders are every character here.
 // PLACEHOLDER values: T07a/T07 tune wages; skill and loyalty have no mechanical
 // effect in M001.
 
-import { asId, cents, type CharacterId, type Money } from "@eov/contracts";
+import { asId, cents, type CharacterId, type FamilyId, type Money } from "@eov/contracts";
+
+/** A family's display name, kept apart from its ID so custom names stay possible (#99, point 2). */
+export interface FamilyDefinition {
+  readonly id: FamilyId;
+  readonly name: string;
+}
+
+export const KERRIGAN = asId("Family", "kerrigan");
+
+/** "The Kerrigans" is final for M001 (#99, point 2). */
+export const FAMILIES: readonly FamilyDefinition[] = [{ id: KERRIGAN, name: "The Kerrigans" }];
 
 export interface CharacterDefinition {
   readonly id: CharacterId;

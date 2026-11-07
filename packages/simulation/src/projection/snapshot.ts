@@ -9,10 +9,7 @@
 // over the current state, discarded afterwards), so the UI never re-implements
 // a rule.
 //
-// Sections whose system doesn't exist yet report what state and game-data hold
-// and nothing more: contracts are empty lists (T02e), the progression ladder is
-// the scenario's current tier only (T05). Where
-// the contract needs a value game-data doesn't define yet, see
+// Where the contract needs a value game-data doesn't define yet, see
 // UNDEFINED_IN_GAME_DATA below.
 
 import {
@@ -57,14 +54,6 @@ import { projectFinance } from "./finance.ts";
  * the S0b PR as gaps.
  */
 export const UNDEFINED_IN_GAME_DATA = {
-  /** Family display name (T05, scenario). Reported as the family ID. */
-  familyName: (id: string): string => id,
-  /** Tier display name (T05, progression). Reported as the tier ID. */
-  tierName: (id: string): string => id,
-  /** Victory targets (T05). Reported as 0. */
-  victoryNetWorth: ZERO_MONEY,
-  victoryReputation: 0,
-  victoryCompletedContracts: 0,
   /** Owned equipment's resale value (T05d (#103), ADR 0020 decision 9). Reported as 0. */
   equipmentResaleValue: ZERO_MONEY,
 } as const;
@@ -189,28 +178,31 @@ function equipmentOptions(state: GameState, facility: FacilityState, deps: Proje
 // Sections
 // ---------------------------------------------------------------------------
 
-function projectProgression(state: GameState, netWorth: Money): ProgressionSnapshot {
-  const missing = UNDEFINED_IN_GAME_DATA;
+/**
+ * The tier ladder in game-data order (ascending, ADR 0020 decision 4). A tier is
+ * reached if it's the family's tier or below it: tiers are never revoked.
+ */
+function projectProgression(state: GameState, data: GameData, netWorth: Money): ProgressionSnapshot {
+  const { tiers, victory } = data.progression;
+  const current = tiers.findIndex((t) => t.id === state.family.tierId);
+  if (current < 0) throw new RangeError(`Snapshot: unknown tier ${state.family.tierId}`);
   return {
     currentTierId: state.family.tierId,
-    // S0 stub (T05): no tier ladder in game-data yet, so only the current tier.
-    tiers: [
-      {
-        id: state.family.tierId,
-        name: missing.tierName(state.family.tierId),
-        netWorthRequired: null,
-        reputationRequired: null,
-        unlocks: [...state.family.unlocked],
-        reached: true,
-      },
-    ],
+    tiers: tiers.map((t, i) => ({
+      id: t.id,
+      name: t.name,
+      netWorthRequired: t.netWorthRequired,
+      reputationRequired: t.reputationRequired,
+      unlocks: [...t.unlocks],
+      reached: i <= current,
+    })),
     unlocked: [...state.family.unlocked],
     victory: {
-      netWorth: { current: netWorth, target: missing.victoryNetWorth },
-      reputation: { current: state.family.reputation, target: missing.victoryReputation },
+      netWorth: { current: netWorth, target: victory.netWorth },
+      reputation: { current: state.family.reputation, target: victory.reputation },
       completedContracts: {
         current: state.contracts.filter((c) => c.status === "COMPLETED").length,
-        target: missing.victoryCompletedContracts,
+        target: victory.completedContracts,
       },
     },
   };
@@ -431,7 +423,7 @@ export function projectSnapshot(state: GameState, ctx: ProjectionContext, deps: 
     outcome: state.outcome,
     family: {
       id: state.family.id,
-      name: UNDEFINED_IN_GAME_DATA.familyName(state.family.id),
+      name: named(data.families, state.family.id, "family").name,
       reputation: state.family.reputation,
       // The family's leaders are game-data's characters (ADR 0017 decision 10).
       leaders: [...data.characters]
@@ -439,7 +431,7 @@ export function projectSnapshot(state: GameState, ctx: ProjectionContext, deps: 
         .map((c) => ({ id: c.id, name: c.name, role: c.role, skill: c.skill, loyalty: c.loyalty, dailyWage: c.dailyWage })),
     },
     finance,
-    progression: projectProgression(state, finance.netWorth),
+    progression: projectProgression(state, data, finance.netWorth),
     locations: projectLocations(state, data),
     routes: projectRoutes(state, data),
     facilities: [...state.facilities].sort(byId).map((f) => projectFacility(state, f, deps, ctx)),

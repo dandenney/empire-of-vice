@@ -42,8 +42,10 @@ describe("sprint-zero runner", () => {
   // (issue #36: RESERVATION_RELEASED CONSUMED events and the VEHICLE_RETURN transaction);
   // fnv1a64:cc8a53a058022ea5 (T02d, issue #8: decision-1 buyer budgets, demand, and wants; decision-2 market baselines D₀/S₀);
   // fnv1a64:50c5ae9cdf05ff0d (T03, issue #10, ADR 0019: decision 1, three risky routes in `state.routes`;
-  // decision 4, the sale's `dealDeadline` set at dispatch; decision 2, transport cost paid in VEHICLE_RETURN).
+  // decision 4, the sale's `dealDeadline` set at dispatch; decision 2, transport cost paid in VEHICLE_RETURN);
+  // fnv1a64:a9f0aac450165e7d (T05b, issue #101, ADR 0020 decision 12: the scenario's rival ROUTE_CLOSURE
+  // on county-road is in `state.scheduledEvents` from tick 0, and `nextScheduleSequence` starts at 2).
   it("has a pinned replay hash", async () => {
-    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:50c5ae9cdf05ff0d"`);
+    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:a9f0aac450165e7d"`);
   });
 });

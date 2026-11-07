@@ -151,22 +151,29 @@ describe("snapshot projection", () => {
     const s = newGame().snapshot();
     expect(s.contracts).toEqual({ offers: [], active: [], closed: [] });
     // Leaders are game-data's characters since T02c2 (#63), by ID.
+    // The family's display name is game-data's (T05b, #101; final per #99).
     expect(s.family).toEqual({
       id: "kerrigan",
-      name: "kerrigan",
+      name: "The Kerrigans",
       reputation: 0,
       leaders: [...GAME_DATA.characters]
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
         .map((c) => ({ id: c.id, name: c.name, role: c.role, skill: c.skill, loyalty: c.loyalty, dailyWage: c.dailyWage })),
     });
+    // The tier ladder and victory targets are game-data's (T05b, #101; ADR 0020 decisions 3, 7).
     expect(s.progression).toEqual({
       currentTierId: "starting-operation",
-      tiers: [{ id: "starting-operation", name: "starting-operation", netWorthRequired: null, reputationRequired: null, unlocks: ["spot-sales"], reached: true }],
+      tiers: [
+        { id: "starting-operation", name: "Starting Operation", netWorthRequired: null, reputationRequired: null, unlocks: ["spot-sales"], reached: true },
+        { id: "trusted-supplier", name: "Trusted Supplier", netWorthRequired: cents(150_000), reputationRequired: 10, unlocks: ["capacity-equipment"], reached: false },
+        { id: "established-producer", name: "Established Producer", netWorthRequired: cents(250_000), reputationRequired: 20, unlocks: ["quality-equipment"], reached: false },
+        { id: "regional-distributor", name: "Regional Distributor", netWorthRequired: cents(500_000), reputationRequired: 30, unlocks: ["next-region"], reached: false },
+      ],
       unlocked: ["spot-sales"],
       victory: {
-        netWorth: { current: cents(250_000), target: UNDEFINED_IN_GAME_DATA.victoryNetWorth },
-        reputation: { current: 0, target: 0 },
-        completedContracts: { current: 0, target: 0 },
+        netWorth: { current: cents(250_000), target: GAME_DATA.progression.victory.netWorth },
+        reputation: { current: 0, target: GAME_DATA.progression.victory.reputation },
+        completedContracts: { current: 0, target: GAME_DATA.progression.victory.completedContracts },
       },
     });
     // Equipment options and slots come from game-data since T02c1 (#7): every unowned item, by ID.
