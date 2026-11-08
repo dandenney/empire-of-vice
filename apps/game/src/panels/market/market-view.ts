@@ -3,7 +3,21 @@
 // shortage names (#60/#81, decision on #50: rule 7 is about game state, and
 // these never change during a game). Nothing here computes a game value.
 
-import { formatMoney, type CommandId, type EventOfType, type GameSnapshot, type MaterialId, type ProductId, type QualityTier, type SupplierId, type BuyerId } from "@eov/contracts";
+import {
+  formatMoney,
+  QUALITY_TIERS,
+  qualityRank,
+  type BuyerId,
+  type BuyerWant,
+  type CommandId,
+  type EventOfType,
+  type GameSnapshot,
+  type InventoryPoolSnapshot,
+  type MaterialId,
+  type ProductId,
+  type QualityTier,
+  type SupplierId,
+} from "@eov/contracts";
 import { BUYERS, SUPPLIERS } from "@eov/game-data";
 import { describeOutcome } from "../../components/format.ts";
 import { formatQuality } from "../../components/format.ts";
@@ -39,6 +53,29 @@ export function shortagesMoving(snapshot: GameSnapshot, productId: ProductId, qu
         return shortage && shortage.marketEffects.some((e) => e.productId === productId && e.quality === quality) ? [shortage.name] : [];
       }),
   );
+}
+
+export interface SaleQuality {
+  readonly quality: QualityTier;
+  /** The home facility's pool of that quality, or null if it has none. */
+  readonly pool: InventoryPoolSnapshot | null;
+}
+
+/**
+ * The qualities a sale against a want can carry, lowest first: the want's
+ * `minimumQuality` (in stock or not), then every higher quality in stock.
+ * Nothing below the minimum: the panel shows the want as "X or better", and the
+ * buyer won't take less (`qualityRank`, the contract's own ordering).
+ *
+ * The form defaults to the first, the want's own quality, so the default
+ * agreed price is that want's quote. A higher quality may match a better want
+ * in the simulation (a QUOTE_CHANGED with both prices); the UI doesn't re-derive
+ * that match (#124 gap 3).
+ */
+export function saleQualities(pools: readonly InventoryPoolSnapshot[], want: Pick<BuyerWant, "productId" | "minimumQuality">): readonly SaleQuality[] {
+  const minimum = qualityRank(want.minimumQuality);
+  const pool = (q: QualityTier) => pools.find((p) => p.productId === want.productId && p.quality === q) ?? null;
+  return QUALITY_TIERS.filter((q) => qualityRank(q) === minimum || (qualityRank(q) > minimum && pool(q) !== null)).map((quality) => ({ quality, pool: pool(quality) }));
 }
 
 /** A clamped multiplier in parts per million, as "1.05". */
