@@ -92,6 +92,16 @@ function nextDeadline(c: ContractSnapshot): number {
 
 const qualitiesFrom = (minimum: QualityTier): readonly QualityTier[] => QUALITY_TIERS.filter((q) => qualityRank(q) >= qualityRank(minimum));
 
+/** The want a buyer prices a case of this quality at: its highest-minimum want the case meets (as the simulation's quote does). */
+function pricingWant<W extends { readonly productId: ProductId; readonly minimumQuality: QualityTier }>(wants: readonly W[], productId: ProductId, quality: QualityTier): W | undefined {
+  let best: W | undefined;
+  for (const w of wants) {
+    if (w.productId !== productId || qualityRank(w.minimumQuality) > qualityRank(quality)) continue;
+    if (!best || qualityRank(w.minimumQuality) > qualityRank(best.minimumQuality)) best = w;
+  }
+  return best;
+}
+
 export class ContractTakerStrategy implements Strategy {
   readonly name = CONTRACT_STRATEGY.name;
   readonly takesContracts = true;
@@ -329,8 +339,12 @@ export class ContractTakerStrategy implements Strategy {
       if (!route) continue;
       for (const want of buyer.wants) {
         if (want.maxAcceptableQuantity <= 0) continue;
-        // The lowest quality in stock that meets the want.
-        const quality = qualitiesFrom(want.minimumQuality).find((q) => (free.get(`${want.productId}/${q}`) ?? 0) > 0);
+        // The lowest quality in stock that meets the want and that the buyer would price
+        // at this want: a buyer prices a case at its highest want the case meets, so a
+        // standard case offered to a basic want would be quoted at the standard want.
+        const quality = qualitiesFrom(want.minimumQuality).find(
+          (q) => (free.get(`${want.productId}/${q}`) ?? 0) > 0 && pricingWant(buyer.wants, want.productId, q) === want,
+        );
         if (!quality) continue;
         const stock = free.get(`${want.productId}/${quality}`)!;
         const quantity = Math.min(stock, capacity, want.maxAcceptableQuantity);
