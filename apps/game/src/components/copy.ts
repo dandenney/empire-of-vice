@@ -7,7 +7,6 @@ import type { SpeedMultiplier } from "@eov/game-data";
 
 export const SHELL_COPY = {
   title: "Empire of Vice",
-  placeholderNotice: "Placeholder UI: visual direction pending",
   noGame: "No game is running. Start a new game, or reload a save.",
   newGame: "New game",
   save: "Save",
