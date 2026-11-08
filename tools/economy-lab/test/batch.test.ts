@@ -1,12 +1,13 @@
-import { tick, TICKS_PER_DAY, type CommandRequest, type CommandResult, type EquipmentId, type GameCommand, type GameSnapshot, type RouteId } from "@eov/contracts";
+import { tick, TICKS_PER_DAY, type CommandRequest, type GameEvent, type Money, type CommandResult, type EquipmentId, type GameCommand, type GameSnapshot, type RouteId } from "@eov/contracts";
 import { BASIC_MOONSHINE_RECIPE, COUNTY_ROAD, FIRST_SHIPMENT_SCENARIO, GAME_DATA, QC_STATION, STATE_HIGHWAY, type ScenarioDefinition } from "@eov/game-data";
 import type { KernelSimulation } from "@eov/simulation";
 import { describe, expect, it } from "vitest";
-import { replayStateHash, runBatchSeed, type BatchRunResult } from "../src/batch-run.ts";
+import { isModerateLoss, replayStateHash, runBatchSeed, RunObserver, type BatchRunResult } from "../src/batch-run.ts";
 import { batchMain, batchTasks, formatBatchFile, parseBatchArgs, runBatch, runBatchParallel, BatchArgsError, DEFAULT_BATCH_OUT, type BatchIo } from "../src/batch.ts";
 import { HEADLESS_STRATEGY_NAMES } from "../src/headless-strategy.ts";
 import { StrategyRng } from "../src/prng.ts";
 import { TICKS_PER_REAL_MINUTE } from "../src/smoke-run.ts";
+import { TARGETS } from "../src/targets.ts";
 
 interface Sent {
   readonly command: GameCommand;
@@ -239,5 +240,83 @@ describe("batch CLI", () => {
   it("exits 0 for a clean batch and 2 for bad arguments", async () => {
     expect(await batchMain(["--seeds", "1", "--days", "1", "--out", "ok.json", "--jobs", "1"], memoryIo())).toBe(0);
     expect(await batchMain(["--seeds"], memoryIo())).toBe(2);
+  });
+});
+
+// Crafted events for RunObserver: only the fields it reads are meaningful.
+const sale = (t: number, revenue: number, costOfGoodsSold: number): GameEvent =>
+  ({
+    type: "SALE_COMPLETED",
+    tick: t,
+    cargo: [{ productId: "moonshine", quality: "basic", quantity: 2 }],
+    unitPrice: revenue / 2,
+    revenue,
+    costOfGoodsSold,
+  }) as unknown as GameEvent;
+const seizure = (t: number, bookValue: number): GameEvent => ({ type: "CARGO_LOST", tick: t, cargo: [], bookValue }) as unknown as GameEvent;
+
+describe("run observer (#127)", () => {
+  it("classifies a sale below cost apart from break-even and profitable", () => {
+    const o = new RunObserver({}, 100_000 as Money);
+    o.observe([sale(10, 900, 1_000), sale(20, 1_000, 1_000), sale(30, 1_100, 1_000), sale(40, 500, 1_000)]);
+    const s = o.salesByProduct()["moonshine/basic"]!;
+    expect(s).toMatchObject({ completed: 4, belowCost: 2, breakEven: 1, units: 8, revenue: 3_500, costOfGoodsSold: 4_000 });
+    // Only the two below-cost sales count as a loss: 100 + 500.
+    expect(o.belowCostSales).toBe(600);
+    // Neither a below-cost nor a break-even sale is the first profitable one.
+    expect(o.firstProfitableSale?.tick).toBe(30);
+  });
+
+  it("ignores a small loss and judges a moderate one, from net worth at the last stop", () => {
+    const threshold = (100_000 * TARGETS.moderateSetbackMinPercent) / 100;
+    expect(isModerateLoss(threshold - 1, 100_000)).toBe(false);
+    expect(isModerateLoss(threshold, 100_000)).toBe(true);
+    // Once net worth is at or below zero, any loss is moderate.
+    expect(isModerateLoss(1, 0)).toBe(true);
+
+    const o = new RunObserver({}, 100_000 as Money);
+    o.observe([seizure(10, threshold - 1)]);
+    o.atStop(10, 100_000 as Money);
+    expect([o.setbackCount, o.moderateSetbackCount]).toEqual([1, 0]);
+    expect(o.setback()).toBeNull();
+    o.atStop(20, 200_000 as Money);
+    // Net worth at the last stop is now 200 000, so the same share needs twice the loss.
+    o.observe([seizure(30, threshold)]);
+    expect(o.setback()).toBeNull();
+    o.observe([seizure(40, 2 * threshold)]);
+    expect([o.setbackCount, o.moderateSetbackCount]).toEqual([3, 1]);
+    expect(o.setback()).toEqual({ kind: "SEIZURE", tick: 40, loss: 2 * threshold, netWorthBefore: 200_000, recoveredAt: null });
+    // Recovery: the first stop where net worth is back to its pre-setback level.
+    o.atStop(50, 199_999 as Money);
+    expect(o.setback()!.recoveredAt).toBeNull();
+    o.atStop(60, 200_000 as Money);
+    o.atStop(70, 150_000 as Money);
+    expect(o.setback()!.recoveredAt).toBe(60);
+    // A later moderate loss doesn't replace the first.
+    o.observe([seizure(80, 100_000)]);
+    expect(o.setback()!.tick).toBe(40);
+    expect(o.moderateSetbackCount).toBe(2);
+  });
+
+  it("runBatchSeed computes recoveredAt as the first stop back at the pre-setback net worth", () => {
+    // Market Opportunist seed 4 loses one small cargo to a seizure on the risky route (as of game-data at #127).
+    const stops: { tick: number; netWorth: number }[] = [];
+    const record = (s: GameSnapshot): void => void stops.push({ tick: s.clock.tick, netWorth: s.finance.netWorth });
+    // At the default threshold the seizure is too small to judge.
+    const plain = runBatchSeed("market-opportunist", 4);
+    expect(plain.setbackCount).toBeGreaterThan(0);
+    expect(plain.moderateSetbackCount).toBe(0);
+    expect(plain.setback).toBeNull();
+    // With the threshold at 0 every loss is judged; check the recorded values against the stops.
+    const r = runBatchSeed("market-opportunist", 4, { setbackMinPercent: 0, onStop: record });
+    const sb = r.setback!;
+    expect(sb).not.toBeNull();
+    const i = stops.findIndex((s) => s.tick >= sb.tick);
+    expect(i).toBeGreaterThan(0);
+    expect(sb.netWorthBefore).toBe(stops[i - 1]!.netWorth);
+    const back = stops.slice(i).find((s) => s.netWorth >= sb.netWorthBefore);
+    expect(sb.recoveredAt).toBe(back ? back.tick : null);
+    expect(sb.recoveredAt).not.toBeNull();
+    expect(sb.recoveredAt!).toBeGreaterThanOrEqual(sb.tick);
   });
 });

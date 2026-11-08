@@ -2,10 +2,12 @@ import { TICKS_PER_DAY } from "@eov/contracts";
 import { GAME_DATA, STANDARD_MOONSHINE_RECIPE } from "@eov/game-data";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { BatchRunResult } from "../src/batch-run.ts";
-import { formatBatchFile, runBatch, type BatchFile } from "../src/batch.ts";
+import { formatBatchFile, runBatch, summarizeStrategy, type BatchFile } from "../src/batch.ts";
 import {
   evaluateTargets,
   formatBalanceReport,
+  hasModerateSetback,
+  setbackVerdict,
   integrityFailed,
   parseBatchFile,
   parseReportArgs,
@@ -18,7 +20,7 @@ import {
 } from "../src/report.ts";
 import { findings, summarize } from "../src/smoke-report.ts";
 import { runSmokeSeed } from "../src/smoke-run.ts";
-import { TARGETS, TICKS_PER_REAL_MINUTE, victoryOf } from "../src/targets.ts";
+import { countsAsWin, isLateWin, TARGETS, TICKS_PER_REAL_MINUTE, victoryOf } from "../src/targets.ts";
 
 const ALL_TARGETS: readonly TargetId[] = [
   "first-profitable-sale",
@@ -116,16 +118,16 @@ describe("balance report", () => {
     expect([...two.written.values()]).toEqual([...one.written.values()]);
   });
 
-  it("flags every GDD §13 target MET or MISSED, with a proposal for each MISSED one", () => {
+  it("flags every GDD §13 target MET, MISSED or INSUFFICIENT EVIDENCE, with a proposal for each one not MET", () => {
     const targets = evaluateTargets(file);
     expect(targets.map((t) => t.id)).toEqual(ALL_TARGETS);
     const report = formatBalanceReport(file);
     for (const t of targets) {
-      expect(["MET", "MISSED"]).toContain(t.verdict);
+      expect(["MET", "MISSED", "INSUFFICIENT EVIDENCE"]).toContain(t.verdict);
       expect(report).toContain(`| ${t.target} | ${t.goal} | ${t.measured} | **${t.verdict}** |`);
     }
     const proposals = report.slice(report.indexOf("## Tuning proposals"));
-    for (const t of targets.filter((x) => x.verdict === "MISSED")) expect(proposals).toContain(`- **${t.target}**`);
+    for (const t of targets.filter((x) => x.verdict !== "MET")) expect(proposals).toContain(`- **${t.target}** (${t.verdict};`);
     for (const section of [
       "## Outcomes by strategy",
       "## Time to victory",
@@ -145,24 +147,47 @@ describe("balance report", () => {
   });
 
   it("judges win rates against the competent band and the dominant-strategy gap", () => {
+    const win = (r: BatchRunResult): BatchRunResult => ({ ...r, outcome: "WON", victory: { tick: TARGETS.winCutoffTicks, realMinutes: TARGETS.winCutoffTicks / TICKS_PER_REAL_MINUTE } });
+    const noWin = (r: BatchRunResult): BatchRunResult => ({ ...r, outcome: "DAY_CAP", victory: null });
     // Make each strategy win exactly one of its two runs: 50% everywhere, below the band, gap 0.
     let seen = new Map<string, number>();
     const half = withRuns(file, (r) => {
       const n = seen.get(r.strategy) ?? 0;
       seen.set(r.strategy, n + 1);
-      return { ...r, outcome: n === 0 ? "WON" : "DAY_CAP" };
+      return n === 0 ? win(r) : noWin(r);
     });
     expect(verdict(half, "competent-success")).toBe("MISSED");
     expect(verdict(half, "dominant-advantage")).toBe("MET");
     // All win: above the band, and still no gap.
-    const all = withRuns(file, (r) => ({ ...r, outcome: "WON" }));
+    const all = withRuns(file, win);
     expect(verdict(all, "competent-success")).toBe("MISSED");
     expect(verdict(all, "dominant-advantage")).toBe("MET");
     // One strategy loses everything: a 100-point gap.
     seen = new Map();
-    const lopsided = withRuns(file, (r) => ({ ...r, outcome: r.strategy === "volume-producer" ? "DAY_CAP" : "WON" }));
+    const lopsided = withRuns(file, (r) => (r.strategy === "volume-producer" ? noWin(r) : win(r)));
     expect(verdict(lopsided, "dominant-advantage")).toBe("MISSED");
     expect(evaluateTargets(lopsided).find((t) => t.id === "dominant-advantage")!.measured).toContain("100.00 points");
+  });
+
+  it("counts a victory as a win only by the cutoff (game day 15), in every win rate", () => {
+    expect(TARGETS.winCutoffTicks).toBe(TARGETS.victoryMaxTicks);
+    expect(TARGETS.winCutoffTicks).toBe(15 * TICKS_PER_DAY);
+    const wonAt = (tick: number) => (r: BatchRunResult): BatchRunResult => ({ ...r, outcome: "WON", victory: { tick, realMinutes: tick / TICKS_PER_REAL_MINUTE } });
+    expect(countsAsWin(wonAt(TARGETS.winCutoffTicks)(file.runs[0]!))).toBe(true);
+    expect(countsAsWin(wonAt(TARGETS.winCutoffTicks + 1)(file.runs[0]!))).toBe(false);
+    expect(isLateWin(wonAt(TARGETS.winCutoffTicks + 1)(file.runs[0]!))).toBe(true);
+    expect(countsAsWin({ outcome: "DAY_CAP", victory: null })).toBe(false);
+    // Every run wins, one tick late: no strategy has a win, in the report or the batch summary.
+    const late = withRuns(file, wonAt(TARGETS.winCutoffTicks + 1));
+    const competent = evaluateTargets(late).find((t) => t.id === "competent-success")!;
+    for (const s of file.strategies) expect(competent.measured).toContain(`${s} 0.00% (below)`);
+    const summary = summarizeStrategy(file.strategies[0]!, late.runs);
+    expect([summary.won, summary.wonLate, summary.winRatePercent]).toEqual([0, summary.runs, 0]);
+    const report = formatBalanceReport(late);
+    expect(report).toContain(`A run counts as a win only if victory comes by tick ${TARGETS.winCutoffTicks}`);
+    // On the cutoff tick itself they all count.
+    const onTime = withRuns(file, wonAt(TARGETS.winCutoffTicks));
+    expect(summarizeStrategy(file.strategies[0]!, onTime.runs).winRatePercent).toBe(100);
   });
 
   it("judges time targets on the run medians", () => {
@@ -178,21 +203,88 @@ describe("balance report", () => {
   });
 
   it("measures setback recovery: net worth back within the window, over enough judged runs", () => {
-    const setback = (recoveredAfter: number | null) => (r: BatchRunResult): BatchRunResult => ({
+    // A moderate loss: 20% of net worth.
+    const setback = (recoveredAfter: number | null, loss = 60_000) => (r: BatchRunResult): BatchRunResult => ({
       ...r,
       outcome: "WON",
       endTick: 20_000,
-      setback: { kind: "SEIZURE", tick: 1_000, loss: 500 as never, netWorthBefore: 300_000 as never, recoveredAt: recoveredAfter === null ? null : 1_000 + recoveredAfter },
+      setback: { kind: "SEIZURE", tick: 1_000, loss: loss as never, netWorthBefore: 300_000 as never, recoveredAt: recoveredAfter === null ? null : 1_000 + recoveredAfter },
     });
-    // Too few judged runs to call it MET, even when every one recovers.
-    expect(file.runs.length).toBeLessThan(TARGETS.setbackMinJudgedRuns);
-    expect(verdict(withRuns(file, setback(100)), "setback-recovery")).toBe("MISSED");
-    const many: BatchFile = { ...file, runs: Array.from({ length: TARGETS.setbackMinJudgedRuns }, (_, i) => ({ ...file.runs[i % file.runs.length]!, seed: i + 1 })) };
+    // Exactly TARGETS.setbackMinJudgedRuns runs for every strategy.
+    const many: BatchFile = {
+      ...file,
+      runs: Array.from({ length: TARGETS.setbackMinJudgedRuns * file.strategies.length }, (_, i) => ({ ...file.runs[i % file.runs.length]!, seed: i + 1 })),
+    };
+    for (const s of file.strategies) expect(many.runs.filter((r) => r.strategy === s)).toHaveLength(TARGETS.setbackMinJudgedRuns);
     expect(verdict(withRuns(many, setback(TARGETS.setbackRecoveryWindowTicks)), "setback-recovery")).toBe("MET");
     expect(verdict(withRuns(many, setback(TARGETS.setbackRecoveryWindowTicks + 1)), "setback-recovery")).toBe("MISSED");
     expect(verdict(withRuns(many, setback(null)), "setback-recovery")).toBe("MISSED");
-    // No setback anywhere: nothing to measure.
-    expect(verdict(withRuns(many, (r) => ({ ...r, setback: null })), "setback-recovery")).toBe("MISSED");
+    // A recovery inside the window doesn't count if the run went bankrupt.
+    expect(verdict(withRuns(many, (r) => ({ ...setback(100)(r), outcome: "LOST" })), "setback-recovery")).toBe("MISSED");
+    // A window that outlasts the run without a recovery isn't judged.
+    expect(setbackVerdict(withRuns(many, (r) => ({ ...setback(null)(r), endTick: 1_000 + TARGETS.setbackRecoveryWindowTicks - 1 }))).judged).toBe(0);
+  });
+
+  it("judges only moderate setbacks: a loss under the threshold is ignored, one at it is judged", () => {
+    const at = (loss: number) => (r: BatchRunResult): BatchRunResult => ({
+      ...r,
+      endTick: 20_000,
+      setback: { kind: "PENALTY", tick: 1_000, loss: loss as never, netWorthBefore: 100_000 as never, recoveredAt: 1_100 },
+    });
+    const threshold = (100_000 * TARGETS.moderateSetbackMinPercent) / 100;
+    expect(hasModerateSetback(at(threshold - 1)(file.runs[0]!))).toBe(false);
+    expect(hasModerateSetback(at(threshold)(file.runs[0]!))).toBe(true);
+    expect(setbackVerdict(withRuns(file, at(threshold - 1))).judged).toBe(0);
+    expect(setbackVerdict(withRuns(file, at(threshold))).judged).toBe(file.runs.length);
+  });
+
+  it("says INSUFFICIENT EVIDENCE below the judged-run floor, pooled or for any one strategy", () => {
+    const moderate = (r: BatchRunResult): BatchRunResult => ({
+      ...r,
+      outcome: "WON",
+      endTick: 20_000,
+      setback: { kind: "SEIZURE", tick: 1_000, loss: 60_000 as never, netWorthBefore: 300_000 as never, recoveredAt: 1_100 },
+    });
+    // Every judged run recovers, but there are too few of them.
+    expect(file.runs.length).toBeLessThan(TARGETS.setbackMinJudgedRuns);
+    const few = setbackVerdict(withRuns(file, moderate));
+    expect(few.recovered).toBe(few.judged);
+    expect(few.verdict).toBe("INSUFFICIENT EVIDENCE");
+    // Enough pooled, but one strategy one run short.
+    const n = TARGETS.setbackMinJudgedRuns * file.strategies.length;
+    const many: BatchFile = { ...file, runs: Array.from({ length: n }, (_, i) => ({ ...file.runs[i % file.runs.length]!, seed: i + 1 })) };
+    const short = file.strategies[0]!;
+    let dropped = false;
+    const oneShort = withRuns(many, (r) => {
+      if (!dropped && r.strategy === short) {
+        dropped = true;
+        return { ...r, setback: null };
+      }
+      return moderate(r);
+    });
+    const sv = setbackVerdict(oneShort);
+    expect(sv.per.find((p) => p.strategy === short)!.verdict).toBe("INSUFFICIENT EVIDENCE");
+    expect(sv.per.filter((p) => p.strategy !== short).every((p) => p.verdict === "MET")).toBe(true);
+    expect(sv.verdict).toBe("INSUFFICIENT EVIDENCE");
+    // No setback anywhere: nothing to judge.
+    expect(verdict(withRuns(many, (r) => ({ ...r, setback: null })), "setback-recovery")).toBe("INSUFFICIENT EVIDENCE");
+    // The report says so, and proposes the scheduled scenario rather than tuning.
+    const report = formatBalanceReport(oneShort);
+    const t = evaluateTargets(oneShort).find((x) => x.id === "setback-recovery")!;
+    expect(report).toContain(`| ${t.target} | ${t.goal} | ${t.measured} | **INSUFFICIENT EVIDENCE** |`);
+    expect(report.slice(report.indexOf("## Tuning proposals"))).toContain(`- **${t.target}** (INSUFFICIENT EVIDENCE;`);
+  });
+
+  it("judges the first upgrade per strategy as well as pooled", () => {
+    const at = (tick: number) => ({ tick, realMinutes: tick / TICKS_PER_REAL_MINUTE });
+    const inWindow = withRuns(file, (r) => ({ ...r, firstUpgrade: at(TARGETS.firstUpgradeMinTicks) }));
+    expect(verdict(inWindow, "first-upgrade")).toBe("MET");
+    // One strategy late: the pooled median is still in the window, but the target is MISSED.
+    const late = file.strategies[0]!;
+    const oneLate = withRuns(inWindow, (r) => (r.strategy === late ? { ...r, firstUpgrade: at(TARGETS.firstUpgradeMaxTicks + 1) } : r));
+    const t = evaluateTargets(oneLate).find((x) => x.id === "first-upgrade")!;
+    expect(t.verdict).toBe("MISSED");
+    expect(t.measured).toContain(`${late} ${(((TARGETS.firstUpgradeMaxTicks + 1) / TICKS_PER_REAL_MINUTE)).toFixed(1)} min (late)`);
   });
 
   it("fails on an invariant violation or a replay divergence, never on a missed balance target", () => {
