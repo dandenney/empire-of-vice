@@ -20,7 +20,6 @@ export const SAVES_COPY = {
   dialogTitle: "Saves",
   close: "Close",
   saveAsNew: "Save as a new slot",
-  labelField: "Name",
   saveNew: "Save",
   noGameToSave: "Start or load a game to save it.",
   listTitle: "Saved games",

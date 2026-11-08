@@ -2,22 +2,13 @@
 // and shared components. The real wording, names, and tone are the human's
 // call (#48). Panels keep their own strings in their own copy.ts.
 
-import type { GameDate, QualityTier, RejectionCode, RejectionReason, SaveLoadError } from "@eov/contracts";
+import type { GameDate, QualityTier, RejectionCode, RejectionReason } from "@eov/contracts";
 import type { SpeedMultiplier } from "@eov/game-data";
 
 export const SHELL_COPY = {
   title: "Empire of Vice",
   placeholderNotice: "Placeholder UI: visual direction pending",
-  noGame: "No game is running. Start a new game, or reload a save.",
-  newGame: "New game",
-  save: "Save",
-  reloadSave: "Reload save",
-  newGameStarted: "New game started.",
-  /** The S0 save slot's player-visible label; T06 replaces it with real save names. */
-  saveLabel: "Sprint Zero",
-  saved: "Saved.",
-  saveReloaded: "Save reloaded.",
-  reloadFailed: (code: string) => `Reload failed: ${code}`,
+  noGame: "No game is running. Start a new game, or continue a save.",
   error: (message: string) => `Error: ${message}`,
   fault: (message: string) => `The game paused itself after an error: ${message}`,
   panelNav: "Panels",
@@ -93,16 +84,6 @@ export const QUALITY_COPY: Readonly<Record<QualityTier, string>> = {
   basic: "basic",
   standard: "standard",
   premium: "premium",
-};
-
-/** Why a save didn't reload. Placeholder: the raw code. */
-export const SAVE_LOAD_ERROR_COPY: Readonly<Record<SaveLoadError["code"], string>> = {
-  NOT_A_SAVE: "NOT_A_SAVE",
-  NEWER_VERSION: "NEWER_VERSION",
-  MISSING_MIGRATION: "MISSING_MIGRATION",
-  MIGRATION_FAILED: "MIGRATION_FAILED",
-  INVALID: "INVALID",
-  HASH_MISMATCH: "HASH_MISMATCH",
 };
 
 /** One line per rejection code. The reason's fields are listed after it. */

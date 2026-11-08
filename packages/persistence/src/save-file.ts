@@ -34,7 +34,7 @@ import {
   type SaveMeta,
   type SaveMigration,
 } from "@eov/contracts";
-import { hashState } from "@eov/simulation/hash";
+import { CanonicalJsonError, hashState } from "@eov/simulation/hash";
 import { migrateSave, SAVE_MIGRATIONS } from "./migrations.ts";
 
 export type SaveLoadResult =
@@ -85,8 +85,9 @@ export function parseSaveFile(text: string, options: LoadOptions = {}): SaveLoad
   let migratedFrom: number | null = null;
   if (version < SAVE_SCHEMA_VERSION) {
     const expected = raw["stateHash"];
-    const actual = rawStateHash(header.data["state"]);
-    if (actual === null) return { ok: false, error: { code: "INVALID", issues: ["save.state: not a JSON object"] } };
+    const rawHash = rawStateHash(header.data["state"]);
+    if (!rawHash.ok) return rawHash;
+    const actual = rawHash.hash;
     if (actual !== expected) return { ok: false, error: { code: "HASH_MISMATCH", expected: String(expected), actual } };
     const migrated = migrateSave(header.data, version, options.migrations ?? SAVE_MIGRATIONS);
     if (!migrated.ok) return { ok: false, error: migrated.error };
@@ -116,13 +117,23 @@ export function parseSaveFile(text: string, options: LoadOptions = {}): SaveLoad
 }
 
 /**
- * The state hash of an old version's raw state, before migration, or null if
- * it isn't an object. The hash is over canonical JSON, so it needs no types:
- * parsed JSON is always canonicalizable.
+ * The state hash of an old version's raw state, before migration. The hash is
+ * over canonical JSON, so it needs no types, but not every parsed JSON value
+ * can be canonicalized: a number too large for a double (`1e400`) parses as
+ * Infinity. A non-object state and a CanonicalJsonError are both INVALID, never
+ * a throw. Exported for its tests only: `parseSaveFile` reaches it once
+ * SAVE_SCHEMA_VERSION goes above 1.
  */
-function rawStateHash(state: unknown): string | null {
-  if (!isRecord(state)) return null;
-  return hashState(state as unknown as GameState);
+export function rawStateHash(
+  state: unknown,
+): { readonly ok: true; readonly hash: string } | { readonly ok: false; readonly error: SaveLoadError } {
+  if (!isRecord(state)) return { ok: false, error: { code: "INVALID", issues: ["save.state: not a JSON object"] } };
+  try {
+    return { ok: true, hash: hashState(state as unknown as GameState) };
+  } catch (e) {
+    if (e instanceof CanonicalJsonError) return { ok: false, error: { code: "INVALID", issues: [`save.state: ${e.message}`] } };
+    throw e;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

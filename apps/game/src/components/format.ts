@@ -2,16 +2,12 @@
 // amounts are formatted with the contract's formatMoney, and reasons are
 // listed as the simulation gave them.
 
-import type { GameDate, QualityTier, RejectionReason, SaveLoadError } from "@eov/contracts";
+import type { GameDate, QualityTier, RejectionReason } from "@eov/contracts";
 import type { DispatchOutcome } from "../state/gateway-client.ts";
-import { COMMON_COPY, QUALITY_COPY, REJECTION_COPY, REJECTION_FIELD_COPY, SAVE_LOAD_ERROR_COPY, type RejectionField } from "./copy.ts";
+import { COMMON_COPY, QUALITY_COPY, REJECTION_COPY, REJECTION_FIELD_COPY, type RejectionField } from "./copy.ts";
 
 export function formatQuality(quality: QualityTier): string {
   return QUALITY_COPY[quality];
-}
-
-export function describeLoadError(error: SaveLoadError): string {
-  return SAVE_LOAD_ERROR_COPY[error.code];
 }
 
 export function formatGameDate(date: GameDate): string {
