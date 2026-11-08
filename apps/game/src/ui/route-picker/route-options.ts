@@ -12,6 +12,8 @@
 
 import { TICKS_PER_HOUR, type LocationId, type RouteId, type RouteSnapshot } from "@eov/contracts";
 import { ROUTES } from "@eov/game-data";
+// The contracts panel's "day 3, 18:00", reused so closures and deadlines read alike (#133).
+import { formatDayTime } from "../../panels/contracts/contracts-view.ts";
 import { ROUTE_PICKER_COPY as C } from "./copy.ts";
 
 export type RouteSafety = "SAFE" | "RISKY";
@@ -88,5 +90,5 @@ export function formatTicks(ticks: number): string {
 export function closureNote(route: RouteSnapshot, currentTick: number): readonly string[] {
   if (route.status.open) return [];
   const { reason, reopensAt } = route.status;
-  return [C.closedReason[reason], reopensAt === null ? C.reopensUnknown : C.reopensIn(formatTicks(reopensAt - currentTick), reopensAt)];
+  return [C.closedReason[reason], reopensAt === null ? C.reopensUnknown : C.reopensIn(formatTicks(reopensAt - currentTick), formatDayTime(reopensAt))];
 }
