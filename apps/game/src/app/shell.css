@@ -1,116 +1,309 @@
 /*
- * PLACEHOLDER: visual direction pending #48.
- * Only what's needed to be usable: system font, browser defaults, a two-column
- * body. No palette, typeface, or layout style has been chosen.
+ * The shell layout (#48): top bar, vertical icon rail, the map filling the
+ * screen, one panel docked on the right, toasts in the map's lower corner.
+ * Every colour, font, size, and space is a token (src/ui/tokens.ts).
+ *
+ * The page scrolls the docked panel; the top bar, rail, and map stay put.
+ * The top bar spans the map only, so nothing sticky ever covers the panel.
  */
+
+:root {
+  color-scheme: dark;
+}
 
 body {
   margin: 0;
-  font-family: system-ui, sans-serif;
-  background: #fff;
-  color: #000;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .shell {
-  padding: 8px 16px;
+  display: grid;
+  grid-template-columns: var(--layout-rail-width) minmax(0, 1fr) var(--layout-dock-width);
+  grid-template-rows: var(--layout-topbar-height) auto;
+  grid-template-areas:
+    "top top dock"
+    "rail map dock";
+  min-height: 100vh;
 }
 
-.shell-header {
+/* ---- Top bar ------------------------------------------------------------ */
+
+.topbar {
+  grid-area: top;
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
+  gap: var(--space-6);
+  padding: 0 var(--space-6);
+  background: var(--color-surface-raised);
+  border-bottom: 3px double var(--color-accent-dim);
+  box-sizing: border-box;
+  min-width: 0;
 }
 
-.shell-header h1 {
-  margin: 0;
-  font-size: 1.25rem;
-}
-
-.speed,
-.game-buttons,
-.panel-nav {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-}
-
-.panel-nav {
-  margin: 8px 0;
-}
-
-button[aria-pressed="true"] {
-  font-weight: bold;
-}
-
-.shell-body {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-/* Never narrower than its tables, so nothing is clipped; the map wraps below instead. */
-.panel {
-  flex: 1 1 480px;
-}
-
-.map-slot {
-  flex: 0 1 640px;
-  max-width: 100%;
-}
-
-.map-slot svg {
-  max-width: 100%;
-  height: auto;
-}
-
-table {
-  border-collapse: collapse;
-  margin: 8px 0;
-}
-
-caption {
-  text-align: left;
-  font-weight: bold;
-}
-
-th,
-td {
-  border: 1px solid #ccc;
-  padding: 2px 6px;
-  text-align: left;
-  vertical-align: top;
-}
-
-td {
+.clock-readout {
+  display: inline-block;
+  padding: var(--space-1) var(--space-4);
+  background: var(--color-shadow);
+  border: 1px solid var(--color-rule-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-lg);
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--color-accent-strong);
+  white-space: nowrap;
 }
 
-tr.total th,
-tr.total td {
-  font-weight: bold;
+.speed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
 }
 
-td ul,
-td p {
+.speed-status {
+  min-width: 7.5em;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.game-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.game-buttons {
+  margin-left: auto;
+}
+
+/* Notices that sit over the top of the map: auto-pause, faults, speed errors. */
+.banner {
+  position: fixed;
+  z-index: 25;
+  top: calc(var(--layout-topbar-height) + var(--space-4));
+  left: calc(var(--layout-rail-width) + var(--space-5));
+  max-width: calc(100vw - var(--layout-rail-width) - var(--layout-dock-width) - 2 * var(--space-5));
   margin: 0;
-  padding-left: 16px;
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--color-accent-dim);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-wash);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  box-sizing: border-box;
 }
 
-/* Map clicks select locations; a parked truck or a label mustn't swallow them. */
-.map-slot [data-shape] {
+.banner-fault {
+  border-color: var(--color-loss-line);
+  background: var(--color-loss-wash);
+}
+
+/* ---- Icon rail ---------------------------------------------------------- */
+
+.rail {
+  grid-area: rail;
+  position: sticky;
+  top: var(--layout-topbar-height);
+  z-index: 10;
+  align-self: start;
+  height: calc(100vh - var(--layout-topbar-height));
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-rule);
+}
+
+.rail-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-5) 0;
+  list-style: none;
+}
+
+.rail-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: calc(var(--layout-rail-width) - var(--space-5));
+  height: calc(var(--layout-rail-width) - var(--space-5));
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-muted);
   cursor: pointer;
 }
 
-.map-slot [data-shape="vehicle"],
-.map-slot text {
+.rail-button:hover {
+  color: var(--color-text);
+  border-color: var(--color-rule-strong);
+}
+
+.rail-button[aria-pressed="true"] {
+  color: var(--color-accent-strong);
+  background: var(--color-accent-wash);
+  border-color: var(--color-accent-dim);
+}
+
+.rail-button[aria-pressed="true"]::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--space-3));
+  top: var(--space-3);
+  bottom: var(--space-3);
+  width: 2px;
+  background: var(--color-accent);
+}
+
+/* The panel's name, beside the icon on hover and keyboard focus. */
+.rail-button:hover::after,
+.rail-button:focus-visible::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + var(--space-4));
+  top: 50%;
+  transform: translateY(-50%);
+  padding: var(--space-1) var(--space-4);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-accent-dim);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  white-space: nowrap;
   pointer-events: none;
 }
 
-.statements {
+/* ---- Map ---------------------------------------------------------------- */
+
+.map-region {
+  grid-area: map;
+  position: sticky;
+  top: var(--layout-topbar-height);
+  align-self: start;
+  height: calc(100vh - var(--layout-topbar-height));
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+.state-hash {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  padding: 0 var(--space-2);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  pointer-events: none;
+}
+
+/* ---- Docked panel ------------------------------------------------------- */
+
+.dock {
+  grid-area: dock;
+  min-width: 0;
+  min-height: 100vh;
+  box-sizing: border-box;
+  background: var(--color-surface);
+  border-left: 3px double var(--color-accent-dim);
+}
+
+/* The game's name over the panel, continuing the top bar's band. */
+.masthead {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
+  align-items: center;
+  gap: var(--space-6);
+  height: var(--layout-topbar-height);
+  box-sizing: border-box;
+  padding: 0 var(--space-6);
+  background: var(--color-surface-raised);
+  border-bottom: 3px double var(--color-accent-dim);
+}
+
+.masthead-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--weight-regular);
+  font-size: var(--text-xl);
+  letter-spacing: 0.06em;
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+
+.masthead-message {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+/* ---- Toasts: the map's lower-left corner -------------------------------- */
+
+.toast-host {
+  position: fixed;
+  z-index: 30;
+  left: calc(var(--layout-rail-width) + var(--space-5));
+  bottom: var(--space-5);
+  width: var(--layout-toast-width);
+  max-width: calc(100vw - var(--layout-rail-width) - 2 * var(--space-5));
+  pointer-events: none;
+}
+
+/* ---- Narrow screens: the panel goes under the map ------------------------ */
+
+@media (max-width: 960px) {
+  .shell {
+    grid-template-columns: var(--layout-rail-width) minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      "top top"
+      "rail map"
+      "rail dock";
+  }
+
+  .topbar {
+    position: static;
+    flex-wrap: wrap;
+    padding: var(--space-4) var(--space-5);
+    gap: var(--space-4);
+  }
+
+  .rail {
+    grid-row: 2 / span 2;
+    top: 0;
+    height: 100vh;
+  }
+
+  .map-region {
+    position: relative;
+    top: 0;
+    height: 60vh;
+  }
+
+  .dock {
+    border-left: 0;
+    border-top: 3px double var(--color-accent-dim);
+    min-height: 0;
+  }
+
+  .banner {
+    max-width: calc(100vw - var(--layout-rail-width) - 2 * var(--space-5));
+  }
 }

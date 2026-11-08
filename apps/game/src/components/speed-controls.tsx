@@ -28,20 +28,34 @@ export function SpeedControls({ disabled }: { readonly disabled: boolean }) {
 
   return (
     <div className="speed" role="group" aria-label={SPEED_COPY.groupLabel} data-testid="speed-controls">
-      {options.map((o) => (
-        <button key={o.speed} type="button" data-testid={o.testId} aria-pressed={scheduler.speed === o.speed} disabled={disabled} onClick={choose(o.speed)}>
-          {o.label}
-        </button>
-      ))}
-      <span data-testid="speed-status" data-speed={scheduler.speed}>
+      <div className="segmented">
+        {options.map((o) => (
+          <button
+            key={o.speed}
+            type="button"
+            className="segmented-button"
+            data-testid={o.testId}
+            aria-pressed={scheduler.speed === o.speed}
+            disabled={disabled}
+            onClick={choose(o.speed)}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <span className="speed-status" data-testid="speed-status" data-speed={scheduler.speed}>
         {scheduler.speed === 0 ? SPEED_COPY.paused : SPEED_COPY.running(scheduler.speed)}
       </span>
       {scheduler.autoPaused && (
-        <span role="status" data-testid="auto-paused">
+        <span role="status" className="banner banner-notice" data-testid="auto-paused">
           {SPEED_COPY.autoPaused}
         </span>
       )}
-      {error && <span role="alert">{error}</span>}
+      {error && (
+        <span role="alert" className="banner banner-fault">
+          {error}
+        </span>
+      )}
     </div>
   );
 }

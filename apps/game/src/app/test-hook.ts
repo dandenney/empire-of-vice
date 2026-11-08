@@ -15,7 +15,7 @@ import type { SceneShape } from "../map/scene.ts";
 import type { DispatchOutcome, GatewayClient } from "../state/gateway-client.ts";
 import type { SchedulerStatus } from "../workers/scheduler.ts";
 
-/** Whatever the map exposes for tests. T04b defines its own queries; S0's placeholder map has `scene`. */
+/** Whatever the map exposes for tests: the PixiJS map's queries (src/app/map-slot.tsx). */
 export type MapQueries = Readonly<Record<string, (...args: never[]) => unknown>>;
 
 export interface EovTestHook {
@@ -24,7 +24,7 @@ export interface EovTestHook {
   readonly scheduler: SchedulerStatus;
   /** The installed map's queries, or null before a map registers. */
   readonly map: MapQueries | null;
-  /** S0's scene query, through the map slot (`map.scene()`), until T04b replaces it. */
+  /** The map's world-unit scene (`map.scene()`), kept as `__eov.scene` for the Sprint Zero spec. */
   readonly scene: readonly SceneShape[];
   dispatchRaw(request: unknown): Promise<DispatchOutcome>;
   advance(ticks: number): Promise<void>;
