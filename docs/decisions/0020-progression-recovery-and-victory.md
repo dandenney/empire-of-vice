@@ -44,7 +44,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
    - **No starting inventory.** The first profitable sale already comes at 2.2 real minutes (#85), so starter ingredients would buy nothing.
    - **No liabilities.** Owner equity, $2,500, balances the sheet.
    - **Opening net worth is $2,500.** That already meets tier 2's and tier 3's wealth thresholds ($1,500 and $2,500). So reputation is the early gate, and wealth binds at tier 4 and victory. T05g and T07 may move the building value; the opening cash stays $1,000.
-2. **Starting reputation (§14.2): 0**, the GDD default. Decision 5's rules make tiers 2–4 reachable inside the session. For a contract accepted on day 1 (installments at 18:00 on days 3, 5, and 7, per ADR 0018):
+2. **Starting reputation (§14.2): 0**, the GDD default. Decision 5's rules make tiers 2–4 reachable inside the session. With this ADR's original amounts (T07d has since retuned them; see decision 5), for a contract accepted on day 1 (installments at 18:00 on days 3, 5, and 7, per ADR 0018):
 
    | When | Change | Reputation | Unlocks reachable |
    |---|---|---:|---|
@@ -79,24 +79,27 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
    - **Never revoked.** Tiers and unlocks are never taken back, even if net worth or reputation later falls (GDD §9).
    - **The starting tier** is set by the scenario and emits nothing.
 5. **Reputation.**
-   - **Rules data** (`progression.reputation`):
-     - `firstQualifyingDelivery` +3
-     - `qualifyingDeliveryMinimumCases` 5
-     - `installmentFulfilled` +5
-     - `consecutiveInstallmentBonus` +2
-     - `installmentPartial` −3
-     - `installmentMissed` −8
+   - **Rules data** (`progression.reputation`). The amounts are tuning values; `packages/game-data/src/progression.ts` (`REPUTATION_RULES`) is the source of truth, and this ADR doesn't track them. This ADR set the first values; T07d (#134) retuned three of them. As of T07d:
 
-     The bounds 0–100 are the contract invariant, not data.
+     | Rule | This ADR | As of T07d |
+     |---|---:|---:|
+     | `firstQualifyingDelivery` | +3 | +2 |
+     | `qualifyingDeliveryMinimumCases` | 5 | 5 |
+     | `installmentFulfilled` | +5 | +7 |
+     | `consecutiveInstallmentBonus` | +2 | +4 |
+     | `installmentPartial` | −3 | −3 |
+     | `installmentMissed` | −8 | −8 |
+
+     The bounds 0–100 are the contract invariant, not data. Below, amounts are named by rule; decision 2's worked table uses this ADR's original values.
    - **Source events.** The progression system's `deadlines` hook (decision 8) reads the events stamped with the current tick (`state.eventJournal` entries with `tick === ctx.tick`) in ID order. These are `SALE_COMPLETED` from this tick's arrivals and `INSTALLMENT_SETTLED` from this tick's settlements. This is ADR 0018 decision 10's "from those events". ADR 0006 treats events as records, not the source of truth. Reading them as gameplay input is allowed here only because it's limited to the current tick, and nothing trims the journal mid-tick. It isn't a precedent for reading older events. The kernel trims the journal only after a whole tick or a whole command (`#commit`), so the hook sees every event of its tick.
    - **First qualifying delivery.** A `SALE_COMPLETED` (spot or contract) whose cargo totals ≥ 5 cases, while `firstQualifyingDeliveryMade` is false.
      - Transaction: `PROGRESSION:FIRST_DELIVERY`. The key itself enforces once per game.
-     - It sets the flag and applies +3 with reason `FIRST_QUALIFYING_DELIVERY`, carrying the event's `deliveryId` and `contractId`.
+     - It sets the flag and applies `firstQualifyingDelivery` with reason `FIRST_QUALIFYING_DELIVERY`, carrying the event's `deliveryId` and `contractId`.
      - **The Sprint Zero path's one-case sale doesn't qualify.**
    - **Installments.** Each `INSTALLMENT_SETTLED` gets a transaction keyed `PROGRESSION:INSTALLMENT:<contractId>:<index>`, with `deliveryId: null`:
-     - `FULFILLED`: the streak `consecutiveFulfilledInstallments` goes up by 1. It applies +5 (`INSTALLMENT_FULFILLED`), then +2 (`CONSECUTIVE_INSTALLMENT`) if the streak is now ≥ 2.
-     - `PARTIAL`: −3 (`INSTALLMENT_PARTIAL`), and the streak resets to 0.
-     - `MISSED`: −8 (`INSTALLMENT_MISSED`), and the streak resets to 0.
+     - `FULFILLED`: the streak `consecutiveFulfilledInstallments` goes up by 1. It applies `installmentFulfilled` (`INSTALLMENT_FULFILLED`), then `consecutiveInstallmentBonus` (`CONSECUTIVE_INSTALLMENT`) if the streak is now ≥ 2.
+     - `PARTIAL`: `installmentPartial` (`INSTALLMENT_PARTIAL`), and the streak resets to 0.
+     - `MISSED`: `installmentMissed` (`INSTALLMENT_MISSED`), and the streak resets to 0.
      - The streak is family-wide, in settlement order, across contracts. In M001 a late delivery is credited to nothing (ADR 0018 decision 6), so "late" is covered by `PARTIAL` or `MISSED`.
    - **Clamping and recording.**
      - Each change is clamped to 0–100.
@@ -107,7 +110,7 @@ Every number below is **PLACEHOLDER** tuning in `packages/game-data` (CLAUDE.md 
    - **Anti-farming (GDD §9).**
      - Spot sales earn reputation once per game, and only for a delivery of ≥ 5 cases.
      - Installment reputation is per installment, not per delivery, so splitting a delivery earns nothing.
-     - The most one contract can add is +19 (+3 once more for the first qualifying delivery).
+     - The most one three-installment contract can add is +19 under this ADR's values (+3 once more for the first qualifying delivery), and +29 (+2) as of T07d.
 6. **The unlock graph is acyclic and reachable.** T05e's static test checks over `GAME_DATA`:
    - tiers have unique IDs, the first tier has `null` thresholds, and both thresholds are non-decreasing up the ladder;
    - every `UnlockId` is granted by exactly one tier;
