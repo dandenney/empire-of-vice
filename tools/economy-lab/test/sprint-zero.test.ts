@@ -47,8 +47,12 @@ describe("sprint-zero runner", () => {
   // on county-road is in `state.scheduledEvents` from tick 0, and `nextScheduleSequence` starts at 2);
   // fnv1a64:89394f5b72fb0418 (T05g, issue #106: tuning that state carries from tick 0, namely the
   // markets' S₀ (`supply`) and standard spot price, and Kessler's and Lakeview's budgets and quotes.
-  // The path's own numbers, $14.00 revenue and $11.00 cost of goods, don't move).
+  // The path's own numbers, $14.00 revenue and $11.00 cost of goods, don't move);
+  // fnv1a64:3169531e5b727cc8 (T07d, issue #126: tuning that state carries from tick 0,
+  // namely moonshine's basic and standard base prices, so both markets' spot prices and
+  // every buyer's quote, and Kessler's and Lakeview's quote ratios. The path's revenue
+  // moves with the basic price; its $11.00 cost of goods doesn't).
   it("has a pinned replay hash", async () => {
-    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:89394f5b72fb0418"`);
+    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:3169531e5b727cc8"`);
   });
 });

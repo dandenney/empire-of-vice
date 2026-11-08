@@ -76,10 +76,10 @@ export const TIERS: readonly TierDefinition[] = [
 ];
 
 export const REPUTATION_RULES: ReputationRulesDefinition = {
-  firstQualifyingDelivery: 3, // PLACEHOLDER
+  firstQualifyingDelivery: 2, // PLACEHOLDER (T07d tuned: tier 3 by the first contract's second installment)
   qualifyingDeliveryMinimumCases: 5, // PLACEHOLDER
-  installmentFulfilled: 5, // PLACEHOLDER
-  consecutiveInstallmentBonus: 2, // PLACEHOLDER
+  installmentFulfilled: 7, // PLACEHOLDER (T07d tuned)
+  consecutiveInstallmentBonus: 4, // PLACEHOLDER (T07d tuned)
   installmentPartial: -3, // PLACEHOLDER
   installmentMissed: -8, // PLACEHOLDER
 };

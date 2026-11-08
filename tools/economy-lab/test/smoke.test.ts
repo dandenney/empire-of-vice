@@ -155,9 +155,12 @@ describe("greedy spot report (T05g)", () => {
 
 describe("contract-taking strategy (T05g)", () => {
   const days = 15;
+  // Seeds that win inside the 15 days. Since T07d (#126) tuned for a 60–85% win rate,
+  // some seeds miss the session (seed 1 does), so these name winning ones.
+  const firstSeed = 2;
 
   it("takes contracts, climbs every tier, buys both upgrades in order, and wins without a rejection", () => {
-    const r = runSmokeSeed(1, { days, strategy: CONTRACT_STRATEGY.name });
+    const r = runSmokeSeed(firstSeed, { days, strategy: CONTRACT_STRATEGY.name });
     expect(r.strategy).toBe(CONTRACT_STRATEGY.name);
     expect(r.takesContracts).toBe(true);
     expect(r.contractsAccepted).toBeGreaterThanOrEqual(2);
@@ -178,8 +181,8 @@ describe("contract-taking strategy (T05g)", () => {
   });
 
   it("is deterministic and reports victory, tiers, and upgrade timing", () => {
-    const one = runSmoke({ seeds: 2, firstSeed: 1, days, strategy: CONTRACT_STRATEGY.name });
-    const two = runSmoke({ seeds: 2, firstSeed: 1, days, strategy: CONTRACT_STRATEGY.name });
+    const one = runSmoke({ seeds: 2, firstSeed, days, strategy: CONTRACT_STRATEGY.name });
+    const two = runSmoke({ seeds: 2, firstSeed, days, strategy: CONTRACT_STRATEGY.name });
     const text = formatSmokeReport(one.summary, one.reports);
     expect(formatSmokeReport(two.summary, two.reports)).toBe(text);
     expect(one.summary.takesContracts).toBe(true);
