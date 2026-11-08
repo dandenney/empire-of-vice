@@ -2,9 +2,10 @@
 // figures, plus cash and the game date. Every figure comes from the snapshot;
 // the panel only formats it.
 
-import { formatMoney, type Money, type PeriodReport } from "@eov/contracts";
+import type { Money, PeriodReport } from "@eov/contracts";
 import { COMMON_COPY } from "../../components/copy.ts";
 import { formatGameDate } from "../../components/format.ts";
+import { LedgerTable, MoneyFigure } from "../../ui/ledger.tsx";
 import type { PanelProps } from "../registry.ts";
 import { DASHBOARD_COPY as C } from "./copy.ts";
 
@@ -25,27 +26,36 @@ const ROWS: readonly { readonly key: string; readonly label: string; readonly va
 export function DashboardPanel({ snapshot }: PanelProps) {
   const { clock, finance } = snapshot;
   return (
-    <section data-testid="panel-dashboard" aria-labelledby="dashboard-title">
-      <h2 id="dashboard-title">{C.title}</h2>
-      <dl>
-        <dt>{C.date}</dt>
-        <dd data-testid="dashboard-date">
-          {C.dateLine(formatGameDate(clock.date), C.day(clock.dayIndex), COMMON_COPY.tick(clock.tick))}
-        </dd>
-        <dt>{C.cash}</dt>
-        <dd data-testid="dashboard-cash">{formatMoney(finance.cash)}</dd>
-        <dt>{C.netWorth}</dt>
-        <dd data-testid="dashboard-net-worth" title={C.netWorthNote}>
-          {formatMoney(finance.netWorth)}
-        </dd>
+    <section className="panel" data-testid="panel-dashboard" aria-labelledby="dashboard-title">
+      <h2 className="panel-title" id="dashboard-title">
+        {C.title}
+      </h2>
+      <dl className="stats">
+        <div className="stat stat-wide">
+          <dt>{C.date}</dt>
+          <dd className="stat-mono" data-testid="dashboard-date">
+            {C.dateLine(formatGameDate(clock.date), C.day(clock.dayIndex), COMMON_COPY.tick(clock.tick))}
+          </dd>
+        </div>
+        <div className="stat">
+          <dt>{C.cash}</dt>
+          <dd className="stat-figure" data-testid="dashboard-cash">
+            <MoneyFigure amount={finance.cash} />
+          </dd>
+        </div>
+        <div className="stat">
+          <dt>{C.netWorth}</dt>
+          <dd className="stat-figure" data-testid="dashboard-net-worth" title={C.netWorthNote}>
+            <MoneyFigure amount={finance.netWorth} />
+          </dd>
+        </div>
       </dl>
-      <table>
-        <caption>{C.periodsCaption}</caption>
+      <LedgerTable caption={C.periodsCaption} className="ledger-columns ledger-note">
         <thead>
           <tr>
             <th scope="col">{C.metric}</th>
             {PERIODS.map((p) => (
-              <th scope="col" key={p.key}>
+              <th scope="col" className="figure" key={p.key}>
                 {p.label}
               </th>
             ))}
@@ -58,15 +68,15 @@ export function DashboardPanel({ snapshot }: PanelProps) {
               {PERIODS.map((p) => {
                 const report = finance[p.key];
                 return (
-                  <td key={p.key} data-testid={`dashboard-${row.key}-${p.key}`}>
-                    {report ? formatMoney(row.value(report)) : COMMON_COPY.none}
+                  <td key={p.key} className="figure" data-testid={`dashboard-${row.key}-${p.key}`}>
+                    {report ? <MoneyFigure amount={row.value(report)} /> : <span className="money-none">{COMMON_COPY.none}</span>}
                   </td>
                 );
               })}
             </tr>
           ))}
         </tbody>
-      </table>
+      </LedgerTable>
     </section>
   );
 }

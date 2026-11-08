@@ -1,10 +1,9 @@
-// PLACEHOLDER: visual direction pending #48. The shell's layout and styling
-// are functional stand-ins; the look of the UI is the human's call.
-//
-// The shell: title bar with the game date, speed controls, and the S0 game
-// buttons (New game, Save, Reload save; T06 replaces them with the save/load
-// UI), panel navigation from the registry, the open panel, and the map slot.
-// Everything game-related is rendered from the latest snapshot.
+// The shell, in the #48 visual direction: a top bar over the map (the digital
+// game date, speed controls, and the S0 game buttons, which T06 replaces with
+// the save/load UI), a vertical icon rail of the registry's panels, the map
+// filling the rest of the screen, the open panel docked on the right under the
+// game's masthead, and event toasts in a corner. Everything game-related is
+// rendered from the latest snapshot.
 
 import { useState } from "react";
 import { SHELL_COPY } from "../components/copy.ts";
@@ -12,6 +11,12 @@ import { describeLoadError, formatGameDate } from "../components/format.ts";
 import { SpeedControls } from "../components/speed-controls.tsx";
 import { DEFAULT_PANEL_ID, PANELS, panelById } from "../panels/registry.ts";
 import { useGateway, useGatewayView, useUi } from "../state/app-context.tsx";
+import { FontsReady } from "../ui/fonts-ready.tsx";
+import { IconRail } from "../ui/icon-rail.tsx";
+import { TokenStyle } from "../ui/token-style.tsx";
+import { ToastHost } from "../ui/toasts/toast-host.tsx";
+import "../ui/fonts.ts";
+import "../ui/components.css";
 import { MapSlot } from "./map-slot.tsx";
 import "./shell.css";
 
@@ -35,6 +40,7 @@ function GameButtons({ busy, setBusy, say }: { readonly busy: boolean; readonly 
     <div className="game-buttons">
       <button
         type="button"
+        className="button button-primary"
         data-testid="new-game"
         disabled={busy}
         onClick={run(async () => {
@@ -46,6 +52,7 @@ function GameButtons({ busy, setBusy, say }: { readonly busy: boolean; readonly 
       </button>
       <button
         type="button"
+        className="button"
         data-testid="save"
         disabled={busy || !snapshot}
         onClick={run(async () => {
@@ -57,6 +64,7 @@ function GameButtons({ busy, setBusy, say }: { readonly busy: boolean; readonly 
       </button>
       <button
         type="button"
+        className="button"
         data-testid="reload"
         disabled={busy}
         onClick={run(async () => {
@@ -81,33 +89,49 @@ export function App({ showStateHash }: { readonly showStateHash: boolean }) {
 
   return (
     <div className="shell" data-testid="shell">
-      <header className="shell-header">
-        <h1>{SHELL_COPY.title}</h1>
-        <small>{SHELL_COPY.placeholderNotice}</small>
-        {snapshot && <span data-testid="game-date">{formatGameDate(snapshot.clock.date)}</span>}
+      <TokenStyle />
+      <header className="topbar">
+        <div className="clock">
+          {snapshot && (
+            <span className="clock-readout" data-testid="game-date">
+              {formatGameDate(snapshot.clock.date)}
+            </span>
+          )}
+        </div>
         <SpeedControls disabled={busy || !snapshot} />
         <GameButtons busy={busy} setBusy={setBusy} say={setMessage} />
       </header>
-      <p role="status" data-testid="message">
-        {message}
-      </p>
       {fault && (
-        <p role="alert" data-testid="fault">
+        <p role="alert" className="banner banner-fault" data-testid="fault">
           {SHELL_COPY.fault(fault)}
         </p>
       )}
-      {showStateHash && stateHash && <code data-testid="state-hash">{stateHash}</code>}
-      <nav aria-label={SHELL_COPY.panelNav} className="panel-nav">
-        {PANELS.map((p) => (
-          <button key={p.id} type="button" data-testid={`open-${p.id}`} aria-pressed={p.id === panel.id} onClick={() => openPanel(p.id)}>
-            {p.title}
-          </button>
-        ))}
-      </nav>
-      <div className="shell-body">
-        <main className="panel">{snapshot ? <Panel snapshot={snapshot} /> : <p>{SHELL_COPY.noGame}</p>}</main>
-        <aside className="map-slot">{snapshot && <MapSlot snapshot={snapshot} />}</aside>
+      <IconRail items={PANELS} openId={panel.id} onOpen={openPanel} label={SHELL_COPY.panelNav} />
+      <div className="map-region">
+        {snapshot && (
+          <FontsReady>
+            <MapSlot snapshot={snapshot} />
+          </FontsReady>
+        )}
       </div>
+      <div className="dock">
+        <header className="masthead">
+          <h1 className="masthead-title">{SHELL_COPY.title}</h1>
+          <p role="status" className="masthead-message" data-testid="message">
+            {message}
+          </p>
+        </header>
+        {/* With no game, the masthead's status line says so. */}
+        <main>{snapshot && <Panel snapshot={snapshot} />}</main>
+        {showStateHash && stateHash && (
+          <footer className="dock-footer">
+            <code className="state-hash" data-testid="state-hash">
+              {stateHash}
+            </code>
+          </footer>
+        )}
+      </div>
+      <ToastHost />
     </div>
   );
 }

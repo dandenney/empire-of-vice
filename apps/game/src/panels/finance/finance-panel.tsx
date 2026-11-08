@@ -3,8 +3,9 @@
 // the player can see why money was earned or lost. Every figure comes from the
 // snapshot; the panel only formats it.
 
-import { formatMoney, type BalanceSheet, type FinanceSnapshot, type LedgerTransaction, type Money, type PeriodReport } from "@eov/contracts";
+import { formatMoney, type BalanceSheet, type FinanceSnapshot, type LedgerTransaction, type PeriodReport } from "@eov/contracts";
 import { useState } from "react";
+import { LedgerLine as Line, LedgerTable } from "../../ui/ledger.tsx";
 import type { PanelProps } from "../registry.ts";
 import { ACCOUNT_COPY, ASSET_COPY, CASH_FLOW_COPY, EXPENSE_COPY, FINANCE_COPY as C, LIABILITY_COPY, TRANSACTION_KIND_COPY } from "./copy.ts";
 
@@ -16,23 +17,13 @@ const PERIODS: readonly { readonly key: PeriodKey; readonly label: string }[] = 
   { key: "toDate", label: C.toDate },
 ];
 
-function Line({ label, amount, testId, total }: { readonly label: string; readonly amount: Money; readonly testId: string; readonly total?: boolean }) {
-  return (
-    <tr className={total ? "total" : undefined}>
-      <th scope="row">{label}</th>
-      <td data-testid={testId}>{formatMoney(amount)}</td>
-    </tr>
-  );
-}
-
 function BalanceSheetTable({ sheet }: { readonly sheet: BalanceSheet }) {
   const assets = Object.keys(ASSET_COPY) as (keyof BalanceSheet["assets"])[];
   const liabilities = Object.keys(LIABILITY_COPY) as (keyof BalanceSheet["liabilities"])[];
   return (
-    <table data-testid="finance-balance-sheet">
-      <caption>{C.balanceSheet}</caption>
+    <LedgerTable testId="finance-balance-sheet" caption={C.balanceSheet}>
       <tbody>
-        <tr>
+        <tr className="ledger-group">
           <th colSpan={2} scope="rowgroup">
             {C.assets}
           </th>
@@ -41,7 +32,7 @@ function BalanceSheetTable({ sheet }: { readonly sheet: BalanceSheet }) {
           <Line key={k} label={ASSET_COPY[k]} amount={sheet.assets[k]} testId={`finance-asset-${k}`} />
         ))}
         <Line label={C.totalAssets} amount={sheet.totalAssets} testId="finance-total-assets" total />
-        <tr>
+        <tr className="ledger-group">
           <th colSpan={2} scope="rowgroup">
             {C.liabilities}
           </th>
@@ -52,15 +43,14 @@ function BalanceSheetTable({ sheet }: { readonly sheet: BalanceSheet }) {
         <Line label={C.totalLiabilities} amount={sheet.totalLiabilities} testId="finance-total-liabilities" total />
         <Line label={C.equity} amount={sheet.equity} testId="finance-equity" total />
       </tbody>
-    </table>
+    </LedgerTable>
   );
 }
 
 function IncomeStatementTable({ report }: { readonly report: PeriodReport }) {
   const p = report.profit;
   return (
-    <table data-testid="finance-income-statement">
-      <caption>{C.statementCaption(C.incomeStatement, C.ticks(report.fromTick, report.toTick))}</caption>
+    <LedgerTable testId="finance-income-statement" caption={C.statementCaption(C.incomeStatement, C.ticks(report.fromTick, report.toTick))}>
       <tbody>
         <Line label={C.revenue} amount={p.revenue} testId="finance-revenue" />
         <Line label={C.costOfGoodsSold} amount={p.costOfGoodsSold} testId="finance-cogs" />
@@ -71,15 +61,14 @@ function IncomeStatementTable({ report }: { readonly report: PeriodReport }) {
         <Line label={C.gains} amount={p.gains} testId="finance-gains" />
         <Line label={C.netProfit} amount={p.netProfit} testId="finance-net-profit" total />
       </tbody>
-    </table>
+    </LedgerTable>
   );
 }
 
 function CashFlowTable({ report }: { readonly report: PeriodReport }) {
   const c = report.cashFlow;
   return (
-    <table data-testid="finance-cash-flow">
-      <caption>{C.statementCaption(C.cashFlow, C.ticks(report.fromTick, report.toTick))}</caption>
+    <LedgerTable testId="finance-cash-flow" caption={C.statementCaption(C.cashFlow, C.ticks(report.fromTick, report.toTick))}>
       <tbody>
         <Line label={C.openingCash} amount={c.openingCash} testId="finance-opening-cash" />
         {c.lines.map((l) => (
@@ -88,7 +77,7 @@ function CashFlowTable({ report }: { readonly report: PeriodReport }) {
         <Line label={C.netChange} amount={c.netChange} testId="finance-net-change" total />
         <Line label={C.closingCash} amount={c.closingCash} testId="finance-closing-cash" total />
       </tbody>
-    </table>
+    </LedgerTable>
   );
 }
 
@@ -96,15 +85,16 @@ function TransactionsTable({ transactions }: { readonly transactions: FinanceSna
   // The money ledger skips PROGRESSION rows: reputation, tier, unlock, and outcome
   // changes aren't financial transactions (ADR 0020 decision 14, #99 point 4).
   const money = transactions.filter((t) => t.kind !== "PROGRESSION");
-  if (money.length === 0) return <p>{C.noTransactions}</p>;
+  if (money.length === 0) return <p className="panel-empty">{C.noTransactions}</p>;
   // Newest first; the snapshot lists them oldest first.
   const rows: readonly LedgerTransaction[] = [...money].reverse();
   return (
-    <table data-testid="finance-transactions">
-      <caption>{C.transactions}</caption>
+    <LedgerTable testId="finance-transactions" caption={C.transactions} className="ledger-journal">
       <thead>
         <tr>
-          <th scope="col">{C.tick}</th>
+          <th scope="col" className="figure">
+            {C.tick}
+          </th>
           <th scope="col">{C.kind}</th>
           <th scope="col">{C.entries}</th>
         </tr>
@@ -112,19 +102,21 @@ function TransactionsTable({ transactions }: { readonly transactions: FinanceSna
       <tbody>
         {rows.map((t) => (
           <tr key={t.id} data-testid="finance-transaction" data-kind={t.kind}>
-            <td>{t.tick}</td>
+            <td className="figure">{t.tick}</td>
             <td>{TRANSACTION_KIND_COPY[t.kind]}</td>
             <td>
-              <ul>
+              <ul className="entries">
                 {t.entries.map((e, i) => (
-                  <li key={i}>{C.entryLine(e.side === "DEBIT" ? C.debit : C.credit, ACCOUNT_COPY[e.account], formatMoney(e.amount))}</li>
+                  <li key={i} data-side={e.side}>
+                    {C.entryLine(e.side === "DEBIT" ? C.debit : C.credit, ACCOUNT_COPY[e.account], formatMoney(e.amount))}
+                  </li>
                 ))}
               </ul>
             </td>
           </tr>
         ))}
       </tbody>
-    </table>
+    </LedgerTable>
   );
 }
 
@@ -133,17 +125,21 @@ export function FinancePanel({ snapshot }: PanelProps) {
   const [period, setPeriod] = useState<PeriodKey>("today");
   const report = finance[period];
   return (
-    <section data-testid="panel-finance" aria-labelledby="finance-title">
-      <h2 id="finance-title">{C.title}</h2>
+    <section className="panel" data-testid="panel-finance" aria-labelledby="finance-title">
+      <h2 className="panel-title" id="finance-title">
+        {C.title}
+      </h2>
       <BalanceSheetTable sheet={finance.balanceSheet} />
-      <fieldset>
+      <fieldset className="period-picker">
         <legend>{C.period}</legend>
-        {PERIODS.map((p) => (
-          <label key={p.key}>
-            <input type="radio" name="finance-period" value={p.key} checked={period === p.key} onChange={() => setPeriod(p.key)} data-testid={`finance-period-${p.key}`} />
-            {p.label}
-          </label>
-        ))}
+        <div className="segmented">
+          {PERIODS.map((p) => (
+            <label key={p.key} className="segmented-button">
+              <input type="radio" name="finance-period" value={p.key} checked={period === p.key} onChange={() => setPeriod(p.key)} data-testid={`finance-period-${p.key}`} />
+              {p.label}
+            </label>
+          ))}
+        </div>
       </fieldset>
       {report ? (
         <div className="statements">
@@ -151,7 +147,9 @@ export function FinancePanel({ snapshot }: PanelProps) {
           <CashFlowTable report={report} />
         </div>
       ) : (
-        <p data-testid="finance-no-period">{C.noPreviousDay}</p>
+        <p className="panel-empty" data-testid="finance-no-period">
+          {C.noPreviousDay}
+        </p>
       )}
       <TransactionsTable transactions={finance.recentTransactions} />
     </section>
