@@ -2,7 +2,10 @@
 //
 // Three buyers with distinct roles: a cheap, cash-limited roadhouse (its budget
 // binds before its demand), Kessler's with basic and standard wants, and
-// Lakeview, the best standard price behind a reputation requirement.
+// Lakeview, the best standard price behind a reputation requirement. T05g (#106)
+// set that requirement to tier 3's reputation (20): Lakeview is GDD §9's tier-3
+// "improved buyer", and it offers its standard contract only once standard
+// moonshine can be made.
 
 import {
   asId,
@@ -68,10 +71,10 @@ export const BUYERS: readonly BuyerDefinition[] = [
     flavor: "Past the soda fountain and the cough syrup, Kessler fills \"prescriptions\" for anyone who knows to ask.",
     locationId: KESSLER_PHARMACY, // PLACEHOLDER (story)
     minimumReputation: 0, // PLACEHOLDER (tuning; T07a validates)
-    dailyBudget: cents(25_000), // PLACEHOLDER (tuning; T07a validates)
+    dailyBudget: cents(45_000), // PLACEHOLDER (T05g tuned; T07 tunes next)
     wants: [
-      { productId: MOONSHINE, minimumQuality: "basic", priceRatio: ratio(1_050_000), dailyDemand: 12 }, // PLACEHOLDER (tuning; T07a validates)
-      { productId: MOONSHINE, minimumQuality: "standard", priceRatio: ratio(1_100_000), dailyDemand: 6 }, // PLACEHOLDER (tuning; T07a validates)
+      { productId: MOONSHINE, minimumQuality: "basic", priceRatio: ratio(1_300_000), dailyDemand: 12 }, // PLACEHOLDER (T05g tuned; T07 tunes next)
+      { productId: MOONSHINE, minimumQuality: "standard", priceRatio: ratio(1_200_000), dailyDemand: 6 }, // PLACEHOLDER (T05g tuned; T07 tunes next)
     ],
   },
   {
@@ -79,10 +82,10 @@ export const BUYERS: readonly BuyerDefinition[] = [
     name: "Lakeview Hotel",
     flavor: "Marble lobby, lake breeze, an orchestra in the ballroom; the bell captain deals only with names he knows.",
     locationId: LAKEVIEW, // PLACEHOLDER (story)
-    minimumReputation: 10, // PLACEHOLDER (tuning; T07a validates)
-    dailyBudget: cents(30_000), // PLACEHOLDER (tuning; T07a validates)
+    minimumReputation: 20, // PLACEHOLDER (T05g tuned; T07 tunes next)
+    dailyBudget: cents(60_000), // PLACEHOLDER (T05g tuned; T07 tunes next)
     wants: [
-      { productId: MOONSHINE, minimumQuality: "standard", priceRatio: ratio(1_150_000), dailyDemand: 10 }, // PLACEHOLDER (tuning; T07a validates)
+      { productId: MOONSHINE, minimumQuality: "standard", priceRatio: ratio(1_300_000), dailyDemand: 10 }, // PLACEHOLDER (T05g tuned; T07 tunes next)
     ],
   },
 ];

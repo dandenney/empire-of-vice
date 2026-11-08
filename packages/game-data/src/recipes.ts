@@ -1,7 +1,9 @@
 // Recipes (T02c1, PROD-001). Definition types per ADR 0012.
 // PLACEHOLDER values. Basic moonshine keeps its S0 numbers: one case costs $11 to
 // make and sells for $14 (the GDD §8 production example's $30 + $10 labor and
-// overhead per 10 cases). T07a/T07 tune both recipes (GDD §14.3).
+// overhead per 10 cases). T05g (#106) lowered standard moonshine's conversion cost,
+// keeping a case dearer than basic so basic stays the cheapest restart (ADR 0020
+// decision 10). T07 tunes both recipes next (GDD §14.3).
 
 import {
   asId,
@@ -66,8 +68,8 @@ export const RECIPES: readonly RecipeDefinition[] = [
       { materialId: SUGAR, quantity: 2 }, // PLACEHOLDER
     ],
     ticksPerCase: 144, // PLACEHOLDER
-    laborPerCase: cents(400), // PLACEHOLDER
-    overheadPerCase: cents(200), // PLACEHOLDER
+    laborPerCase: cents(250), // PLACEHOLDER (T05g tuned; T07 tunes next)
+    overheadPerCase: cents(100), // PLACEHOLDER (T05g tuned; T07 tunes next)
     requiredEquipmentIds: [COPPER_STILL, QC_STATION],
     failureChance: ratio(0), // PLACEHOLDER
   },

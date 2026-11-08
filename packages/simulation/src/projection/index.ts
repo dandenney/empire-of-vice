@@ -5,7 +5,7 @@ import type { SystemRegistry } from "../kernel/registry.ts";
 import { projectSnapshot } from "./snapshot.ts";
 
 export { balanceSheetOf, cashFlowStatement, FinanceProjectionError, incomeStatement, projectFinance, SNAPSHOT_RECENT_TRANSACTIONS } from "./finance.ts";
-export { projectSnapshot, UNDEFINED_IN_GAME_DATA, type ProjectionDeps } from "./snapshot.ts";
+export { projectSnapshot, type ProjectionDeps } from "./snapshot.ts";
 
 /** A RegisterSystem (game/systems.ts) that sets the registry's projection. */
 export function registerProjection(registry: SystemRegistry, data: GameData): void {

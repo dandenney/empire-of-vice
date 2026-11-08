@@ -1,6 +1,7 @@
-// One seeded smoke run (T07a, issue #12): the greedy spot-sale strategy plays
-// The First Shipment for a number of game days, and the run records the pacing
-// metrics GDD §13 asks about.
+// One seeded smoke run (T07a, issue #12): a strategy (the greedy spot seller by
+// default, or T05g's contract-taking variant) plays The First Shipment for a
+// number of game days, and the run records the pacing metrics GDD §13 asks
+// about, plus tiers, victory, and insolvency (T05g, issue #106).
 //
 // The run is event-driven. It stops wherever something the bot can react to
 // happens (a run completes, the truck arrives or gets home, midnight) and lets
@@ -19,7 +20,8 @@ import {
 } from "@eov/contracts";
 import { FIRST_SHIPMENT_SCENARIO, GAME_DATA, REAL_MS_PER_GAME_HOUR_AT_1X, type GameData, type ScenarioDefinition } from "@eov/game-data";
 import { checkInvariants, newGame, type KernelSimulation } from "@eov/simulation";
-import { GreedySpotStrategy, STRATEGY, type StrategyLog } from "./greedy-spot.ts";
+import { ContractTakerStrategy, CONTRACT_STRATEGY } from "./contract-taker.ts";
+import { GreedySpotStrategy, STRATEGY, type Strategy, type StrategyLog } from "./greedy-spot.ts";
 
 /** Ticks per real minute at 1× (GDD §5: 720), derived from the pacing data. */
 export const TICKS_PER_REAL_MINUTE = (TICKS_PER_HOUR * 60_000) / REAL_MS_PER_GAME_HOUR_AT_1X;
@@ -30,10 +32,27 @@ export const DEFAULT_DAYS = 10;
 /** The day whose opening net worth feeds ADR 0018's contract timing (decision 9). */
 export const NET_WORTH_DAY = 5;
 
+/** The strategies the smoke runner can play. */
+export const STRATEGY_NAMES = [STRATEGY.name, CONTRACT_STRATEGY.name] as const;
+export type StrategyName = (typeof STRATEGY_NAMES)[number];
+
+export function createStrategy(name: StrategyName, first: GameSnapshot, data: GameData): Strategy {
+  return name === CONTRACT_STRATEGY.name ? new ContractTakerStrategy(first, data) : new GreedySpotStrategy(first, data);
+}
+
 export interface SmokeOptions {
   readonly days?: number;
   readonly scenario?: ScenarioDefinition;
   readonly data?: GameData;
+  /** Default: the greedy spot seller. */
+  readonly strategy?: StrategyName;
+}
+
+/** Installment outcomes over a run. */
+export interface InstallmentTally {
+  readonly FULFILLED: number;
+  readonly PARTIAL: number;
+  readonly MISSED: number;
 }
 
 /** A tick, and the same moment in real minutes at 1×. */
@@ -71,6 +90,8 @@ export interface SeedReport {
   readonly seed: number;
   readonly days: number;
   readonly strategy: string;
+  /** False for a strategy that never takes contracts: tier 2 and the upgrades are out of its reach. */
+  readonly takesContracts: boolean;
   /** First sale whose revenue beat its cost of goods sold. */
   readonly firstProfitableSale: Milestone | null;
   /** First time profit to date (after wages and overhead) went above zero. */
@@ -80,6 +101,17 @@ export interface SeedReport {
   /** First time profit to date covered the upgrade's price: the upgrade paid for out of earnings. */
   readonly upgradeEarned: Milestone | null;
   readonly upgradePrice: Money;
+  /** When the bot bought the QC station (tier 3). */
+  readonly qualityUpgrade: Milestone | null;
+  /** When each tier was reached, by tier ID in ladder order. The starting tier is reached at tick 0. */
+  readonly tierReached: Readonly<Record<string, Milestone | null>>;
+  readonly victory: Milestone | null;
+  /** `GAME_LOST` (insolvency). */
+  readonly lost: Milestone | null;
+  readonly finalReputation: number;
+  readonly contractsAccepted: number;
+  readonly contractsCompleted: number;
+  readonly installments: InstallmentTally;
   /** Index d: net worth at the start of day d (tick d × 1 440). Index 0 is the opening. */
   readonly netWorthByDay: readonly Money[];
   readonly netWorthAtDay5: Money | null;
@@ -116,12 +148,13 @@ export function milestone(tick: number): Milestone {
   return { tick, realMinutes: tick / TICKS_PER_REAL_MINUTE };
 }
 
-/** The next tick worth stopping at: a run completing, a truck arriving, or midnight. */
-function nextStop(s: GameSnapshot, end: number): number {
+/** The next tick worth stopping at: a run completing, a truck arriving, midnight, or one the strategy asks for. */
+function nextStop(s: GameSnapshot, end: number, bot: Strategy): number {
   const now = s.clock.tick;
   let next = Math.min(end, (Math.floor(now / TICKS_PER_DAY) + 1) * TICKS_PER_DAY);
   for (const job of s.productionJobs) if (job.completesAt > now) next = Math.min(next, job.completesAt);
   for (const v of s.vehicles) if (v.trip && v.trip.arrivesAt > now) next = Math.min(next, v.trip.arrivesAt);
+  for (const t of bot.wakeTicks(s)) if (t > now) next = Math.min(next, t);
   return next;
 }
 
@@ -143,7 +176,7 @@ export function runSmokeSeed(seed: number, options: SmokeOptions = {}): SeedRepo
   const end = days * TICKS_PER_DAY;
 
   const first = sim.snapshot();
-  const bot = new GreedySpotStrategy(first, data);
+  const bot = createStrategy(options.strategy ?? STRATEGY.name, first, data);
   const recipe = data.recipes.find((r) => r.id === STRATEGY.recipeId)!;
   const upgradePrice = data.equipment.find((e) => e.id === STRATEGY.upgradeId)?.price ?? (0 as Money);
 
@@ -161,6 +194,12 @@ export function runSmokeSeed(seed: number, options: SmokeOptions = {}): SeedRepo
   const netWorthByDay: Money[] = [first.finance.netWorth];
   const daily: DayRecord[] = [];
   const market: MarketDay[] = [];
+  const tierReached: Record<string, Milestone | null> = {};
+  for (const t of data.progression.tiers) tierReached[t.id] = t.id === first.progression.currentTierId ? milestone(0) : null;
+  let victory: Milestone | null = null;
+  let lost: Milestone | null = null;
+  let contractsCompleted = 0;
+  const installments = { FULFILLED: 0, PARTIAL: 0, MISSED: 0 };
 
   const recordMarket = (s: GameSnapshot): void => {
     const quote = s.market.products.find((p) => p.productId === recipe.productId && p.quality === recipe.quality);
@@ -196,6 +235,21 @@ export function runSmokeSeed(seed: number, options: SmokeOptions = {}): SeedRepo
         case "SHORTAGE_STARTED":
           shortageStartDay ??= Math.floor(e.tick / TICKS_PER_DAY);
           break;
+        case "TIER_REACHED":
+          tierReached[e.tierId] ??= milestone(e.tick);
+          break;
+        case "VICTORY_ACHIEVED":
+          victory ??= milestone(e.tick);
+          break;
+        case "GAME_LOST":
+          lost ??= milestone(e.tick);
+          break;
+        case "INSTALLMENT_SETTLED":
+          installments[e.outcome]++;
+          break;
+        case "CONTRACT_COMPLETED":
+          contractsCompleted++;
+          break;
         case "COMMAND_REJECTED":
           applyRejections[e.reason.code] = (applyRejections[e.reason.code] ?? 0) + 1;
           break;
@@ -220,7 +274,7 @@ export function runSmokeSeed(seed: number, options: SmokeOptions = {}): SeedRepo
     bot.act(sim);
     const s = sample();
     if (s.clock.tick >= end) break;
-    sim.advance(nextStop(s, end) - s.clock.tick);
+    sim.advance(nextStop(s, end, bot) - s.clock.tick);
     const after = sample();
     const t = after.clock.tick;
     if (t % TICKS_PER_DAY === 0) {
@@ -248,12 +302,21 @@ export function runSmokeSeed(seed: number, options: SmokeOptions = {}): SeedRepo
   return {
     seed,
     days,
-    strategy: STRATEGY.name,
+    strategy: bot.name,
+    takesContracts: bot.takesContracts,
     firstProfitableSale,
     firstNetProfit,
     firstUpgrade: bot.log.upgradeBoughtAt === null ? null : milestone(bot.log.upgradeBoughtAt),
     upgradeEarned,
     upgradePrice,
+    qualityUpgrade: bot.log.qualityUpgradeBoughtAt === null ? null : milestone(bot.log.qualityUpgradeBoughtAt),
+    tierReached,
+    victory,
+    lost,
+    finalReputation: last.family.reputation,
+    contractsAccepted: bot.log.contractsAccepted,
+    contractsCompleted,
+    installments,
     netWorthByDay,
     netWorthAtDay5: netWorthByDay[NET_WORTH_DAY] ?? null,
     cashTrough: trough,

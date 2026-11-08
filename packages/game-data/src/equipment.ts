@@ -1,6 +1,8 @@
 // Equipment catalog (T02c1, PROD-001; GDD §6 equipment table). Definition types per ADR 0012.
-// PLACEHOLDER values: prices and bonuses from GDD §6. Names and descriptions are
-// placeholder copy. T07a/T07 tune the numbers; T05 sets the QC station's unlock.
+// PLACEHOLDER values: bonuses from GDD §6; T05g (#106) tuned the condenser and QC
+// station prices. Names and descriptions are placeholder copy. T07 tunes the
+// numbers next. The condenser and storage expansion unlock at tier 2 and the QC
+// station at tier 3 (ADR 0020 decision 3).
 
 import { asId, cents, ratio, type EquipmentId, type Money, type Ratio, type UnlockId } from "@eov/contracts";
 import { CAPACITY_EQUIPMENT, QUALITY_EQUIPMENT } from "./progression.ts";
@@ -49,7 +51,7 @@ export const EQUIPMENT: readonly EquipmentDefinition[] = [
     id: IMPROVED_CONDENSER,
     name: "Improved condenser",
     description: "Faster runs on every recipe.", // PLACEHOLDER copy
-    price: cents(45_000), // PLACEHOLDER
+    price: cents(35_000), // PLACEHOLDER (T05g tuned; T07 tunes next)
     throughputBonus: ratio(400_000), // PLACEHOLDER: +40%
     storageBonus: 0, // PLACEHOLDER
     crew: 1, // PLACEHOLDER
@@ -59,7 +61,7 @@ export const EQUIPMENT: readonly EquipmentDefinition[] = [
     id: QC_STATION,
     name: "Quality-control station",
     description: "Needed for standard-quality recipes.", // PLACEHOLDER copy
-    price: cents(65_000), // PLACEHOLDER
+    price: cents(40_000), // PLACEHOLDER (T05g tuned; T07 tunes next)
     throughputBonus: ratio(0), // PLACEHOLDER
     storageBonus: 0, // PLACEHOLDER
     crew: 0, // PLACEHOLDER

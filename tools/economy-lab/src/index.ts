@@ -1,5 +1,7 @@
 // @eov/economy-lab: headless runner for seeded playthroughs and balance reports.
-// T07a adds the economy smoke loop (greedy spot-sale strategy and its report).
+// T07a adds the economy smoke loop (greedy spot-sale strategy and its report);
+// T05g adds the contract-taking variant and the tier, victory, and insolvency metrics.
+export * from "./contract-taker.ts";
 export * from "./greedy-spot.ts";
 export * from "./smoke-report.ts";
 export * from "./smoke-run.ts";

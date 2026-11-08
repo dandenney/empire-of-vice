@@ -44,8 +44,11 @@ describe("sprint-zero runner", () => {
   // fnv1a64:50c5ae9cdf05ff0d (T03, issue #10, ADR 0019: decision 1, three risky routes in `state.routes`;
   // decision 4, the sale's `dealDeadline` set at dispatch; decision 2, transport cost paid in VEHICLE_RETURN);
   // fnv1a64:a9f0aac450165e7d (T05b, issue #101, ADR 0020 decision 12: the scenario's rival ROUTE_CLOSURE
-  // on county-road is in `state.scheduledEvents` from tick 0, and `nextScheduleSequence` starts at 2).
+  // on county-road is in `state.scheduledEvents` from tick 0, and `nextScheduleSequence` starts at 2);
+  // fnv1a64:89394f5b72fb0418 (T05g, issue #106: tuning that state carries from tick 0, namely the
+  // markets' S₀ (`supply`) and standard spot price, and Kessler's and Lakeview's budgets and quotes.
+  // The path's own numbers, $14.00 revenue and $11.00 cost of goods, don't move).
   it("has a pinned replay hash", async () => {
-    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:a9f0aac450165e7d"`);
+    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:89394f5b72fb0418"`);
   });
 });

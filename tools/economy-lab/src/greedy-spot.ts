@@ -49,7 +49,12 @@ export type NoSale = "NO_BUYER";
 
 /** Facts the runner records about the bot's own decisions. */
 export interface StrategyLog {
+  /** When the bot bought its first upgrade (the improved condenser). */
   upgradeBoughtAt: number | null;
+  /** When the bot bought the QC station. Only the contract-taking variant buys it. */
+  qualityUpgradeBoughtAt: number | null;
+  /** Contract offers accepted. */
+  contractsAccepted: number;
   readonly saleCaps: Record<SaleCap | NoSale, number>;
   /** Production starts held back below one day's run, by cause. */
   readonly productionCaps: Record<"CASH" | "STORAGE" | "SUPPLIER", number>;
@@ -60,6 +65,8 @@ export interface StrategyLog {
 export function newStrategyLog(): StrategyLog {
   return {
     upgradeBoughtAt: null,
+    qualityUpgradeBoughtAt: null,
+    contractsAccepted: 0,
     saleCaps: { BUDGET: 0, DEMAND: 0, STOCK: 0, TRUCK: 0, NO_BUYER: 0 },
     productionCaps: { CASH: 0, STORAGE: 0, SUPPLIER: 0 },
     rejections: {},
@@ -72,21 +79,36 @@ export interface Gateway {
   snapshot(): GameSnapshot;
 }
 
-function recipeOf(data: GameData, id: RecipeId): RecipeDefinition {
+/** A headless player the smoke runner can drive. */
+export interface Strategy {
+  readonly name: string;
+  /**
+   * Whether it takes contracts. One that doesn't can't earn the reputation tier 2
+   * needs (ADR 0020 decision 5), so the upgrade metrics don't apply to it.
+   */
+  readonly takesContracts: boolean;
+  readonly log: StrategyLog;
+  /** One decision point. Dispatches zero or more commands. */
+  act(sim: Gateway): void;
+  /** Extra ticks worth stopping at, beyond job completions, truck arrivals, and midnight. */
+  wakeTicks(s: GameSnapshot): readonly number[];
+}
+
+export function recipeOf(data: GameData, id: RecipeId): RecipeDefinition {
   const recipe = data.recipes.find((r) => r.id === id);
   if (!recipe) throw new Error(`Strategy recipe ${id} is not in game-data`);
   return recipe;
 }
 
 /** Tonight's wages and overhead at the facility's current headcount. */
-function periodCosts(s: GameSnapshot, facility: FacilitySnapshot, data: GameData): Money {
+export function periodCosts(s: GameSnapshot, facility: FacilitySnapshot, data: GameData): Money {
   const leaders = s.family.leaders.reduce((sum, l) => sum + l.dailyWage, 0);
   const workers = facility.workforce.workers * facility.workforce.dailyWagePerWorker;
   const overhead = data.facilityProduction.find((f) => f.facilityId === facility.id)?.dailyOverhead ?? 0;
   return (leaders + workers + overhead) as Money;
 }
 
-interface SupplyLine {
+export interface SupplyLine {
   readonly supplierId: SupplierId;
   readonly materialId: MaterialId;
   readonly unitPrice: Money;
@@ -94,7 +116,7 @@ interface SupplyLine {
 }
 
 /** The cheapest supplier line for each material, from today's market report. */
-function supplyLines(s: GameSnapshot): Map<MaterialId, SupplyLine> {
+export function supplyLines(s: GameSnapshot): Map<MaterialId, SupplyLine> {
   const lines = new Map<MaterialId, SupplyLine>();
   for (const supplier of s.market.suppliers) {
     for (const m of supplier.materials) {
@@ -107,7 +129,7 @@ function supplyLines(s: GameSnapshot): Map<MaterialId, SupplyLine> {
   return lines;
 }
 
-interface RunPlan {
+export interface RunPlan {
   readonly quantity: number;
   readonly purchases: readonly { readonly line: SupplyLine; readonly quantity: number }[];
   /** Cash the run needs now (ingredients) and at completion (conversion cost). */
@@ -115,7 +137,7 @@ interface RunPlan {
 }
 
 /** The ingredients to buy and the cash needed for a run of `quantity` cases. Null if a supplier can't cover it. */
-function planRun(s: GameSnapshot, facility: FacilitySnapshot, recipe: RecipeDefinition, quantity: number): RunPlan | null {
+export function planRun(s: GameSnapshot, facility: FacilitySnapshot, recipe: RecipeDefinition, quantity: number): RunPlan | null {
   const lines = supplyLines(s);
   const purchases: { line: SupplyLine; quantity: number }[] = [];
   let cost = quantity * (recipe.laborPerCase + recipe.overheadPerCase);
@@ -132,7 +154,9 @@ function planRun(s: GameSnapshot, facility: FacilitySnapshot, recipe: RecipeDefi
   return { quantity, purchases, cashCost: cost as Money };
 }
 
-export class GreedySpotStrategy {
+export class GreedySpotStrategy implements Strategy {
+  readonly name = STRATEGY.name;
+  readonly takesContracts = false;
   readonly log: StrategyLog = newStrategyLog();
   readonly #data: GameData;
   readonly #recipe: RecipeDefinition;
@@ -154,6 +178,10 @@ export class GreedySpotStrategy {
     this.#upgrade(sim);
     this.#produce(sim);
     this.#sell(sim);
+  }
+
+  wakeTicks(): readonly number[] {
+    return [];
   }
 
   #facility(s: GameSnapshot): FacilitySnapshot {

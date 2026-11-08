@@ -41,6 +41,6 @@ export const MARKET_PRICE_BOUNDS: MarketPriceBounds = {
 };
 
 export const MARKETS: readonly MarketDefinition[] = [
-  { productId: MOONSHINE, quality: "basic", baselineDemand: 40, baselineSupply: 60, demandDriftPpm: 100_000 }, // PLACEHOLDER (tuning; T07a validates)
-  { productId: MOONSHINE, quality: "standard", baselineDemand: 15, baselineSupply: 24, demandDriftPpm: 100_000 }, // PLACEHOLDER (tuning; T07a validates)
+  { productId: MOONSHINE, quality: "basic", baselineDemand: 40, baselineSupply: 150, demandDriftPpm: 100_000 }, // PLACEHOLDER (T05g tuned S₀; T07 tunes next)
+  { productId: MOONSHINE, quality: "standard", baselineDemand: 15, baselineSupply: 150, demandDriftPpm: 100_000 }, // PLACEHOLDER (T05g tuned S₀; T07 tunes next)
 ];
