@@ -22,7 +22,8 @@ export const ROUTE_PICKER_COPY = {
     RIVAL: "Closed by a rival crew.",
     POLICE: "Closed by the police.",
   },
-  reopensIn: (duration: string, tick: number) => `Reopens in ${duration} (tick ${tick}).`,
+  /** "Reopens in 2 h (day 3, 18:00)." The day and time match the contract deadlines (#132). */
+  reopensIn: (duration: string, at: string) => `Reopens in ${duration} (${at}).`,
   reopensUnknown: "No word on when it reopens.",
   noRoutes: "No road goes there from this truck's yard.",
   noOpenRoute: "Every road there is closed.",
