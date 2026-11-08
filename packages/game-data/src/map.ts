@@ -3,7 +3,7 @@
 // T03b (#76) adds a warehouse. The First Shipment scenario doesn't own it (ADR 0020
 // decision 13), and the snapshot shows only occupied locations, so it never shows in M001.
 
-import { asId, type FacilityId, type LocationId, type WorldPoint } from "@eov/contracts";
+import { asId, type FacilityId, type FacilitySnapshot, type LocationId, type WorldPoint } from "@eov/contracts";
 
 export interface LocationDefinition {
   readonly id: LocationId;
@@ -15,7 +15,12 @@ export interface FacilityDefinition {
   readonly id: FacilityId;
   readonly name: string;
   readonly locationId: LocationId;
+  /** What the facility is, whatever equipment it holds now (T05i, #148). */
+  readonly kind: FacilityKind;
 }
+
+/** The contract's facility kind (`FacilitySnapshot["kind"]`); game-data doesn't redefine it (ADR 0012). */
+export type FacilityKind = FacilitySnapshot["kind"];
 
 export const HOLLOW_CREEK = asId("Location", "hollow-creek");
 export const MILLERS_FEED_LOCATION = asId("Location", "millers-feed");
@@ -39,6 +44,6 @@ export const LOCATIONS: readonly LocationDefinition[] = [
 ];
 
 export const FACILITIES: readonly FacilityDefinition[] = [
-  { id: DISTILLERY_MAIN, name: "Hollow Creek distillery", locationId: HOLLOW_CREEK },
-  { id: RIVERSIDE_WAREHOUSE, name: "Riverside warehouse", locationId: RIVERSIDE_DEPOT }, // PLACEHOLDER (T03b, #76)
+  { id: DISTILLERY_MAIN, name: "Hollow Creek distillery", locationId: HOLLOW_CREEK, kind: "DISTILLERY" },
+  { id: RIVERSIDE_WAREHOUSE, name: "Riverside warehouse", locationId: RIVERSIDE_DEPOT, kind: "WAREHOUSE" }, // PLACEHOLDER (T03b, #76)
 ];
