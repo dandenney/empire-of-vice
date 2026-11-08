@@ -3,8 +3,8 @@
 // previous day's upper bound, the newest end of the event journal, and the
 // cash-flow guard for kinds that never move cash.
 
-import { asId, cents, SNAPSHOT_RECENT_EVENTS, tick, type GameCommand, type GameSnapshot, type LedgerTransaction, type TransactionKind } from "@eov/contracts";
-import { BASIC_MOONSHINE_RECIPE, DISTILLERY_MAIN, GAME_DATA, type GameData, type RecipeDefinition } from "@eov/game-data";
+import { asId, cents, multiplyMoney, negateMoney, SNAPSHOT_RECENT_EVENTS, tick, type GameCommand, type GameSnapshot, type LedgerTransaction, type TransactionKind } from "@eov/contracts";
+import { BASIC_MOONSHINE_RECIPE, CORN, DISTILLERY_MAIN, GAME_DATA, MILLERS_FEED, type GameData, type RecipeDefinition } from "@eov/game-data";
 import { describe, expect, it } from "vitest";
 import { newGame } from "../../src/index.ts";
 import { storageCapacity } from "../../src/production/index.ts";
@@ -16,6 +16,7 @@ const recipeIn = (s: GameSnapshot, recipeId: string) =>
   s.facilities.find((f) => f.id === DISTILLERY_MAIN)!.recipes.find((r) => r.recipeId === recipeId)!;
 const basicRecipe = (s: GameSnapshot) => recipeIn(s, BASIC_MOONSHINE_RECIPE);
 const BASIC = GAME_DATA.recipes.find((r) => r.id === BASIC_MOONSHINE_RECIPE)!;
+const CORN_PRICE = GAME_DATA.suppliers.find((s) => s.id === MILLERS_FEED)!.stock.find((s) => s.materialId === CORN)!.unitPrice;
 
 /** A game at tick 1 with `command` queued for tick 2, the next tick. */
 function withQueuedForNextTick(command: GameCommand, setup: (sim: ReturnType<typeof newGame>) => void = () => {}) {
@@ -133,8 +134,8 @@ describe("finance periods", () => {
     const finance = sim.snapshot().finance;
     const materials = (r: typeof finance.today) => r.cashFlow.lines.find((l) => l.category === "MATERIALS")!.amount;
     expect(finance.previousDay).toEqual(atMidnight);
-    expect(materials(finance.previousDay!)).toBe(cents(-500));
-    expect(materials(finance.today)).toBe(cents(-1_000));
+    expect(materials(finance.previousDay!)).toBe(negateMoney(multiplyMoney(CORN_PRICE, 2)));
+    expect(materials(finance.today)).toBe(negateMoney(multiplyMoney(CORN_PRICE, 4)));
   });
 });
 
