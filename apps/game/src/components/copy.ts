@@ -39,7 +39,6 @@ export const COMMON_COPY = {
   queued: (tick: number) => `Queued for tick ${tick}.`,
   rejected: (reason: string) => `Rejected: ${reason}`,
   invalid: (issues: string) => `Invalid request: ${issues}`,
-  comingSoon: (title: string) => `${title}: coming in T04c.`,
   tick: (tick: number) => `tick ${tick}`,
   /** YYYY-MM-DD HH:MM. */
   gameDate: (date: GameDate) => `${date.year}-${pad2(date.month)}-${pad2(date.day)} ${pad2(date.hour)}:${pad2(date.minute)}`,

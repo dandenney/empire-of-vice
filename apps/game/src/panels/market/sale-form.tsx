@@ -5,7 +5,9 @@
 // back as QUOTE_CHANGED with both prices, never as a silent re-price.
 //
 // What's picked here (want, quality, truck, route, quantity) is form input, not
-// game state. Every option and enabled state comes from the snapshot.
+// game state. Every option and enabled state comes from the snapshot. The
+// quality list holds nothing below the want's minimum, and defaults to that
+// minimum, so the default agreed price is the chosen want's quote (#128).
 
 import { formatMoney, type BuyerSnapshot, type GameSnapshot, type QualityTier, type RouteId, type VehicleId } from "@eov/contracts";
 import { useState } from "react";
@@ -16,6 +18,7 @@ import { chosenRoute, commandRouteId, routeOptions } from "../../ui/route-picker
 import { RoutePicker } from "../../ui/route-picker/route-picker.tsx";
 import { MARKET_COPY as C } from "./copy.ts";
 import { CommandResult } from "./command-result.tsx";
+import { saleQualities } from "./market-view.ts";
 
 const wantKey = (w: { readonly productId: string; readonly minimumQuality: QualityTier }) => `${w.productId}:${w.minimumQuality}`;
 
@@ -32,9 +35,8 @@ export function SaleForm({ buyer, snapshot }: { readonly buyer: BuyerSnapshot; r
   const idle = snapshot.vehicles.filter((v) => v.trip === null);
   const vehicle = snapshot.vehicles.find((v) => v.id === vehiclePick) ?? idle[0] ?? snapshot.vehicles[0] ?? null;
   const home = vehicle ? snapshot.facilities.find((f) => f.locationId === vehicle.homeLocationId) : undefined;
-  const pools = (home?.products ?? []).filter((p) => p.productId === want.productId);
-  const qualities: readonly QualityTier[] = pools.length > 0 ? pools.map((p) => p.quality) : [want.minimumQuality];
-  const quality = qualities.find((q) => q === qualityPick) ?? qualities.find((q) => q === want.minimumQuality) ?? qualities[0]!;
+  const qualities = saleQualities(home?.products ?? [], want);
+  const quality = qualities.find((q) => q.quality === qualityPick)?.quality ?? want.minimumQuality;
   const options = vehicle ? routeOptions(snapshot.routes, vehicle.homeLocationId, buyer.locationId) : [];
   const route = chosenRoute(options, routePick);
 
@@ -79,14 +81,11 @@ export function SaleForm({ buyer, snapshot }: { readonly buyer: BuyerSnapshot; r
         <label className="sale-field">
           <span className="field-label">{C.quality}</span>
           <select className="input market-select" value={quality} onChange={(e) => setQualityPick(e.target.value as QualityTier)} aria-label={C.qualityLabel(buyer.name)} data-testid={`${testId}-quality`}>
-            {qualities.map((q) => {
-              const pool = pools.find((p) => p.quality === q);
-              return (
-                <option key={q} value={q}>
-                  {pool ? C.qualityOption(formatQuality(q), pool.quantity, pool.reservedQuantity) : C.qualityNoStock(formatQuality(q))}
-                </option>
-              );
-            })}
+            {qualities.map(({ quality: q, pool }) => (
+              <option key={q} value={q}>
+                {pool ? C.qualityOption(formatQuality(q), pool.quantity, pool.reservedQuantity) : C.qualityNoStock(formatQuality(q))}
+              </option>
+            ))}
           </select>
         </label>
         <label className="sale-field">

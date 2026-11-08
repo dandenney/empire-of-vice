@@ -68,8 +68,8 @@ describe("ui store", () => {
 });
 
 describe("panel registry", () => {
-  it("lists Dashboard, Production, Finance, and the Market placeholder, with unique ids", () => {
-    expect(PANELS.map((p) => p.id)).toEqual(["dashboard", "production", "finance", "market"]);
+  it("lists every panel, with unique ids", () => {
+    expect(PANELS.map((p) => p.id)).toEqual(["dashboard", "production", "finance", "market", "contracts", "facility"]);
     for (const p of PANELS) {
       expect(p.title.length).toBeGreaterThan(0);
       expect(typeof p.component).toBe("function");

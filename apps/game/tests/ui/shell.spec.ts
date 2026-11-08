@@ -7,9 +7,11 @@
 import { FIRST_SHIPMENT_SCENARIO } from "@eov/game-data";
 import { expect, test, type Page } from "@playwright/test";
 import { SHELL_COPY } from "../../src/components/copy.ts";
-import { PLACEHOLDER_PANEL_COPY } from "../../src/panels/copy.ts";
+import { CONTRACTS_COPY } from "../../src/panels/contracts/copy.ts";
 import { DASHBOARD_COPY } from "../../src/panels/dashboard/copy.ts";
+import { FACILITY_COPY } from "../../src/panels/facility/copy.ts";
 import { FINANCE_COPY } from "../../src/panels/finance/copy.ts";
+import { MARKET_COPY } from "../../src/panels/market/copy.ts";
 import { PRODUCTION_COPY } from "../../src/panels/production/copy.ts";
 import { TOAST_HOST_COPY } from "../../src/ui/toasts/copy.ts";
 import { COLOR, LAYOUT } from "../../src/ui/tokens.ts";
@@ -18,7 +20,9 @@ const PANELS = [
   { id: "dashboard", title: DASHBOARD_COPY.title },
   { id: "production", title: PRODUCTION_COPY.title },
   { id: "finance", title: FINANCE_COPY.title },
-  { id: "market", title: PLACEHOLDER_PANEL_COPY.marketTitle },
+  { id: "market", title: MARKET_COPY.title },
+  { id: "contracts", title: CONTRACTS_COPY.title },
+  { id: "facility", title: FACILITY_COPY.title },
 ] as const;
 
 /** "#rrggbb" → the "rgb(r, g, b)" getComputedStyle reports. */
@@ -63,6 +67,13 @@ test("each panel has a named rail button, and the keyboard switches panels", asy
   const rail = page.getByRole("navigation", { name: SHELL_COPY.panelNav });
   for (const p of PANELS) await expect(rail.getByRole("button", { name: p.title, exact: true })).toHaveAttribute("data-testid", `open-${p.id}`);
 
+  // Every panel is a real panel now: no placeholder left (#128).
+  for (const p of PANELS) {
+    await page.getByTestId(`open-${p.id}`).click();
+    await expect(page.getByTestId(`panel-${p.id}`)).toBeVisible();
+  }
+  await page.getByTestId("open-dashboard").click();
+
   await page.getByTestId("open-dashboard").focus();
   await page.keyboard.press("ArrowDown");
   await expect(page.getByTestId("open-production")).toBeFocused();
@@ -71,12 +82,13 @@ test("each panel has a named rail button, and the keyboard switches panels", asy
   await expect(page.getByTestId("open-production")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("open-dashboard")).toHaveAttribute("aria-pressed", "false");
 
+  const last = PANELS.at(-1)!.id;
   await page.keyboard.press("End");
-  await expect(page.getByTestId("open-market")).toBeFocused();
+  await expect(page.getByTestId(`open-${last}`)).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(page.getByTestId("open-dashboard")).toBeFocused();
   await page.keyboard.press("ArrowUp");
-  await expect(page.getByTestId("open-market")).toBeFocused();
+  await expect(page.getByTestId(`open-${last}`)).toBeFocused();
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowDown");
