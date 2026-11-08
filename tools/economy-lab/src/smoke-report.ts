@@ -3,26 +3,20 @@
 // T05g (issue #106) adds tiers, victory, and insolvency, and marks the upgrade
 // metrics not applicable to a strategy that never takes contracts.
 //
+// T07c (issue #120) moves the GDD §13 targets into `targets.ts`, shared with the
+// balance report, and applies the #85 review fixes: break-even sales are counted
+// apart from below-cost ones, over completed sales (not dispatches), and day 0
+// (the opening day, before the first sale lands) is left out of the margin
+// averages. The standard-moonshine market is reported beside the basic one.
+//
 // Missed targets and flags are reported, never failed: the CLI exits non-zero
 // only when a seed crashes or breaks an invariant.
 
 import { formatMoney, TICKS_PER_DAY, type Money } from "@eov/contracts";
-import { GAME_DATA, MARKET_PRICE_BOUNDS, type GameData } from "@eov/game-data";
+import { GAME_DATA, MARKET_PRICE_BOUNDS, STANDARD_MOONSHINE_RECIPE, type GameData } from "@eov/game-data";
 import { STRATEGY } from "./greedy-spot.ts";
-import { NET_WORTH_DAY, TICKS_PER_REAL_MINUTE, type InstallmentTally, type Milestone, type SeedReport } from "./smoke-run.ts";
-
-/**
- * GDD §13 provisional balance targets, in ticks at 1× (720 per real minute).
- * Comparison targets for the report, not gameplay numbers: nothing in the game
- * reads them. The victory thresholds are game-data's (`progression.victory`).
- */
-export const TARGETS = {
-  firstProfitMaxTicks: 5 * TICKS_PER_REAL_MINUTE,
-  firstUpgradeMinTicks: 10 * TICKS_PER_REAL_MINUTE,
-  firstUpgradeMaxTicks: 15 * TICKS_PER_REAL_MINUTE,
-  victoryMinTicks: 20 * TICKS_PER_REAL_MINUTE,
-  victoryMaxTicks: 30 * TICKS_PER_REAL_MINUTE,
-} as const;
+import { NET_WORTH_DAY, type InstallmentTally, type Milestone, type SeedReport } from "./smoke-run.ts";
+import { TARGETS, TICKS_PER_REAL_MINUTE, victoryOf } from "./targets.ts";
 
 /** What the upgrade cells say for a strategy that never takes contracts. */
 export const NOT_APPLICABLE = "n/a (takes no contracts, so never reaches tier 2)";
@@ -85,8 +79,11 @@ export function distribution(values: readonly number[]): Distribution | null {
 const ticksOf = (reports: readonly SeedReport[], pick: (r: SeedReport) => Milestone | null): Distribution | null =>
   distribution(reports.flatMap((r) => (pick(r) ? [pick(r)!.tick] : [])));
 
-const perDay = (r: SeedReport, pick: (d: SeedReport["daily"][number]) => number): number =>
-  r.daily.length === 0 ? 0 : Math.floor(r.daily.reduce((n, d) => n + pick(d), 0) / r.daily.length);
+/** A seed's average over its days after day 0: the opening day has wages but no sale yet (#85 review). */
+const perDay = (r: SeedReport, pick: (d: SeedReport["daily"][number]) => number): number => {
+  const later = r.daily.filter((d) => d.day > 0);
+  return later.length === 0 ? 0 : Math.floor(later.reduce((n, d) => n + pick(d), 0) / later.length);
+};
 
 export function summarize(
   reports: readonly SeedReport[],
@@ -152,9 +149,8 @@ function milestoneCell(m: Milestone | null): string {
   return m ? `${m.tick} (${minutes(m.tick)})` : "not reached";
 }
 
-/** Unit cost of the strategy's recipe at normal supplier prices: ingredients plus conversion. */
-function unitCost(data: GameData): Money {
-  const recipe = data.recipes.find((r) => r.id === STRATEGY.recipeId)!;
+/** Unit cost of a recipe at normal supplier prices (the cheapest supplier): ingredients plus conversion. */
+export function unitCost(recipe: GameData["recipes"][number], data: GameData = GAME_DATA): Money {
   let cost = recipe.laborPerCase + recipe.overheadPerCase;
   for (const input of recipe.inputsPerCase) {
     const prices = data.suppliers.flatMap((s) => s.stock).filter((l) => l.materialId === input.materialId).map((l) => l.unitPrice);
@@ -206,7 +202,7 @@ export function findings(summary: SmokeSummary, reports: readonly SeedReport[], 
         ` (target ${window}).`,
     );
   }
-  const victory = data.progression.victory;
+  const victory = victoryOf(data);
   const fnw = summary.finalNetWorth!;
   const opening = reports[0]!.netWorthByDay[0]!;
   out.push(
@@ -217,11 +213,12 @@ export function findings(summary: SmokeSummary, reports: readonly SeedReport[], 
 
   // Victory, tiers, and insolvency (ADR 0020 decisions 4, 7, 10, 15).
   const v = summary.victory;
+  const victoryInWindow = v !== null && v.median >= TARGETS.victoryMinTicks && v.median <= TARGETS.victoryMaxTicks;
   out.push(
-    `${v ? "OK" : "MISS"} victory (${money(victory.netWorth)} net worth, reputation ${victory.reputation}, ${victory.completedContracts} completed contract): ` +
+    `${victoryInWindow ? "OK" : "MISS"} victory (${money(victory.netWorth)} net worth, reputation ${victory.reputation}, ${victory.completedContracts} completed contract): ` +
       (v
         ? `${v.n}/${total} seeds won within ${summary.days} days; victory day median ${dayOf(v.median)} (${at(v.median)}), ` +
-          `earliest day ${dayOf(v.min)}, latest day ${dayOf(v.max)} (GDD §13 target ${TARGETS.victoryMinTicks}–${TARGETS.victoryMaxTicks} ticks, 20–30 min).`
+          `earliest day ${dayOf(v.min)}, latest day ${dayOf(v.max)} (GDD §13 target: median ${TARGETS.victoryMinTicks}–${TARGETS.victoryMaxTicks} ticks, 20–30 min).`
         : `no seed won within ${summary.days} days.`) +
       (summary.takesContracts ? "" : ` ${summary.strategy} takes no contracts, so it can't complete one or reach reputation ${victory.reputation}.`),
   );
@@ -241,7 +238,7 @@ export function findings(summary: SmokeSummary, reports: readonly SeedReport[], 
   );
 
   // Unit economics: the frame for every market flag below.
-  const cost = unitCost(data);
+  const cost = unitCost(recipe, data);
   const days = reports.flatMap((r) => r.market);
   const spot = distribution(days.map((d) => d.spotPrice))!;
   out.push(
@@ -249,9 +246,32 @@ export function findings(summary: SmokeSummary, reports: readonly SeedReport[], 
       `median ${money(spot.median)}, min ${money(spot.min)}, max ${money(spot.max)}. ` +
       `Gross profit per day median ${money(summary.grossProfitPerDay!.median)}; net (after wages and overhead) ${money(summary.netProfitPerDay!.median)}.`,
   );
-  const lossSales = sum(reports.map((r) => r.lossSales));
+  // Completed sales, not dispatches: a dispatch can still fall through (#85 review).
+  const completed = sum(reports.map((r) => r.salesCompleted));
+  const belowCost = sum(reports.map((r) => r.belowCostSales));
+  const breakEven = sum(reports.map((r) => r.breakEvenSales));
+  out.push(
+    `${belowCost > 0 ? "FLAG" : "OK"} ${belowCost} of ${completed} completed sales were below cost of goods sold; ` +
+      `${breakEven} sold exactly at cost (break-even).`,
+  );
   const sales = sum(reports.map((r) => r.saleCaps.BUDGET + r.saleCaps.DEMAND + r.saleCaps.STOCK + r.saleCaps.TRUCK));
-  if (lossSales > 0) out.push(`FLAG ${lossSales} of ${sales} sales were below cost of goods sold.`);
+
+  // The standard-moonshine market beside the basic one (#118 review). This strategy
+  // may not make standard, but its quote moves every day and sets the margin a
+  // player compares basic against.
+  const standardRecipe = data.recipes.find((r) => r.id === STANDARD_MOONSHINE_RECIPE);
+  const standardDays = reports.flatMap((r) => r.standardMarket);
+  const standardSpot = distribution(standardDays.map((d) => d.spotPrice));
+  if (standardRecipe && standardSpot) {
+    const standardCost = unitCost(standardRecipe, data);
+    const swing = standardSpot.max - standardSpot.min;
+    const margin = standardSpot.median - standardCost;
+    out.push(
+      `INFO ${standardRecipe.productId}/${standardRecipe.quality}: unit cost ${money(standardCost)} at normal prices; spot over all seed-days ` +
+        `median ${money(standardSpot.median)}, min ${money(standardSpot.min)}, max ${money(standardSpot.max)}; ` +
+        `median margin per case ${money(margin)} against basic's ${money(spot.median - cost)}; swing ${money(swing)}.`,
+    );
+  }
 
   // D₀/S₀ (ADR 0016: S = S₀ + yesterday's sales, so M_S ≤ 1 and only falls).
   const later = days.filter((d) => d.day > 0);

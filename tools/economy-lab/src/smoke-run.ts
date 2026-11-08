@@ -11,20 +11,19 @@
 
 import {
   TICKS_PER_DAY,
-  TICKS_PER_HOUR,
   type GameEvent,
   type GameSnapshot,
   type InvariantViolation,
   type Money,
   type RejectionCode,
 } from "@eov/contracts";
-import { FIRST_SHIPMENT_SCENARIO, GAME_DATA, REAL_MS_PER_GAME_HOUR_AT_1X, type GameData, type ScenarioDefinition } from "@eov/game-data";
+import { FIRST_SHIPMENT_SCENARIO, GAME_DATA, STANDARD_MOONSHINE_RECIPE, type GameData, type ScenarioDefinition } from "@eov/game-data";
 import { checkInvariants, newGame, type KernelSimulation } from "@eov/simulation";
 import { ContractTakerStrategy, CONTRACT_STRATEGY } from "./contract-taker.ts";
 import { GreedySpotStrategy, STRATEGY, type Strategy, type StrategyLog } from "./greedy-spot.ts";
+import { TICKS_PER_REAL_MINUTE } from "./targets.ts";
 
-/** Ticks per real minute at 1× (GDD §5: 720), derived from the pacing data. */
-export const TICKS_PER_REAL_MINUTE = (TICKS_PER_HOUR * 60_000) / REAL_MS_PER_GAME_HOUR_AT_1X;
+export { TICKS_PER_REAL_MINUTE } from "./targets.ts";
 
 /** Default run length (issue #12 refresh): 10 game days, 14 400 ticks. */
 export const DEFAULT_DAYS = 10;
@@ -118,10 +117,17 @@ export interface SeedReport {
   readonly cashTrough: { readonly cash: Money; readonly tick: number };
   readonly unitsSold: number;
   readonly casesProduced: number;
-  /** Sales below cost of goods sold. */
-  readonly lossSales: number;
+  /** Completed sales (SALE_COMPLETED), not dispatches: the denominator for the two counts below. */
+  readonly salesCompleted: number;
+  /** Completed sales whose revenue was below their cost of goods sold. */
+  readonly belowCostSales: number;
+  /** Completed sales whose revenue exactly equalled their cost of goods sold. */
+  readonly breakEvenSales: number;
   readonly daily: readonly DayRecord[];
+  /** The strategy's product (basic moonshine) market, one entry per day. */
   readonly market: readonly MarketDay[];
+  /** The standard-moonshine market on the same days, beside the basic one (#118 review). */
+  readonly standardMarket: readonly MarketDay[];
   /** Day index the seeded shortage started, or null if it didn't start in the run. */
   readonly shortageStartDay: number | null;
   readonly unitsByBuyer: Readonly<Record<string, number>>;
@@ -178,6 +184,7 @@ export function runSmokeSeed(seed: number, options: SmokeOptions = {}): SeedRepo
   const first = sim.snapshot();
   const bot = createStrategy(options.strategy ?? STRATEGY.name, first, data);
   const recipe = data.recipes.find((r) => r.id === STRATEGY.recipeId)!;
+  const standardRecipe = data.recipes.find((r) => r.id === STANDARD_MOONSHINE_RECIPE);
   const upgradePrice = data.equipment.find((e) => e.id === STRATEGY.upgradeId)?.price ?? (0 as Money);
 
   let firstProfitableSale: Milestone | null = null;
@@ -188,12 +195,15 @@ export function runSmokeSeed(seed: number, options: SmokeOptions = {}): SeedRepo
   let unitsSold = 0;
   let unitsToday = 0;
   let casesProduced = 0;
-  let lossSales = 0;
+  let salesCompleted = 0;
+  let belowCostSales = 0;
+  let breakEvenSales = 0;
   const unitsByBuyer: Record<string, number> = {};
   const applyRejections: Partial<Record<RejectionCode, number>> = {};
   const netWorthByDay: Money[] = [first.finance.netWorth];
   const daily: DayRecord[] = [];
   const market: MarketDay[] = [];
+  const standardMarket: MarketDay[] = [];
   const tierReached: Record<string, Milestone | null> = {};
   for (const t of data.progression.tiers) tierReached[t.id] = t.id === first.progression.currentTierId ? milestone(0) : null;
   let victory: Milestone | null = null;
@@ -201,12 +211,12 @@ export function runSmokeSeed(seed: number, options: SmokeOptions = {}): SeedRepo
   let contractsCompleted = 0;
   const installments = { FULFILLED: 0, PARTIAL: 0, MISSED: 0 };
 
-  const recordMarket = (s: GameSnapshot): void => {
-    const quote = s.market.products.find((p) => p.productId === recipe.productId && p.quality === recipe.quality);
+  const recordQuote = (s: GameSnapshot, of: GameData["recipes"][number], into: MarketDay[]): void => {
+    const quote = s.market.products.find((p) => p.productId === of.productId && p.quality === of.quality);
     if (!quote) return;
-    const inputs = new Set(recipe.inputsPerCase.map((i) => i.materialId));
+    const inputs = new Set(of.inputsPerCase.map((i) => i.materialId));
     const lines = s.market.suppliers.flatMap((sup) => sup.materials).filter((m) => inputs.has(m.materialId));
-    market.push({
+    into.push({
       day: s.clock.dayIndex,
       spotPrice: quote.spotPrice,
       demandRatioPpm: quote.demandRatioPpm,
@@ -215,6 +225,10 @@ export function runSmokeSeed(seed: number, options: SmokeOptions = {}): SeedRepo
       maxInputPrice: lines.reduce((m, l) => Math.max(m, l.unitPrice), 0) as Money,
       shortage: lines.some((l) => l.shortage),
     });
+  };
+  const recordMarket = (s: GameSnapshot): void => {
+    recordQuote(s, recipe, market);
+    if (standardRecipe) recordQuote(s, standardRecipe, standardMarket);
   };
 
   const observe = (events: readonly GameEvent[]): void => {
@@ -225,8 +239,10 @@ export function runSmokeSeed(seed: number, options: SmokeOptions = {}): SeedRepo
           unitsSold += quantity;
           unitsToday += quantity;
           unitsByBuyer[e.buyerId] = (unitsByBuyer[e.buyerId] ?? 0) + quantity;
+          salesCompleted++;
           if (e.revenue > e.costOfGoodsSold) firstProfitableSale ??= milestone(e.tick);
-          else lossSales++;
+          else if (e.revenue < e.costOfGoodsSold) belowCostSales++;
+          else breakEvenSales++;
           break;
         }
         case "PRODUCTION_COMPLETED":
@@ -322,9 +338,12 @@ export function runSmokeSeed(seed: number, options: SmokeOptions = {}): SeedRepo
     cashTrough: trough,
     unitsSold,
     casesProduced,
-    lossSales,
+    salesCompleted,
+    belowCostSales,
+    breakEvenSales,
     daily,
     market,
+    standardMarket,
     shortageStartDay,
     unitsByBuyer,
     saleCaps: { ...bot.log.saleCaps },

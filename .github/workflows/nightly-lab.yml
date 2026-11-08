@@ -1,0 +1,73 @@
+name: Nightly lab
+
+# T07c (#120): the full 1 000-seed balance run (factory.md §3: nightly, not per
+# PR). Runs the four GDD §13 strategies on seeds 1..1000, writes the GDD §13
+# balance report, and uploads both. The run fails on an invariant violation or a
+# replay divergence; missed balance targets are reported, never failed.
+
+on:
+  schedule:
+    - cron: "17 7 * * *" # daily, 07:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-lab
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  lab:
+    name: 1 000-seed batch → balance report
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same Node and pnpm setup as ci.yml. Reads the pnpm version from
+      # "packageManager" in package.json.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Exits 1 on an invariant violation or replay divergence. Carry on so the
+      # report and the artifacts still get made; the last step fails the run.
+      - name: Batch (1 000 seeds)
+        id: batch
+        continue-on-error: true
+        run: pnpm --filter @eov/economy-lab batch --seeds 1000
+
+      - name: Balance report
+        id: report
+        if: ${{ !cancelled() && hashFiles('tools/economy-lab/dist/batch-results.json') != '' }}
+        continue-on-error: true
+        run: pnpm --filter @eov/economy-lab report
+
+      - name: Job summary
+        if: ${{ !cancelled() && hashFiles('tools/economy-lab/dist/balance-report.md') != '' }}
+        run: cat tools/economy-lab/dist/balance-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results and report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-lab-${{ github.run_number }}
+          path: |
+            tools/economy-lab/dist/batch-results.json
+            tools/economy-lab/dist/balance-report.md
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail on invariant violations or replay divergence
+        if: ${{ !cancelled() && (steps.batch.outcome != 'success' || steps.report.outcome != 'success') }}
+        run: |
+          echo "batch: ${{ steps.batch.outcome }}, report: ${{ steps.report.outcome }}"
+          echo "::error::The nightly lab run found an invariant violation or a replay divergence, or failed to finish. See the batch and report steps."
+          exit 1

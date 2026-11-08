@@ -8,6 +8,12 @@
 // reputation only at installment settlements (deadlines), so victory always lands
 // on a stop; insolvency is checked at midnight, also a stop.
 //
+// T07c (issue #120) adds what the balance report needs: completed sales by
+// product (break-even apart from below cost), the basic and standard spot quotes
+// and net worth at each day's start, the run's first setback and whether net
+// worth recovered from it, and whether victory landed on an installment
+// settlement.
+//
 // At the end the run's command log is replayed on a fresh game (ADR 0004's replay
 // procedure) and the state hash compared.
 
@@ -22,7 +28,14 @@ import {
   type RejectionCode,
   type GameState,
 } from "@eov/contracts";
-import { FIRST_SHIPMENT_SCENARIO, GAME_DATA, type GameData, type ScenarioDefinition } from "@eov/game-data";
+import {
+  BASIC_MOONSHINE_RECIPE,
+  FIRST_SHIPMENT_SCENARIO,
+  GAME_DATA,
+  STANDARD_MOONSHINE_RECIPE,
+  type GameData,
+  type ScenarioDefinition,
+} from "@eov/game-data";
 import { checkInvariants, newGame, type KernelSimulation } from "@eov/simulation";
 import type { Gateway } from "./greedy-spot.ts";
 import type { HeadlessStrategyName, Variant } from "./headless-strategy.ts";
@@ -56,6 +69,36 @@ export interface LossesBySource {
   readonly transport: Money;
 }
 
+/** Completed sales of one product and quality (SALE_COMPLETED events, spot and contract). */
+export interface ProductSales {
+  readonly completed: number;
+  /** Revenue below cost of goods sold. */
+  readonly belowCost: number;
+  /** Revenue exactly equal to cost of goods sold. */
+  readonly breakEven: number;
+  readonly units: number;
+  readonly revenue: Money;
+  readonly costOfGoodsSold: Money;
+}
+
+/** What can set a run back: an event that books a loss. */
+export type SetbackKind = "SEIZURE" | "FAILED_RUN" | "PENALTY";
+
+/**
+ * The run's first setback: the first event that booked a loss (cargo seized,
+ * a production run's inputs written off, or an installment penalty).
+ */
+export interface Setback {
+  readonly kind: SetbackKind;
+  readonly tick: number;
+  /** The loss the event booked, in cents. */
+  readonly loss: Money;
+  /** Net worth at the last stop before the event. */
+  readonly netWorthBefore: Money;
+  /** The first stop at which net worth was back to at least `netWorthBefore`, or null. */
+  readonly recoveredAt: number | null;
+}
+
 export interface BatchRunResult {
   readonly strategy: HeadlessStrategyName;
   readonly seed: number;
@@ -65,11 +108,21 @@ export interface BatchRunResult {
   readonly outcomeTick: number | null;
   readonly endTick: number;
   readonly firstProfitableSale: Milestone | null;
+  /** First time profit to date (after wages and overhead) went above zero. */
+  readonly firstNetProfit: Milestone | null;
   /** First equipment bought. */
   readonly firstUpgrade: Milestone | null;
   /** When each tier was reached, by tier ID in ladder order. The starting tier is reached at tick 0. */
   readonly tierReached: Readonly<Record<string, Milestone | null>>;
   readonly victory: Milestone | null;
+  /** Whether an installment settled on the victory tick (reputation only moves at settlement). */
+  readonly victoryOnSettlement: boolean;
+  /**
+   * The first stop at which each victory condition held (game-data's
+   * `progression.victory`): net worth, reputation, and completed contracts.
+   * The last of the three to clear is what set the victory time.
+   */
+  readonly victoryGates: { readonly netWorth: number | null; readonly reputation: number | null; readonly completedContracts: number | null };
   readonly lost: Milestone | null;
   readonly cashTrough: { readonly cash: Money; readonly tick: number };
   readonly finalNetWorth: Money;
@@ -80,6 +133,17 @@ export interface BatchRunResult {
   readonly netProfit: Money;
   readonly losses: LossesBySource;
   readonly unitsSold: number;
+  /** Completed sales by "productId/quality", keys sorted. */
+  readonly sales: Readonly<Record<string, ProductSales>>;
+  /** Index d: net worth at the start of day d, while the run lasted. */
+  readonly netWorthByDay: readonly Money[];
+  /** Spot price at the start of each day the run lasted, by "productId/quality", for basic and standard moonshine. */
+  readonly spotByDay: Readonly<Record<string, readonly Money[]>>;
+  readonly setback: Setback | null;
+  /** Loss events over the whole run (seizures, failed runs, penalties). */
+  readonly setbackCount: number;
+  /** Route closures and supplier shortages that started during the run. */
+  readonly disruptions: { readonly routeClosures: number; readonly shortages: number };
   readonly casesProduced: number;
   readonly contractsAccepted: number;
   readonly contractsCompleted: number;
@@ -171,6 +235,7 @@ export function runBatchSeed(strategy: HeadlessStrategyName, seed: number, optio
   const bot = createHeadlessStrategy(strategy, first, seed, data);
 
   let firstProfitableSale: Milestone | null = null;
+  let firstNetProfit: Milestone | null = null;
   let firstUpgrade: Milestone | null = null;
   let victory: Milestone | null = null;
   let lost: Milestone | null = null;
@@ -178,6 +243,23 @@ export function runBatchSeed(strategy: HeadlessStrategyName, seed: number, optio
   for (const t of data.progression.tiers) tierReached[t.id] = t.id === first.progression.currentTierId ? milestone(0) : null;
   let trough = { cash: first.finance.cash, tick: 0 };
   let unitsSold = 0;
+  const sales = new Map<string, { completed: number; belowCost: number; breakEven: number; units: number; revenue: number; costOfGoodsSold: number }>();
+  const netWorthByDay: Money[] = [];
+  const watched = [BASIC_MOONSHINE_RECIPE, STANDARD_MOONSHINE_RECIPE]
+    .map((id) => data.recipes.find((r) => r.id === id))
+    .flatMap((r) => (r ? [`${r.productId}/${r.quality}`] : []));
+  const spotByDay: Record<string, Money[]> = {};
+  for (const key of watched) spotByDay[key] = [];
+  // Assigned in closures, so the cast keeps TS from narrowing it to null here.
+  let setback = null as { kind: SetbackKind; tick: number; loss: number; netWorthBefore: Money; recoveredAt: number | null } | null;
+  let setbackCount = 0;
+  let lastNetWorth = first.finance.netWorth;
+  let victoryOnSettlement = false;
+  const goal = data.progression.victory;
+  const gates: { netWorth: number | null; reputation: number | null; completedContracts: number | null } = { netWorth: null, reputation: null, completedContracts: null };
+  const settledAt = new Set<number>();
+  let routeClosures = 0;
+  let shortages = 0;
   let casesProduced = 0;
   let contractsAccepted = 0;
   let contractsCompleted = 0;
@@ -190,26 +272,54 @@ export function runBatchSeed(strategy: HeadlessStrategyName, seed: number, optio
   const violations: RecordedViolation[] = [];
   let violationCount = 0;
 
+  const lose = (kind: SetbackKind, tick: number, loss: number): void => {
+    setbackCount++;
+    setback ??= { kind, tick, loss, netWorthBefore: lastNetWorth, recoveredAt: null };
+  };
+
   const observe = (events: readonly GameEvent[]): void => {
     for (const e of events) {
       switch (e.type) {
-        case "SALE_COMPLETED":
-          unitsSold += e.cargo.reduce((n, line) => n + line.quantity, 0);
+        case "SALE_COMPLETED": {
+          const units = e.cargo.reduce((n, line) => n + line.quantity, 0);
+          unitsSold += units;
+          const line = e.cargo[0];
+          const key = line ? `${line.productId}/${line.quality}` : "none";
+          const tally = sales.get(key) ?? { completed: 0, belowCost: 0, breakEven: 0, units: 0, revenue: 0, costOfGoodsSold: 0 };
+          tally.completed++;
+          tally.units += units;
+          tally.revenue += e.revenue;
+          tally.costOfGoodsSold += e.costOfGoodsSold;
           if (e.revenue > e.costOfGoodsSold) firstProfitableSale ??= milestone(e.tick);
-          else belowCostSales += e.costOfGoodsSold - e.revenue;
+          else if (e.revenue < e.costOfGoodsSold) {
+            tally.belowCost++;
+            belowCostSales += e.costOfGoodsSold - e.revenue;
+          } else tally.breakEven++;
+          sales.set(key, tally);
+          break;
+        }
+        case "SHORTAGE_STARTED":
+          shortages++;
+          break;
+        case "ROUTE_CLOSED":
+          routeClosures++;
           break;
         case "PRODUCTION_COMPLETED":
           casesProduced += e.quantity;
           break;
         case "PRODUCTION_FAILED":
           failedProduction += e.writtenOff;
+          lose("FAILED_RUN", e.tick, e.writtenOff);
           break;
         case "CARGO_LOST":
           seizures += e.bookValue;
+          lose("SEIZURE", e.tick, e.bookValue);
           break;
         case "INSTALLMENT_SETTLED":
           installments[e.outcome]++;
           penalties += e.penalty;
+          settledAt.add(e.tick);
+          if (e.penalty > 0) lose("PENALTY", e.tick, e.penalty);
           break;
         case "EQUIPMENT_PURCHASED":
           firstUpgrade ??= milestone(e.tick);
@@ -224,6 +334,7 @@ export function runBatchSeed(strategy: HeadlessStrategyName, seed: number, optio
           tierReached[e.tierId] ??= milestone(e.tick);
           break;
         case "VICTORY_ACHIEVED":
+          if (victory === null) victoryOnSettlement = settledAt.has(e.tick);
           victory ??= milestone(e.tick);
           break;
         case "GAME_LOST":
@@ -238,11 +349,26 @@ export function runBatchSeed(strategy: HeadlessStrategyName, seed: number, optio
     }
   };
 
-  /** Takes the new events, tracks the cash trough, and checks the invariants. */
+  /** Takes the new events, tracks the cash trough and the day-start lines, and checks the invariants. */
   const stop = (): GameSnapshot => {
     observe(sim.takeEvents());
     const s = sim.snapshot();
-    if (s.finance.cash < trough.cash) trough = { cash: s.finance.cash, tick: s.clock.tick };
+    const now = s.clock.tick;
+    if (s.finance.cash < trough.cash) trough = { cash: s.finance.cash, tick: now };
+    if (s.finance.toDate.profit.netProfit > 0) firstNetProfit ??= milestone(now);
+    if (setback !== null && setback.recoveredAt === null && s.finance.netWorth >= setback.netWorthBefore) setback.recoveredAt = now;
+    lastNetWorth = s.finance.netWorth;
+    if (s.finance.netWorth >= goal.netWorth) gates.netWorth ??= now;
+    if (s.family.reputation >= goal.reputation) gates.reputation ??= now;
+    if (contractsCompleted >= goal.completedContracts) gates.completedContracts ??= now;
+    // Every midnight is a stop, so each day's start is recorded once.
+    if (now % TICKS_PER_DAY === 0 && netWorthByDay.length === now / TICKS_PER_DAY) {
+      netWorthByDay.push(s.finance.netWorth);
+      for (const key of watched) {
+        const quote = s.market.products.find((p) => `${p.productId}/${p.quality}` === key);
+        spotByDay[key]!.push(quote?.spotPrice ?? (0 as Money));
+      }
+    }
     const state = sim.state;
     const last = state.ledger.transactions.at(-1);
     const found: { readonly code: string }[] = last ? [...invariants(state, last)] : [];
@@ -278,9 +404,12 @@ export function runBatchSeed(strategy: HeadlessStrategyName, seed: number, optio
     outcomeTick: s.outcome.status === "PLAYING" ? null : s.outcome.tick,
     endTick: s.clock.tick,
     firstProfitableSale,
+    firstNetProfit,
     firstUpgrade,
     tierReached,
     victory,
+    victoryOnSettlement,
+    victoryGates: gates,
     lost,
     cashTrough: trough,
     finalNetWorth: s.finance.netWorth,
@@ -297,6 +426,17 @@ export function runBatchSeed(strategy: HeadlessStrategyName, seed: number, optio
       transport: expense(s, "TRANSPORT"),
     },
     unitsSold,
+    sales: Object.fromEntries(
+      [...sales.keys()].sort().map((key) => {
+        const t = sales.get(key)!;
+        return [key, { ...t, revenue: t.revenue as Money, costOfGoodsSold: t.costOfGoodsSold as Money }];
+      }),
+    ),
+    netWorthByDay,
+    spotByDay,
+    setback: setback === null ? null : { ...setback, loss: setback.loss as Money },
+    setbackCount,
+    disruptions: { routeClosures, shortages },
     casesProduced,
     contractsAccepted,
     contractsCompleted,
