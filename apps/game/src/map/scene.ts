@@ -59,8 +59,12 @@ export interface PlacedEntity {
 
 /** Screen-space sizes, in CSS pixels. Rendering detail, not gameplay numbers. */
 export const MAP_METRICS = {
-  /** Space kept clear around the outermost shapes, so edge labels fit. */
-  padding: 56,
+  /**
+   * Space kept clear around the outermost shapes, so edge labels fit. Half the
+   * widest edge label ("Miller's Feed & Seed", about 125px at the 12px label
+   * size) plus a little air (#123 review, #50).
+   */
+  padding: 72,
   locationRadius: 16,
   vehicleRadius: 9,
   /** How close to a route's line a point must be to hit it. */

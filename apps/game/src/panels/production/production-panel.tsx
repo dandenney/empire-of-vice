@@ -6,8 +6,13 @@
 // maximum, so a request the simulation rejects shows its typed reason. No
 // pre-start duration estimate yet (issue #11 decision 11); a later task may
 // show `ticksPerCase × quantity`.
+//
+// The last run can be repeated (REPEAT_OPERATION on the `causedBy` of the
+// newest PRODUCTION_STARTED event in the snapshot's recent events, ADR 0020
+// decision 11). The simulation re-validates it; a rejection shows its typed
+// reason. The offer drops off once that event leaves the recent-events window.
 
-import type { FacilitySnapshot, GameSnapshot, ProductionJobSnapshot, RecipeOption } from "@eov/contracts";
+import type { CommandId, FacilitySnapshot, GameSnapshot, ProductionJobSnapshot, RecipeOption } from "@eov/contracts";
 import { useState } from "react";
 import { describeOutcome, describeReason, formatQuality } from "../../components/format.ts";
 import { COMMON_COPY } from "../../components/copy.ts";
@@ -77,6 +82,46 @@ function RecipeRow({ facility, recipe }: { readonly facility: FacilitySnapshot; 
         </p>
       </div>
     </li>
+  );
+}
+
+/** The player's last production run, from the snapshot's recent events, or null. */
+function lastRun(snapshot: GameSnapshot): { readonly sourceCommandId: CommandId; readonly line: string } | null {
+  let last: { readonly sourceCommandId: CommandId; readonly line: string } | null = null;
+  for (const event of snapshot.recentEvents) {
+    if (event.type !== "PRODUCTION_STARTED" || event.causedBy === null) continue;
+    const facility = snapshot.facilities.find((f) => f.id === event.facilityId);
+    const recipe = facility?.recipes.find((r) => r.recipeId === event.recipeId)?.name ?? event.recipeId;
+    last = { sourceCommandId: event.causedBy, line: C.repeatLine(event.quantity, recipe, facility?.name ?? event.facilityId) };
+  }
+  return last;
+}
+
+function RepeatRun({ snapshot }: { readonly snapshot: GameSnapshot }) {
+  const command = useCommand("repeat-production");
+  const run = lastRun(snapshot);
+  if (run === null) return null;
+  const repeat = () => command.send({ command: { type: "REPEAT_OPERATION", sourceCommandId: run.sourceCommandId } });
+  return (
+    <section aria-labelledby="production-repeat-title" data-testid="repeat-production">
+      <h3 className="group-title" id="production-repeat-title">
+        {C.repeatTitle}
+      </h3>
+      <div className="recipe">
+        <p className="recipe-name" data-testid="repeat-production-line">
+          {run.line}
+        </p>
+        <p className="facility-summary">{C.repeatNote}</p>
+        <div className="recipe-start">
+          <button type="button" className="button button-primary" onClick={repeat} disabled={command.pending} aria-label={C.repeatLabel(run.line)} data-testid="repeat-production-button">
+            {C.repeat}
+          </button>
+          <p role="status" className="command-result" data-testid="repeat-production-result">
+            {command.pending ? COMMON_COPY.pending : command.error ? command.error : command.outcome ? describeOutcome(command.outcome) : ""}
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -165,6 +210,7 @@ export function ProductionPanel({ snapshot }: PanelProps) {
       <h2 className="panel-title" id="production-title">
         {C.title}
       </h2>
+      <RepeatRun snapshot={snapshot} />
       {facilities.length === 0 ? <p className="panel-empty">{C.noFacilities}</p> : facilities.map((f) => <FacilitySection key={f.id} facility={f} snapshot={snapshot} />)}
     </section>
   );
