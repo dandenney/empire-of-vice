@@ -80,6 +80,20 @@ export function nextDeadline(c: ContractSnapshot): number {
 
 export const qualitiesFrom = (minimum: QualityTier): readonly QualityTier[] => QUALITY_TIERS.filter((q) => qualityRank(q) >= qualityRank(minimum));
 
+/** The want a buyer prices a case at: the one with the highest minimum quality the case meets. */
+export function pricingWant<W extends { readonly productId: ProductId; readonly minimumQuality: QualityTier }>(
+  wants: readonly W[],
+  productId: ProductId,
+  quality: QualityTier,
+): W | undefined {
+  let best: W | undefined;
+  for (const w of wants) {
+    if (w.productId !== productId || qualityRank(w.minimumQuality) > qualityRank(quality)) continue;
+    if (!best || qualityRank(w.minimumQuality) > qualityRank(best.minimumQuality)) best = w;
+  }
+  return best;
+}
+
 /** A route to take: `routeId` null means the default (ADR 0019 decision 1). */
 export interface RouteChoice {
   readonly routeId: RouteId | null;
@@ -407,8 +421,12 @@ export abstract class HeadlessStrategy implements Strategy {
       if (!route) continue;
       for (const want of buyer.wants) {
         if (want.maxAcceptableQuantity <= 0) continue;
-        // The lowest quality in stock that meets the want.
-        const quality = qualitiesFrom(want.minimumQuality).find((q) => (free.get(`${want.productId}/${q}`) ?? 0) > 0);
+        // The lowest quality in stock that this want prices. A buyer prices a case at its
+        // want with the highest minimum quality the case meets, so a better case may
+        // belong to another of its wants, at that want's quote.
+        const quality = qualitiesFrom(want.minimumQuality).find(
+          (q) => (free.get(`${want.productId}/${q}`) ?? 0) > 0 && pricingWant(buyer.wants, want.productId, q) === want,
+        );
         if (!quality) continue;
         const quantity = Math.min(free.get(`${want.productId}/${quality}`)!, capacity, want.maxAcceptableQuantity);
         const pool = facility.products.find((p) => p.productId === want.productId && p.quality === quality);

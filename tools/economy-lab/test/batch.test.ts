@@ -50,10 +50,10 @@ describe("strategy PRNG", () => {
 });
 
 describe("headless strategies", () => {
-  it.each(HEADLESS_STRATEGY_NAMES)("%s acts only through dispatch, and every accepted command is in the log", (name) => {
+  it.each(HEADLESS_STRATEGY_NAMES.flatMap((name) => [1, 2].map((seed) => [name, seed] as const)))("%s (seed %i) acts only through dispatch, and every accepted command is in the log", (name, seed) => {
     const { sent, wrap } = recorder();
     let game: KernelSimulation | null = null;
-    const r = runBatchSeed(name, 1, {
+    const r = runBatchSeed(name, seed, {
       gateway: (sim) => {
         game = sim;
         return wrap(sim);
