@@ -38,7 +38,7 @@ import {
   type GameData,
   type ScenarioDefinition,
 } from "@eov/game-data";
-import { checkInvariants, newGame, type KernelSimulation } from "@eov/simulation";
+import { checkInvariants, journalOf, newGame, replayJournal, type KernelSimulation } from "@eov/simulation";
 import type { Gateway } from "./greedy-spot.ts";
 import type { HeadlessStrategyName, Variant } from "./headless-strategy.ts";
 import { milestone, type Milestone } from "./smoke-run.ts";
@@ -187,16 +187,12 @@ export interface BatchRunOptions {
 }
 
 /**
- * Replays a run's command log on a fresh game (ADR 0004 replay procedure, issue #66):
- * the envelopes due at or before the end tick, then advance to it, then the rest.
+ * Replays a run's command log on a fresh game with the kernel's `replayJournal`
+ * (ADR 0004 replay procedure, issue #66), and returns the replayed state hash.
  */
 export function replayStateHash(original: KernelSimulation, setup: { readonly scenario: ScenarioDefinition; readonly data: GameData }): string {
-  const end = original.state.tick;
   const replayed = newGame(setup);
-  const log = [...original.state.commandLog, ...original.state.queuedCommands];
-  for (const e of log) if (e.scheduledTick <= end) replayed.replay(e);
-  replayed.advance(end - replayed.state.tick);
-  for (const e of log) if (e.scheduledTick > end) replayed.replay(e);
+  replayJournal(replayed, journalOf(original.state), original.state.tick);
   return replayed.stateHash();
 }
 
