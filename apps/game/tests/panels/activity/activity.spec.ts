@@ -27,7 +27,8 @@ test("lists cash lines, then Reputation and Standing rows as the game earns them
   const reputation = s.recentEvents.filter((e) => e.type === "REPUTATION_CHANGED");
   const tiers = s.recentEvents.filter((e) => e.type === "TIER_REACHED");
   expect(reputation.length).toBeGreaterThan(0);
-  expect(tiers).toHaveLength(1);
+  // A promotion can pass more than one standing at once.
+  expect(tiers.length).toBeGreaterThan(0);
 
   // The feed is the snapshot's, newest first.
   const expected = activityRows(s);
@@ -47,17 +48,16 @@ test("lists cash lines, then Reputation and Standing rows as the game earns them
   await expect(repRows.getByTestId("activity-category")).toHaveText(repTexts.map(() => "Reputation"));
   await expect(repRows.locator(".money")).toHaveCount(0);
 
-  // The Standing row, named from the snapshot.
-  const tierEvent = tiers[0]!;
-  const tierName = tierEvent.type === "TIER_REACHED" ? s.progression.tiers.find((t) => t.id === tierEvent.tierId)!.name : "";
+  // A Standing row per TIER_REACHED, named from the snapshot.
   const standing = page.locator('[data-testid="activity-row"][data-kind="standing"]');
-  await expect(standing).toHaveCount(1);
-  await expect(standing.getByTestId("activity-category")).toHaveText("Standing");
-  await expect(standing.getByTestId("activity-text")).toHaveText(`New standing: ${tierName}.`);
+  await expect(standing).toHaveCount(tiers.length);
+  await expect(standing.getByTestId("activity-category")).toHaveText(tiers.map(() => "Standing"));
+  const names = tiers.map((e) => (e.type === "TIER_REACHED" ? s.progression.tiers.find((t) => t.id === e.tierId)!.name : ""));
+  await expect(standing.getByTestId("activity-text")).toHaveText(names.map((n) => `New standing: ${n}.`).reverse());
   await expect(standing.locator(".money")).toHaveCount(0);
 
-  // One notification for the promotion: its toast. The feed row is the record, not a second toast.
-  await expect(page.locator('[data-testid="toast"][data-event="TIER_REACHED"]')).toHaveCount(1);
+  // One notification per promotion: its toast. The feed row is the record, not a second toast.
+  await expect(page.locator('[data-testid="toast"][data-event="TIER_REACHED"]')).toHaveCount(tiers.length);
 
   // Cash lines carry their cash figure; PROGRESSION transactions never show.
   const sale = expected.find((r) => r.kind === "cash" && r.transactionKind === "SALE");

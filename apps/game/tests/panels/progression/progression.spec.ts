@@ -66,11 +66,16 @@ test("follows a promotion: the new standing, the one after it, and its unlocks",
   await page.getByTestId("open-progression").click();
   const s = await snapshot(page);
   const { tiers, currentTierId } = s.progression;
-  expect(promotion.type === "TIER_REACHED" && currentTierId).toBe(promotion.type === "TIER_REACHED" ? promotion.tierId : null);
+  // The last standing reached (a promotion can pass more than one at once) is the current one.
+  const reached = s.recentEvents.filter((e) => e.type === "TIER_REACHED");
+  const last = reached.at(-1)!;
+  expect(last.type === "TIER_REACHED" ? last.tierId : null).toBe(currentTierId);
   const index = tiers.findIndex((t) => t.id === currentTierId);
   await expect(page.getByTestId("progression-standing")).toHaveText(tiers[index]!.name);
-  await expect(page.getByTestId(`progression-tier-${tiers[index - 1]!.id}-status`)).toHaveText(C.reached);
-  await expect(page.getByTestId("progression-next")).toContainText(C.nextTitle(tiers[index + 1]!.name));
+  for (const t of tiers.slice(0, index)) await expect(page.getByTestId(`progression-tier-${t.id}-status`)).toHaveText(C.reached);
+  await expect(page.getByTestId(`progression-tier-${currentTierId}-status`)).toHaveText(C.current);
+  const next = tiers[index + 1];
+  await expect(page.getByTestId("progression-next")).toContainText(next ? C.nextTitle(next.name) : C.topTier);
   await expect(page.getByTestId("progression-unlocked")).toHaveText(s.progression.unlocked.map(unlockLabel).join(", "));
   await prShot(page.getByTestId("panel-progression"), HERE, "progression-promoted");
 });
