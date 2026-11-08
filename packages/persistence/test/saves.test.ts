@@ -1,6 +1,7 @@
 import { SAVE_SCHEMA_VERSION, type SaveFile, type SaveMeta } from "@eov/contracts";
 import { FIRST_SHIPMENT_SCENARIO, GAME_DATA_VERSION } from "@eov/game-data";
 import { journalOf, loadGame, newGame, replayJournal } from "@eov/simulation";
+import { hashState } from "@eov/simulation/hash";
 import { describe, expect, it } from "vitest";
 import {
   createSaveFile,
@@ -12,6 +13,7 @@ import {
   serializeSaveFile,
   writeSave,
 } from "../src/index.ts";
+import { rawStateHash } from "../src/save-file.ts";
 import { gameInProgress, meta } from "./game.ts";
 
 const current = { scenarioId: FIRST_SHIPMENT_SCENARIO.id, gameDataVersion: GAME_DATA_VERSION };
@@ -159,5 +161,27 @@ describe("removing", () => {
     await storage.remove("slot-1");
     expect(await storage.list()).toEqual([]);
     expect(await readSave(storage, "slot-1")).toEqual({ ok: false, error: { code: "NOT_A_SAVE" } });
+  });
+});
+
+// An older version's state is hashed raw, before migration. parseSaveFile only
+// takes that path once SAVE_SCHEMA_VERSION goes above 1, so the hash is tested
+// directly: parsed JSON that can't be canonicalized is INVALID, not a throw.
+describe("rawStateHash", () => {
+  it("hashes a raw state as the kernel does", () => {
+    const state = gameInProgress().serialize().state;
+    expect(rawStateHash(JSON.parse(JSON.stringify(state)))).toEqual({ ok: true, hash: hashState(state) });
+  });
+
+  it("is INVALID for a state that isn't an object", () => {
+    expect(rawStateHash([1, 2])).toEqual({ ok: false, error: { code: "INVALID", issues: ["save.state: not a JSON object"] } });
+  });
+
+  it("is INVALID, not a throw, for a number JSON parses as Infinity", () => {
+    const state: unknown = JSON.parse('{"tick": 1e400}');
+    expect(rawStateHash(state)).toEqual({
+      ok: false,
+      error: { code: "INVALID", issues: [expect.stringContaining("save.state: Non-finite number")] },
+    });
   });
 });
