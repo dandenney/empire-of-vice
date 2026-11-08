@@ -5,7 +5,8 @@
   "description": "Local save/load: versioned saves and migrations stored in IndexedDB.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./indexed-db": "./src/indexed-db.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",

@@ -5,7 +5,8 @@
   "description": "Deterministic simulation engine. Runs identically in a Web Worker and in Node.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./hash": "./src/kernel/hash.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",

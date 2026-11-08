@@ -2,7 +2,9 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     // Tests run in Node under Vitest, so they may use Node APIs.
-    "types": ["node"]
+    "types": ["node"],
+    // The IndexedDB adapter is typed with the DOM lib (it runs in the browser).
+    "lib": ["ES2022", "DOM"]
   },
   "include": ["src", "test", "vitest.config.ts"]
 }
