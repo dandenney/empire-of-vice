@@ -32,4 +32,11 @@ export const PRODUCTION_COPY = {
   /** Separate parts, so each renders as its own text node, as before #58. */
   jobSummary: (line: string, timing: string): readonly string[] => [line, ", ", timing],
   jobProgressLabel: (recipe: string) => `Progress of ${recipe}`,
+
+  // Repeat the last run (REPEAT_OPERATION, ADR 0020 decision 11)
+  repeatTitle: "Repeat the last run",
+  repeatLine: (quantity: number, recipe: string, facility: string) => `${quantity} × ${recipe} at ${facility}`,
+  repeatNote: "Checked again against today's stock, capacity, and cash.",
+  repeat: "Repeat",
+  repeatLabel: (line: string) => `Repeat: ${line}`,
 } as const;

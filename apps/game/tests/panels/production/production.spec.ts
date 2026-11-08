@@ -1,8 +1,10 @@
 // The Production panel (issue #11): recipes with what can start and why not,
-// START_PRODUCTION through the panel, typed rejections, and running jobs.
+// START_PRODUCTION through the panel, typed rejections, and running jobs, and
+// REPEAT_OPERATION on the last run (#128).
 // Screenshot baselines are linux-only (CI); the assertion is skipped elsewhere.
 
 import { expect, test, type Page } from "@playwright/test";
+import { PRODUCTION_COPY } from "../../../src/panels/production/copy.ts";
 
 const snapshot = async (page: Page) => (await page.evaluate(() => window.__eov!.snapshot))!;
 const stateHash = (page: Page) => page.evaluate(() => window.__eov!.stateHash);
@@ -80,6 +82,52 @@ test("starts production from the panel, and the panel updates from the snapshot"
   await page.evaluate((n) => window.__eov!.advance(n), job.completesAt - job.startedAt - halfway);
   await expect(page.getByTestId(`facility-${facility.id}-no-jobs`)).toBeVisible();
   await expect(page.getByTestId(`facility-${facility.id}-products`)).toContainText("1 cases");
+});
+
+test("repeats the last production run with REPEAT_OPERATION, and shows a typed rejection when it can't", async ({ page }) => {
+  await newGame(page);
+  await page.getByTestId("open-production").click();
+  await expect(page.getByTestId("repeat-production")).toHaveCount(0);
+
+  await buyInputs(page, 2);
+  const s = await snapshot(page);
+  const facility = s.facilities[0]!;
+  const recipe = facility.recipes[0]!;
+  const row = page.getByTestId(`recipe-${recipe.recipeId}`);
+  await row.getByTestId(`recipe-${recipe.recipeId}-quantity`).fill("1");
+  await row.getByTestId(`recipe-${recipe.recipeId}-start`).click();
+  await expect(row.getByTestId(`recipe-${recipe.recipeId}-result`)).toHaveText("Done.");
+
+  // The last run, named from the snapshot.
+  const started = (await snapshot(page)).recentEvents.filter((e) => e.type === "PRODUCTION_STARTED").at(-1)!;
+  expect(started.causedBy).not.toBeNull();
+  await expect(page.getByTestId("repeat-production-line")).toHaveText(PRODUCTION_COPY.repeatLine(1, recipe.name, facility.name));
+
+  // While the still is busy, the repeat is rejected with its typed reason, and nothing changes.
+  const first = (await snapshot(page)).productionJobs[0]!;
+  let before = await stateHash(page);
+  await page.getByTestId("repeat-production-button").click();
+  await expect(page.getByTestId("repeat-production-result")).toContainText("Rejected:");
+  await expect(page.getByTestId("repeat-production-result")).toContainText("PRODUCTION_CAPACITY_EXCEEDED");
+  expect(await stateHash(page)).toBe(before);
+
+  // Once the run is done, REPEAT_OPERATION starts the same run again.
+  await page.evaluate((n) => window.__eov!.advance(n), first.completesAt - (await snapshot(page)).clock.tick);
+  await expect(page.getByTestId(`facility-${facility.id}-no-jobs`)).toBeVisible();
+  await page.getByTestId("repeat-production-button").click();
+  await expect(page.getByTestId("repeat-production-result")).toHaveText("Done.");
+  const repeated = await snapshot(page);
+  expect(repeated.productionJobs).toHaveLength(1);
+  expect(repeated.productionJobs[0]).toMatchObject({ facilityId: facility.id, recipeId: recipe.recipeId, quantity: 1 });
+  expect(repeated.productionJobs[0]!.id).not.toBe(first.id);
+
+  // The inputs are used up: the next repeat is rejected with its typed reason, and nothing changes.
+  await page.evaluate((n) => window.__eov!.advance(n), repeated.productionJobs[0]!.completesAt - repeated.clock.tick);
+  await expect(page.getByTestId(`facility-${facility.id}-no-jobs`)).toBeVisible();
+  before = await stateHash(page);
+  await page.getByTestId("repeat-production-button").click();
+  await expect(page.getByTestId("repeat-production-result")).toContainText("INSUFFICIENT_MATERIALS");
+  expect(await stateHash(page)).toBe(before);
 });
 
 test("clicking a location on the map opens its panel", async ({ page }) => {
