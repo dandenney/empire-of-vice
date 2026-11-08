@@ -30,9 +30,14 @@ function CommandResult({ command, testId }: { readonly command: CommandHandle; r
 
 function WorkforceForm({ facility }: { readonly facility: FacilitySnapshot }) {
   const command = useCommand(`set-workforce:${facility.id}`);
-  const [workers, setWorkers] = useState(String(facility.workforce.workers));
+  // The player's edit, or null to show the snapshot's crew (so a change made elsewhere shows here too).
+  const [draft, setDraft] = useState<string | null>(null);
+  const workers = draft ?? String(facility.workforce.workers);
   const testId = `facility-${facility.id}-workforce`;
-  const set = () => command.send({ command: { type: "SET_WORKFORCE", facilityId: facility.id, workerCount: Number(workers) } });
+  const set = async () => {
+    await command.send({ command: { type: "SET_WORKFORCE", facilityId: facility.id, workerCount: Number(workers) } });
+    setDraft(null);
+  };
   return (
     <section aria-labelledby={`${testId}-title`} data-testid={testId}>
       <h4 className="group-title" id={`${testId}-title`}>
@@ -65,7 +70,7 @@ function WorkforceForm({ facility }: { readonly facility: FacilitySnapshot }) {
             min={0}
             step={1}
             value={workers}
-            onChange={(e) => setWorkers(e.target.value)}
+            onChange={(e) => setDraft(e.target.value)}
             aria-label={C.workersLabel(facility.name)}
             data-testid={`${testId}-input`}
           />

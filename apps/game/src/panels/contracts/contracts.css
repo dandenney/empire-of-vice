@@ -90,8 +90,33 @@
 
 /* Installments */
 
+/* Seven columns inside a card: smaller type, tighter cells, and header cells
+   that may wrap, so the whole table (penalty figures included) fits. */
 .contract-installments {
   margin-top: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.ledger.contract-installments th,
+.ledger.contract-installments td {
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
+}
+
+.ledger.contract-installments th:first-child,
+.ledger.contract-installments td:first-child {
+  padding-left: 0;
+}
+
+.ledger.contract-installments th:last-child,
+.ledger.contract-installments td:last-child {
+  padding-right: 0;
+}
+
+.ledger.contract-installments thead th,
+.ledger.contract-installments thead th.figure {
+  white-space: normal;
+  vertical-align: bottom;
 }
 
 .contract-installments .contract-deadline,

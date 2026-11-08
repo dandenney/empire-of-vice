@@ -77,6 +77,12 @@ test("shows storage, equipment, and locked options from the snapshot, and sets t
   const hired = (await snapshot(page)).facilities[0]!;
   expect(hired.workforce.workers).toBe(crew);
   await expect(page.getByTestId(`${w}-workers`)).toHaveText(C.workersLine(hired.workforce.workers, hired.workforce.maximum));
+  await expect(page.getByTestId(`${w}-input`)).toHaveValue(String(hired.workforce.workers));
+
+  // A crew change made elsewhere (here, through the hook) shows in the input, which isn't being edited.
+  const outcome = await page.evaluate((r) => window.__eov!.dispatchRaw(r), { command: { type: "SET_WORKFORCE", facilityId: facility.id, workerCount: facility.workforce.workers } });
+  expect(outcome).toMatchObject({ kind: "result", result: { status: "applied" } });
+  await expect(page.getByTestId(`${w}-input`)).toHaveValue(String(facility.workforce.workers));
 });
 
 test("sells equipment at its resale value after a confirmation, then buys it back", async ({ page }) => {

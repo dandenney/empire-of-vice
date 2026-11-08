@@ -9,6 +9,7 @@
 import { formatMoney, TICKS_PER_DAY } from "@eov/contracts";
 import { CONTRACTS } from "@eov/game-data";
 import { expect, test, type Page } from "@playwright/test";
+import { formatQuality } from "../../../src/components/format.ts";
 import { CONTRACTS_COPY as C } from "../../../src/panels/contracts/copy.ts";
 import { formatDayTime, formatPpmPercent, formatSpan } from "../../../src/panels/contracts/contracts-view.ts";
 
@@ -115,7 +116,7 @@ test("accepts an offer, releases what it holds, and delivers an installment thro
   }
   await expect(box.getByTestId(`contract-${contract.id}-reserved`)).toHaveText(C.heldCases(contract.reservedQuantity));
   const pool = accepted.facilities[0]!.products.find((p) => p.productId === contract.productId)!;
-  await expect(page.getByTestId("reserved-lines")).toContainText(`${pool.reservedQuantity} of ${pool.quantity} cases reserved`);
+  await expect(page.getByTestId("reserved-lines")).toContainText(C.productReserved(pool.productName, formatQuality(pool.quality), pool.reservedQuantity, pool.quantity));
 
   // RELEASE_RESERVATION on the contract's hold: the cases are free again.
   const reservationId = contract.reservationIds[0]!;
@@ -133,7 +134,7 @@ test("accepts an offer, releases what it holds, and delivers an installment thro
   await form.getByTestId(`deliver-${contract.id}-quantity`).fill(String(truck.capacity + 1));
   await form.getByTestId(`deliver-${contract.id}-dispatch`).click();
   await expect(form.getByTestId(`deliver-${contract.id}-result`)).toContainText("Rejected:");
-  await expect(form.getByTestId(`deliver-${contract.id}-result`)).toContainText(/VEHICLE_CAPACITY_EXCEEDED|INSUFFICIENT_STOCK/);
+  await expect(form.getByTestId(`deliver-${contract.id}-result`)).toContainText("VEHICLE_CAPACITY_EXCEEDED");
   expect(await stateHash(page)).toBe(before);
 
   // DISPATCH_DELIVERY for the installment, on the picker's default (Safe) route.
