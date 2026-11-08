@@ -3,12 +3,15 @@
 //   pnpm --filter @eov/economy-lab report [--in dist/batch-results.json] [--out dist/balance-report.md]
 //
 // Reads a results file written by `batch` (T07b) and writes a Markdown report:
-// every GDD §13 target flagged MET or MISSED with its measured value, then the
+// every GDD §13 target flagged MET, MISSED or INSUFFICIENT EVIDENCE with its measured value, then the
 // distributions behind them (time to victory, win rates, bankruptcy and
 // soft-lock rates, cash troughs, profitability, sources of loss, milestone and
 // tier times), the basic and standard market lines, setbacks and recovery, why
 // victory times cluster, the Volume Producer choice, and a tuning proposal for
-// every MISSED target. Proposals only: nothing here changes game-data.
+// target not MET. Narrative and proposals are generated from the results (T07e,
+// issue #127): no strategy, tick or dollar figure is written in by hand. A run
+// counts as a win only by TARGETS.winCutoffTicks. Proposals only: nothing here
+// changes game-data.
 //
 // The report is a pure function of the results file and game-data: no clock, no
 // environment, keys in a fixed order. The same file gives a byte-identical
@@ -20,11 +23,11 @@ import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { formatMoney, TICKS_PER_DAY, type Money } from "@eov/contracts";
 import { BASIC_MOONSHINE_RECIPE, GAME_DATA, STANDARD_MOONSHINE_RECIPE, type GameData, type RecipeDefinition } from "@eov/game-data";
-import type { BatchRunResult, SetbackKind } from "./batch-run.ts";
+import { isModerateLoss, type BatchRunResult, type SetbackKind } from "./batch-run.ts";
 import { BATCH_FORMAT_VERSION, DEFAULT_BATCH_OUT, type BatchFile } from "./batch.ts";
 import type { HeadlessStrategyName } from "./headless-strategy.ts";
 import { unitCost } from "./smoke-report.ts";
-import { TARGETS, TICKS_PER_REAL_MINUTE, victoryOf } from "./targets.ts";
+import { countsAsWin, isLateWin, TARGETS, TICKS_PER_REAL_MINUTE, victoryOf } from "./targets.ts";
 
 /** Where the report goes by default, relative to the working directory (`dist/` is git-ignored). */
 export const DEFAULT_REPORT_OUT = "dist/balance-report.md";
@@ -69,6 +72,7 @@ const percent = (part: number, whole: number): number => (whole === 0 ? 0 : Math
 
 const minutes = (ticks: number): string => (ticks / TICKS_PER_REAL_MINUTE).toFixed(1);
 const at = (ticks: number): string => `${ticks} (${minutes(ticks)} min)`;
+const minutesGoal = (lo: number, hi: number): string => `${minutes(lo)}–${minutes(hi)} min (${lo}–${hi} ticks)`;
 const money = (cents: number): string => formatMoney(cents as Money);
 const pct = (value: number): string => `${value.toFixed(2)}%`;
 const row = (cells: readonly string[]): string => `| ${cells.join(" | ")} |`;
@@ -85,7 +89,8 @@ const P_HEADER = (first: string): string[] => [row([first, "Runs", "p10", "p50",
 // Targets
 // ---------------------------------------------------------------------------
 
-export type Verdict = "MET" | "MISSED";
+/** INSUFFICIENT EVIDENCE: too few judged runs to say either way (setback recovery only). */
+export type Verdict = "MET" | "MISSED" | "INSUFFICIENT EVIDENCE";
 
 export interface TargetResult {
   readonly id: TargetId;
@@ -109,7 +114,10 @@ export type TargetId =
 interface StrategyStats {
   readonly strategy: HeadlessStrategyName;
   readonly runs: readonly BatchRunResult[];
+  /** Wins by TARGETS.winCutoffTicks. */
   readonly won: number;
+  /** Victories after the cutoff: not wins. */
+  readonly wonLate: number;
   readonly lost: number;
   readonly dayCap: number;
   readonly softLocked: number;
@@ -125,11 +133,12 @@ const isSoftLocked = (r: BatchRunResult): boolean => {
 function stats(file: BatchFile): StrategyStats[] {
   return file.strategies.map((strategy) => {
     const runs = file.runs.filter((r) => r.strategy === strategy);
-    const won = runs.filter((r) => r.outcome === "WON").length;
+    const won = runs.filter(countsAsWin).length;
     return {
       strategy,
       runs,
       won,
+      wonLate: runs.filter(isLateWin).length,
       lost: runs.filter((r) => r.outcome === "LOST").length,
       dayCap: runs.filter((r) => r.outcome === "DAY_CAP").length,
       softLocked: runs.filter(isSoftLocked).length,
@@ -144,19 +153,67 @@ const ticksOf = (runs: readonly BatchRunResult[], pick: (r: BatchRunResult) => {
     return m ? [m.tick] : [];
   });
 
-/** Whether a setback recovered within the window: net worth back to its pre-setback level, and the run not lost. */
-const recovered = (r: BatchRunResult): boolean =>
-  r.setback !== null && r.setback.recoveredAt !== null && r.setback.recoveredAt - r.setback.tick <= TARGETS.setbackRecoveryWindowTicks && r.outcome !== "LOST";
+/** Whether the run's recorded setback is moderate: a loss of at least TARGETS.moderateSetbackMinPercent of net worth when booked. */
+export const hasModerateSetback = (r: BatchRunResult): boolean => r.setback !== null && isModerateLoss(r.setback.loss, r.setback.netWorthBefore);
 
-/** A setback whose window ran past the end of the run without a recovery can't be judged either way. */
-const judgeable = (r: BatchRunResult): boolean =>
-  r.setback !== null && (recovered(r) || r.outcome === "LOST" || r.endTick - r.setback.tick >= TARGETS.setbackRecoveryWindowTicks);
+/** Whether a moderate setback recovered within the window: net worth back to its pre-setback level, and the run not lost. */
+const recovered = (r: BatchRunResult): boolean =>
+  hasModerateSetback(r) && r.setback!.recoveredAt !== null && r.setback!.recoveredAt - r.setback!.tick <= TARGETS.setbackRecoveryWindowTicks && r.outcome !== "LOST";
+
+/** Judged runs: a moderate setback whose window closed. One whose window ran past the end of the run without a recovery can't be judged either way. */
+export const judgeable = (r: BatchRunResult): boolean =>
+  hasModerateSetback(r) && (recovered(r) || r.outcome === "LOST" || r.endTick - r.setback!.tick >= TARGETS.setbackRecoveryWindowTicks);
+
+export interface SetbackJudgement {
+  readonly judged: number;
+  readonly recovered: number;
+  readonly verdict: Verdict;
+}
+
+/**
+ * Setback recovery, per strategy and pooled. A strategy (or the pool) with fewer
+ * than TARGETS.setbackMinJudgedRuns judged runs is INSUFFICIENT EVIDENCE. The
+ * target is MISSED if the pool or any strategy with enough evidence recovers less
+ * than TARGETS.setbackRecoveryMinPercent of the time; MET only when every
+ * strategy has enough evidence and recovers often enough; otherwise INSUFFICIENT
+ * EVIDENCE.
+ */
+export function setbackVerdict(file: BatchFile): SetbackJudgement & { readonly per: readonly (SetbackJudgement & { readonly strategy: HeadlessStrategyName })[] } {
+  const judge = (runs: readonly BatchRunResult[]): SetbackJudgement => {
+    const j = runs.filter(judgeable);
+    const ok = j.filter(recovered).length;
+    const verdict: Verdict =
+      j.length < TARGETS.setbackMinJudgedRuns ? "INSUFFICIENT EVIDENCE" : percent(ok, j.length) >= TARGETS.setbackRecoveryMinPercent ? "MET" : "MISSED";
+    return { judged: j.length, recovered: ok, verdict };
+  };
+  const pooled = judge(file.runs);
+  const per = file.strategies.map((strategy) => ({ strategy, ...judge(file.runs.filter((r) => r.strategy === strategy)) }));
+  const verdict: Verdict =
+    pooled.verdict === "MISSED" || per.some((p) => p.verdict === "MISSED")
+      ? "MISSED"
+      : pooled.verdict === "MET" && per.length > 0 && per.every((p) => p.verdict === "MET")
+        ? "MET"
+        : "INSUFFICIENT EVIDENCE";
+  return { ...pooled, verdict, per };
+}
+
+type UpgradeSide = "in" | "early" | "late" | "never";
+
+/** Where a first-upgrade median falls against the 10–15 min window. */
+const upgradeSide = (p: Percentiles | null): UpgradeSide =>
+  p === null ? "never" : p.p50 < TARGETS.firstUpgradeMinTicks ? "early" : p.p50 > TARGETS.firstUpgradeMaxTicks ? "late" : "in";
+
+function firstUpgradeByStrategy(per: readonly StrategyStats[]): { readonly strategy: HeadlessStrategyName; readonly p: Percentiles | null; readonly side: UpgradeSide }[] {
+  return per.map((s) => {
+    const p = percentiles(ticksOf(s.runs, (r) => r.firstUpgrade));
+    return { strategy: s.strategy, p, side: upgradeSide(p) };
+  });
+}
 
 export function evaluateTargets(file: BatchFile): TargetResult[] {
   const all = file.runs;
   const per = stats(file);
   const out: TargetResult[] = [];
-  const minutesGoal = (lo: number, hi: number): string => `${minutes(lo)}–${minutes(hi)} min (${lo}–${hi} ticks)`;
 
   const fps = percentiles(ticksOf(all, (r) => r.firstProfitableSale));
   const fpsAll = fps !== null && fps.n === all.length;
@@ -169,20 +226,23 @@ export function evaluateTargets(file: BatchFile): TargetResult[] {
   });
 
   const fu = percentiles(ticksOf(all, (r) => r.firstUpgrade));
+  const fuPer = firstUpgradeByStrategy(per);
   out.push({
     id: "first-upgrade",
     target: "First meaningful upgrade (first equipment bought)",
-    goal: `median ${minutesGoal(TARGETS.firstUpgradeMinTicks, TARGETS.firstUpgradeMaxTicks)}`,
-    measured: fu ? `p50 ${at(fu.p50)} (p10 ${minutes(fu.p10)}, p90 ${minutes(fu.p90)} min); ${fu.n}/${all.length} runs` : "never",
-    verdict: fu !== null && fu.p50 >= TARGETS.firstUpgradeMinTicks && fu.p50 <= TARGETS.firstUpgradeMaxTicks ? "MET" : "MISSED",
+    goal: `median ${minutesGoal(TARGETS.firstUpgradeMinTicks, TARGETS.firstUpgradeMaxTicks)}, pooled and for every strategy`,
+    measured:
+      (fu ? `pooled p50 ${at(fu.p50)} (p10 ${minutes(fu.p10)}, p90 ${minutes(fu.p90)} min); ${fu.n}/${all.length} runs` : "pooled: never") +
+      `; by strategy p50: ${fuPer.map((x) => `${x.strategy} ${x.p ? `${minutes(x.p.p50)} min` : "never"}${x.side === "in" ? "" : ` (${x.side})`}`).join(", ")}`,
+    verdict: upgradeSide(fu) === "in" && fuPer.length > 0 && fuPer.every((x) => x.side === "in") ? "MET" : "MISSED",
   });
 
   const v = percentiles(ticksOf(all, (r) => r.victory));
   out.push({
     id: "victory-time",
     target: "M001 victory",
-    goal: `median over winning runs ${minutesGoal(TARGETS.victoryMinTicks, TARGETS.victoryMaxTicks)}`,
-    measured: v ? `p50 ${at(v.p50)} (p10 ${minutes(v.p10)}, p90 ${minutes(v.p90)} min); ${v.n}/${all.length} runs won` : "no run won",
+    goal: `median over runs that reached victory (late wins included) ${minutesGoal(TARGETS.victoryMinTicks, TARGETS.victoryMaxTicks)}`,
+    measured: v ? `p50 ${at(v.p50)} (p10 ${minutes(v.p10)}, p90 ${minutes(v.p90)} min); ${v.n}/${all.length} runs reached victory` : "no run reached victory",
     verdict: v !== null && v.p50 >= TARGETS.victoryMinTicks && v.p50 <= TARGETS.victoryMaxTicks ? "MET" : "MISSED",
   });
 
@@ -190,7 +250,7 @@ export function evaluateTargets(file: BatchFile): TargetResult[] {
   out.push({
     id: "competent-success",
     target: "Competent strategy success",
-    goal: `every strategy wins ${TARGETS.competentSuccessMinPercent}–${TARGETS.competentSuccessMaxPercent}% of its runs`,
+    goal: `every strategy wins ${TARGETS.competentSuccessMinPercent}–${TARGETS.competentSuccessMaxPercent}% of its runs, a win counting only by ${at(TARGETS.winCutoffTicks)}`,
     measured: per.map((s) => `${s.strategy} ${pct(s.winRate)}${inBand(s) ? "" : s.winRate < TARGETS.competentSuccessMinPercent ? " (below)" : " (above)"}`).join("; "),
     verdict: per.length > 0 && per.every(inBand) ? "MET" : "MISSED",
   });
@@ -207,22 +267,17 @@ export function evaluateTargets(file: BatchFile): TargetResult[] {
     verdict: per.length > 1 && gap < TARGETS.dominantAdvantageMaxPoints ? "MET" : "MISSED",
   });
 
-  const judged = all.filter(judgeable);
-  const ok = judged.filter(recovered).length;
-  const rate = percent(ok, judged.length);
-  const strategiesHit = new Set(judged.map((r) => r.strategy));
+  const sv = setbackVerdict(file);
   out.push({
     id: "setback-recovery",
     target: "Recovery from one moderate setback",
     goal:
-      `≥ ${TARGETS.setbackRecoveryMinPercent}% of runs with a setback recover within ${minutes(TARGETS.setbackRecoveryWindowTicks)} min, ` +
-      `over at least ${TARGETS.setbackMinJudgedRuns} judged runs (see "Setbacks and recovery")`,
+      `≥ ${TARGETS.setbackRecoveryMinPercent}% of runs with a moderate setback (a loss ≥ ${TARGETS.moderateSetbackMinPercent}% of net worth) recover within ` +
+      `${minutes(TARGETS.setbackRecoveryWindowTicks)} min, pooled and for every strategy, each over at least ${TARGETS.setbackMinJudgedRuns} judged runs (see "Setbacks and recovery")`,
     measured:
-      judged.length === 0
-        ? "no run had a setback, so nothing to measure"
-        : `${ok}/${judged.length} runs recovered (${pct(rate)}); setbacks came from ${[...strategiesHit].join(", ")}` +
-          (strategiesHit.size < per.length ? ` only (${strategiesHit.size} of ${per.length} strategies)` : ""),
-    verdict: judged.length >= TARGETS.setbackMinJudgedRuns && rate >= TARGETS.setbackRecoveryMinPercent ? "MET" : "MISSED",
+      (sv.judged === 0 ? "pooled: no judged moderate setback" : `pooled ${sv.recovered}/${sv.judged} recovered (${pct(percent(sv.recovered, sv.judged))})`) +
+      `; by strategy: ${sv.per.map((p) => `${p.strategy} ${p.recovered}/${p.judged}${p.verdict === "INSUFFICIENT EVIDENCE" ? " (too few)" : p.verdict === "MISSED" ? " (below)" : ""}`).join(", ")}`,
+    verdict: sv.verdict,
   });
 
   const violations = sum(all.map((r) => r.invariantViolationCount));
@@ -333,10 +388,11 @@ export function formatBalanceReport(file: BatchFile, data: GameData = GAME_DATA)
 
   // Targets.
   const missed = targets.filter((t) => t.verdict === "MISSED");
+  const unproven = targets.filter((t) => t.verdict === "INSUFFICIENT EVIDENCE");
   lines.push(
     "## GDD §13 targets",
     "",
-    `${targets.length - missed.length} MET, ${missed.length} MISSED.`,
+    `${targets.length - missed.length - unproven.length} MET, ${missed.length} MISSED, ${unproven.length} INSUFFICIENT EVIDENCE.`,
     "",
     row(["Target", "Goal", "Measured", "Verdict"]),
     align(4, 0),
@@ -352,7 +408,15 @@ export function formatBalanceReport(file: BatchFile, data: GameData = GAME_DATA)
   );
 
   // Outcomes.
-  lines.push("## Outcomes by strategy", "", row(["Strategy", "Runs", "Won", "Win rate", "Bankrupt (LOST)", "Day cap", "Soft-locked", "Net worth at end p50"]), align(1, 7));
+  lines.push(
+    "## Outcomes by strategy",
+    "",
+    `**Win rule.** A run counts as a win only if victory comes by tick ${TARGETS.winCutoffTicks} (${minutes(TARGETS.winCutoffTicks)} min, game day ${TARGETS.winCutoffTicks / TICKS_PER_DAY}), ` +
+      `the end of the M001 session. The batch runs to its ${file.days}-day cap, but a later victory is a *late win*: not a win in any win or success rate here.`,
+    "",
+    row(["Strategy", "Runs", "Won", "Won late", "Win rate", "Bankrupt (LOST)", "Day cap", "Soft-locked", "Net worth at end p50"]),
+    align(1, 8),
+  );
   for (const s of per) {
     const nw = percentiles(s.runs.map((r) => r.finalNetWorth));
     lines.push(
@@ -360,6 +424,7 @@ export function formatBalanceReport(file: BatchFile, data: GameData = GAME_DATA)
         s.strategy,
         String(s.runs.length),
         String(s.won),
+        String(s.wonLate),
         pct(s.winRate),
         `${s.lost} (${pct(percent(s.lost, s.runs.length))})`,
         `${s.dayCap} (${pct(percent(s.dayCap, s.runs.length))})`,
@@ -370,7 +435,7 @@ export function formatBalanceReport(file: BatchFile, data: GameData = GAME_DATA)
   }
   lines.push(
     "",
-    `Bankrupt: the game declared insolvency (GAME_LOST). Day cap: neither won nor lost in ${file.days} days. ` +
+    `Bankrupt: the game declared insolvency (GAME_LOST). Day cap: neither won nor lost in ${file.days} days (late wins are counted apart). ` +
       `Soft-locked: a day-capped run whose net worth didn't grow over its last ${SOFT_LOCK_DAYS} game days (stuck, not just slow).`,
     "",
   );
@@ -442,15 +507,16 @@ export function formatBalanceReport(file: BatchFile, data: GameData = GAME_DATA)
       ]),
     );
   }
-  const seizing = per.filter((s) => s.runs.some((r) => r.losses.seizures > 0 || r.losses.penalties > 0)).map((s) => s.strategy);
-  lines.push(
-    "",
-    seizing.length === 0
-      ? "No strategy lost cargo to a seizure or paid a penalty: transport and below-cost sales are the only losses."
-      : `Risk-driven losses (seizures and penalties) appear only for ${seizing.join(", ")}. ` +
-          "The Market Opportunist alone takes the risky alternative route when the default is closed, so it alone can lose cargo.",
-    "",
-  );
+  const lossKinds: [string, (r: BatchRunResult) => number][] = [
+    ["seizures", (r) => r.losses.seizures],
+    ["failed runs", (r) => r.losses.failedProduction],
+    ["penalties", (r) => r.losses.penalties],
+  ];
+  const whoLost = lossKinds.map(([label, pick]) => {
+    const who = per.filter((s) => s.runs.some((r) => pick(r) > 0)).map((s) => s.strategy);
+    return `${label}: ${who.length === 0 ? "none" : `${who.join(", ")} (${who.length} of ${per.length})`}`;
+  });
+  lines.push("", `Strategies that booked each risk-driven loss at least once. ${whoLost.join("; ")}.`, "");
 
   // Market lines.
   const markets = marketLines(file, data);
@@ -493,66 +559,110 @@ export function formatBalanceReport(file: BatchFile, data: GameData = GAME_DATA)
 
   // Setbacks.
   const judged = file.runs.filter(judgeable);
+  const sv = setbackVerdict(file);
   lines.push(
     "## Setbacks and recovery",
     "",
-    "**Definition.** A run's *moderate setback* is the first event that books a loss: cargo seized on a risky route (CARGO_LOST), a production run's inputs written off (PRODUCTION_FAILED), " +
-      "or an installment penalty (INSTALLMENT_SETTLED with a penalty). The run *recovers* if its net worth is back to at least its level just before the setback within " +
+    "**Definition.** A *loss event* is cargo seized on a risky route (CARGO_LOST), a production run's inputs written off (PRODUCTION_FAILED), " +
+      "or an installment penalty (INSTALLMENT_SETTLED with a penalty). A run's *moderate setback* is its first loss event of at least " +
+      `${TARGETS.moderateSetbackMinPercent}% of net worth at the moment it's booked; smaller losses are counted but never judged. ` +
+      "The run *recovers* if its net worth is back to at least its level just before the setback within " +
       `${at(TARGETS.setbackRecoveryWindowTicks)} (${TARGETS.setbackRecoveryWindowTicks / TICKS_PER_DAY} game days), and it doesn't go bankrupt. ` +
       "A run whose window outlasts the run without a recovery isn't judged. " +
-      `"Usually possible" is read as at least ${TARGETS.setbackRecoveryMinPercent}% of judged runs recovering.`,
+      `"Usually possible" is read as at least ${TARGETS.setbackRecoveryMinPercent}% of judged runs recovering, pooled and for each strategy; ` +
+      `fewer than ${TARGETS.setbackMinJudgedRuns} judged runs is INSUFFICIENT EVIDENCE.`,
     "",
-    row(["Strategy", "Runs with a setback", ...SETBACK_KINDS, "Judged", "Recovered", "Loss p50", "Recovery time p50", "Won after a setback"]),
-    align(1, 9),
+    row(["Strategy", "Runs with any loss", "Runs with a moderate setback", ...SETBACK_KINDS, "Judged", "Recovered", "Verdict", "Loss p50", "Loss share p50", "Recovery time p50", "Won (by the cutoff) after a setback"]),
+    align(1, 12),
   );
   for (const s of per) {
-    const hit = s.runs.filter((r) => r.setback !== null);
+    const anyLoss = s.runs.filter((r) => r.setbackCount > 0).length;
+    const hit = s.runs.filter(hasModerateSetback);
     const j = hit.filter(judgeable);
     const rec = j.filter(recovered);
     const loss = percentiles(hit.map((r) => r.setback!.loss));
+    const share = percentiles(hit.filter((r) => r.setback!.netWorthBefore > 0).map((r) => Math.round((r.setback!.loss * 100) / r.setback!.netWorthBefore)));
     const time = percentiles(rec.map((r) => r.setback!.recoveredAt! - r.setback!.tick));
     lines.push(
       row([
         s.strategy,
+        String(anyLoss),
         String(hit.length),
         ...SETBACK_KINDS.map((k) => String(hit.filter((r) => r.setback!.kind === k).length)),
         String(j.length),
         `${rec.length} (${pct(percent(rec.length, j.length))})`,
+        sv.per.find((x) => x.strategy === s.strategy)?.verdict ?? "",
         loss ? money(loss.p50) : "",
+        share ? `${share.p50}%` : "",
         time ? at(time.p50) : "",
-        `${hit.filter((r) => r.outcome === "WON").length}/${hit.length}`,
+        `${hit.filter(countsAsWin).length}/${hit.length}`,
       ]),
     );
   }
   const closures = sum(file.runs.map((r) => r.disruptions.routeClosures));
   const shortages = sum(file.runs.map((r) => r.disruptions.shortages));
   const disrupted = file.runs.filter((r) => r.disruptions.routeClosures + r.disruptions.shortages > 0);
+  const smallOnly = file.runs.filter((r) => r.setbackCount > 0 && !hasModerateSetback(r)).length;
+  const covered = sv.per.filter((p) => p.verdict !== "INSUFFICIENT EVIDENCE").map((p) => p.strategy);
   lines.push(
     "",
     `Scheduled disruptions, which book no loss by themselves: ${closures} route closure(s) and ${shortages} supplier shortage(s) over ${total} runs; ` +
-      `${disrupted.length} runs met at least one, and ${disrupted.filter((r) => r.outcome === "WON").length} of those won.`,
+      `${disrupted.length} runs met at least one, and ${disrupted.filter(countsAsWin).length} of those won by the cutoff.`,
     "",
-    `Only ${judged.length} of ${total} runs (${pct(percent(judged.length, total))}) had a judgeable setback, so the measure rests on the strategies that take risks. ` +
-      "A lab scenario with a scheduled loss (for example a seizure on a fixed day for every strategy) would measure recovery for every strategy; see the proposals.",
+    `${judged.length} of ${total} runs (${pct(percent(judged.length, total))}) had a judgeable moderate setback; ` +
+      `${smallOnly} more booked only losses under ${TARGETS.moderateSetbackMinPercent}% of net worth, which aren't judged. ` +
+      `${covered.length} of ${per.length} strategies have enough judged runs (${covered.join(", ") || "none"}).`,
+    "",
+    "### Scheduled setback scenario",
+    "",
+    "Not run yet. Until it is, the measure above judges only the moderate setbacks strategies happen to book. A lab variant of the First Shipment that forces " +
+      "one moderate loss on a fixed day for every strategy would measure recovery for all of them, but a scenario can schedule only route closures, which book no loss. " +
+      "It needs a scheduled loss-booking world event (`SHAKEDOWN`) in the simulation first; issue #129 adds the event and the scenario.",
     "",
   );
 
   // Victory clustering.
+  const settlementShare = per
+    .map((s) => {
+      const wins = s.runs.filter((r) => r.victory !== null);
+      return { strategy: s.strategy, wins: wins.length, onSettlement: wins.filter((r) => r.victoryOnSettlement).length };
+    })
+    .filter((x) => x.wins > 0);
+  const cite = (xs: typeof settlementShare, pick: (x: (typeof settlementShare)[number]) => number): string =>
+    xs.map((x) => `${x.strategy} (${pct(percent(pick(x), x.wins))} of ${x.wins} victories)`).join(", ");
+  const bySettlement = settlementShare.filter((x) => x.onSettlement * 2 > x.wins);
+  const bySale = settlementShare.filter((x) => x.onSettlement * 2 <= x.wins);
+  const observed: string[] = [];
+  if (bySettlement.length > 0) observed.push(`on an installment settlement for ${cite(bySettlement, (x) => x.onSettlement)}`);
+  if (bySale.length > 0) observed.push(`on a sale (a truck arrival lifting net worth over the threshold) for ${cite(bySale, (x) => x.wins - x.onSettlement)}`);
+  const allWins = file.runs.filter((r) => r.victory !== null);
+  const tickCounts = new Map<number, number>();
+  for (const r of allWins) tickCounts.set(r.victory!.tick, (tickCounts.get(r.victory!.tick) ?? 0) + 1);
+  let topTick: [number, number] | null = null;
+  for (const [t, n] of [...tickCounts].sort((a, b) => a[0] - b[0])) if (topTick === null || n > topTick[1]) topTick = [t, n];
+  const topRuns = topTick === null ? [] : allWins.filter((r) => r.victory!.tick === topTick![0]);
+  const topStrategies = [...new Set(topRuns.map((r) => r.strategy))];
+  const topOnSettlement = topRuns.filter((r) => r.victoryOnSettlement).length;
   lines.push(
     "## Why victory times cluster",
     "",
     "Victory needs all three conditions at once, and each one can only change at a few kinds of tick:",
     "",
     "- **Reputation and the completed contract** move only when an installment settles, at its deadline. Deadlines are fixed ticks set by when the offer was accepted, " +
-      "and offers arrive on the contract system's schedule, so a run whose last condition is reputation or the contract wins exactly on a settlement tick. " +
-      "The Quality Specialist's 18360 is one: the settlement that lifts it to the top tier's reputation.",
+      "and offers arrive on the contract system's schedule, so a run whose last condition is reputation or the contract wins exactly on a settlement tick.",
     "- **Net worth** moves when a sale completes, which is when the truck arrives. Runs and trips have fixed durations, so the delivery that crosses the threshold " +
       "lands on the same tick in every seed whose market lets the strategy load the same cargo at the same time.",
+    "",
+    allWins.length === 0
+      ? "No run reached victory, so there is no victory tick to explain."
+      : `In these results most victories (late ones included) land ${observed.join("; and ")}. ` +
+          `The most common victory tick is ${at(topTick![0])}: ${topTick![1]} victories (${topStrategies.join(", ")}), ` +
+          `${topOnSettlement === topRuns.length ? "every one on a settlement tick" : topOnSettlement === 0 ? "none on a settlement tick" : `${topOnSettlement} on a settlement tick`}.`,
     "",
     "Either way the victory time is a step function of a few scheduled ticks, not a continuous quantity: the distribution has spikes rather than a spread, " +
       "and the medians below move in jumps when tuning changes which settlement or which delivery is the decisive one. Read the p10–p90 range with that in mind.",
     "",
-    row(["Strategy", "Wins", "On a settlement tick", "Distinct victory ticks", "Most common tick", "Last to clear: net worth / reputation / contract"]),
+    row(["Strategy", "Victories (late included)", "On a settlement tick", "Distinct victory ticks", "Most common tick", "Last to clear: net worth / reputation / contract"]),
     align(1, 5),
   );
   for (const s of per) {
@@ -582,29 +692,18 @@ export function formatBalanceReport(file: BatchFile, data: GameData = GAME_DATA)
 
   // Volume Producer.
   const vp = per.find((s) => s.strategy === "volume-producer");
-  const basic = markets.find((m) => m.recipe.id === BASIC_MOONSHINE_RECIPE);
-  const standard = markets.find((m) => m.recipe.id === STANDARD_MOONSHINE_RECIPE);
-  if (vp && basic && standard) {
-    lines.push(...volumeProducer(vp, basic, standard, goal.netWorth, goal.reputation, file.days));
-  }
+  if (vp) lines.push(...volumeProducer(vp, per, markets, goal, file.days));
 
   // Proposals.
+  const open = [...missed, ...unproven];
   lines.push("## Tuning proposals", "", "Proposals only. This report changes no game-data; the tuning task that follows it decides.", "");
-  if (missed.length === 0) lines.push("Every target is MET; nothing to propose.");
-  for (const t of missed) lines.push(`- **${t.target}** (${t.measured}): ${proposal(t.id, per, markets, file)}`);
+  if (open.length === 0) lines.push("Every target is MET; nothing to propose.");
+  for (const t of open) lines.push(`- **${t.target}** (${t.verdict}; ${t.measured}): ${proposal(t.id, per, markets, file)}`);
   lines.push("", "Beyond the targets:", "");
-  const setbackStrategies = new Set(file.runs.filter(judgeable).map((r) => r.strategy));
-  if (setbackStrategies.size < per.length) {
-    lines.push(
-      `- **Setback evidence.** Only ${setbackStrategies.size} of ${per.length} strategies ever booked a loss, so the recovery measure says little about the others. ` +
-        "A lab scenario with a scheduled loss on a fixed day, run for every strategy, would measure recovery directly. " +
-        "A loss can only come from the simulation (a seizure, a failed run, or a penalty), so this needs a scenario or game-data hook the tuning task would own.",
-    );
-  }
   const spread = per.filter((s) => s.runs.length > 1 && new Set(s.runs.map((r) => r.firstUpgrade?.tick ?? -1)).size === 1).map((s) => s.strategy);
   if (spread.length > 0) {
     lines.push(
-      `- **Seed spread.** ${spread.join(", ")} bought their first upgrade on the same tick in every seed: the tier gates and fixed durations, not the market, set early pacing. ` +
+      `- **Seed spread.** ${spread.join(", ")} bought their first upgrade on the same tick in every seed, so something deterministic (tier gates, fixed durations), not the market, sets their early pacing. ` +
         "More seeded variety early on (offer timing, opening prices) would make the distributions above say more.",
     );
   }
@@ -615,34 +714,75 @@ export function formatBalanceReport(file: BatchFile, data: GameData = GAME_DATA)
         `so ${pct(percent(basicMarket.belowCost, basicMarket.completed))} of basic sales completed below cost. Widening basic's margin (or narrowing its demand drift) fixes both.`,
     );
   }
+  if (lines.at(-1) === "") lines.push("Nothing else stands out.");
   lines.push("");
   return lines.join("\n");
 }
 
-function volumeProducer(vp: StrategyStats, basic: MarketLine, standard: MarketLine, victoryNetWorth: Money, victoryReputation: number, days: number): string[] {
+/** The product ("productId/quality") a strategy's runs earned the most revenue from, with its share of their revenue in percent. */
+function mainProduct(s: StrategyStats): { readonly key: string; readonly share: number } | null {
+  const revenue = new Map<string, number>();
+  for (const r of s.runs) for (const [key, t] of Object.entries(r.sales)) revenue.set(key, (revenue.get(key) ?? 0) + t.revenue);
+  let best: [string, number] | null = null;
+  for (const [key, v] of [...revenue].sort((a, b) => (a[0] < b[0] ? -1 : 1))) if (best === null || v > best[1]) best = [key, v];
+  if (best === null || best[1] === 0) return null;
+  return { key: best[0], share: percent(best[1], sum([...revenue.values()])) };
+}
+
+const mainProductText = (s: StrategyStats): string => {
+  const m = mainProduct(s);
+  return m === null ? "no sales" : `${pct(m.share)} of revenue from ${m.key}`;
+};
+
+const inBand = (s: StrategyStats): boolean => s.winRate >= TARGETS.competentSuccessMinPercent && s.winRate <= TARGETS.competentSuccessMaxPercent;
+const band = `${TARGETS.competentSuccessMinPercent}–${TARGETS.competentSuccessMaxPercent}%`;
+
+function volumeProducer(vp: StrategyStats, per: readonly StrategyStats[], markets: readonly MarketLine[], goal: GameData["progression"]["victory"], days: number): string[] {
   const nw = percentiles(vp.runs.map((r) => r.finalNetWorth));
   const units = percentiles(vp.runs.map((r) => r.unitsSold));
   const opening = vp.runs[0]?.netWorthByDay[0] ?? 0;
   const out = ["## The Volume Producer", ""];
   if (!nw || !units) return [...out, "No Volume Producer runs.", ""];
-  const short = victoryNetWorth - nw.p50;
-  // Rough: the extra margin per case that would have closed the median shortfall over the median run's sales.
-  const extra = units.p50 === 0 ? 0 : Math.ceil(short / units.p50);
+  const gateRuns = (g: Gate): number => vp.runs.filter((r) => r.victoryGates[g] !== null).length;
+  const gateLabel: Record<Gate, string> = { netWorth: "net worth", reputation: "reputation", completedContracts: "the completed contract" };
+  const weakest = [...GATES].sort((a, b) => gateRuns(a) - gateRuns(b))[0]!;
+  const main = mainProduct(vp);
+  const line = main ? markets.find((m) => m.key === main.key) : undefined;
+  const others = markets.filter((m) => m !== line);
   out.push(
-    `The Volume Producer won ${vp.won}/${vp.runs.length} runs. It makes basic moonshine only, at full capacity, and its median run ends at ${money(nw.p50)} net worth ` +
-      `(opening ${money(opening)}, victory ${money(victoryNetWorth)}) after selling ${units.p50} cases in ${days} days. ` +
-      `Basic's realized gross is ${money(basic.grossPerCase)} a case against standard's ${money(standard.grossPerCase)}; ` +
-      `at base prices the margins are ${money(basic.basePrice - basic.cost)} and ${money(standard.basePrice - standard.cost)}. ` +
-      `It reaches reputation ${victoryReputation} in ${vp.runs.filter((r) => r.victoryGates.reputation !== null).length}/${vp.runs.length} runs and completes a contract in ` +
-      `${vp.runs.filter((r) => r.victoryGates.completedContracts !== null).length}/${vp.runs.length}; net worth is what it lacks. ` +
-      "Volume can't make up a margin gap that wide inside the session, so the archetype is not viable as written. Two ways to settle it:",
-    "",
-    `1. **Keep it basic-only and tune basic's margin.** Closing the median shortfall (${money(short)}) by the day cap over its median ${units.p50} cases needs about ` +
-      `${money(extra)} more margin a case; reaching victory inside 30 minutes (day ${Math.floor(TARGETS.victoryMaxTicks / TICKS_PER_DAY)}) needs roughly twice that, ` +
-      "since it sells about half its cases by then (a linear estimate, not a simulation). Levers in game-data: basic's base price, its inputs or labor per case, or capacity. " +
-      "Raising basic's margin also lifts every other strategy's early game, so the 100% win rates would climb further unless standard's margin comes down.",
-    `2. **Redefine the archetype as volume of whatever is unlocked.** The strategy keeps its capacity-first upgrade order but switches its output to standard once it owns the QC station. ` +
-      "This is a lab change only (no game-data), but it brings the Volume Producer close to the Contract Operator, so the four strategies would differ less.",
+    `${vp.strategy} won ${vp.won}/${vp.runs.length} runs (${pct(vp.winRate)}; the competent band is ${band}). It takes ${mainProductText(vp)}, ` +
+      `and its median run ends at ${money(nw.p50)} net worth (opening ${money(opening)}, victory ${money(goal.netWorth)}) after selling ${units.p50} cases in ${days} days. ` +
+      `It reaches net worth ${money(goal.netWorth)} in ${gateRuns("netWorth")}/${vp.runs.length} runs, reputation ${goal.reputation} in ${gateRuns("reputation")}/${vp.runs.length}, ` +
+      `and ${goal.completedContracts} completed contract(s) in ${gateRuns("completedContracts")}/${vp.runs.length}` +
+      (gateRuns(weakest) < vp.runs.length ? `; ${gateLabel[weakest]} is the condition it misses most.` : "."),
+  );
+  if (line) {
+    out.push(
+      "",
+      `Its main line, ${line.key}, realized ${money(line.grossPerCase)} gross a case (${money(line.basePrice - line.cost)} margin at base)` +
+        (others.length > 0 ? `, against ${others.map((m) => `${m.key}'s ${money(m.grossPerCase)} (${money(m.basePrice - m.cost)} at base)`).join(", ")}.` : "."),
+    );
+  }
+  if (inBand(vp)) return [...out, "", "It is inside the competent band, so there is no archetype decision to make.", ""];
+
+  const short = goal.netWorth - nw.p50;
+  const above = per.filter((s) => s !== vp && s.winRate > TARGETS.competentSuccessMaxPercent && main !== null && s.runs.some((r) => (r.sales[main.key]?.units ?? 0) > 0));
+  out.push("", `It is ${vp.winRate < TARGETS.competentSuccessMinPercent ? "below" : "above"} the competent band. Two ways to settle it:`, "");
+  if (short > 0 && weakest === "netWorth") {
+    // Rough: the extra margin per case that would have closed the median shortfall over the median run's sales.
+    const extra = units.p50 === 0 ? 0 : Math.ceil(short / units.p50);
+    out.push(
+      `1. **Keep its product mix and tune that product's margin.** Closing the median shortfall (${money(short)}) by the day cap over its median ${units.p50} cases needs about ` +
+        `${money(extra)} more margin a case (a linear estimate, not a simulation); reaching victory inside ${minutes(TARGETS.victoryMaxTicks)} min needs more, since fewer cases have sold by then. ` +
+        "Levers in game-data: the product's base price, its inputs or labor per case, or capacity." +
+        (above.length > 0 ? ` A wider margin also lifts the other strategies that sell it, and ${above.map((s) => `${s.strategy} (${pct(s.winRate)})`).join(", ")} already win above the band.` : ""),
+    );
+  } else {
+    out.push(`1. **Keep its product mix and tune what it lacks.** Its weakest victory condition is ${gateLabel[weakest]}; move the game-data lever behind that condition.`);
+  }
+  out.push(
+    "2. **Redefine the archetype as volume of whatever is unlocked.** The strategy keeps its capacity-first upgrade order but switches its output to the best unlocked product. " +
+      "This is a lab change only (no game-data), but it narrows the difference between it and the strategies that already sell that product.",
     "",
     "Either choice is a design call; the report doesn't make it.",
     "",
@@ -651,44 +791,96 @@ function volumeProducer(vp: StrategyStats, basic: MarketLine, standard: MarketLi
 }
 
 function proposal(id: TargetId, per: readonly StrategyStats[], markets: readonly MarketLine[], file: BatchFile): string {
-  const basic = markets.find((m) => m.recipe.id === BASIC_MOONSHINE_RECIPE);
-  const standard = markets.find((m) => m.recipe.id === STANDARD_MOONSHINE_RECIPE);
-  const above = per.filter((s) => s.winRate > TARGETS.competentSuccessMaxPercent).map((s) => s.strategy);
-  const below = per.filter((s) => s.winRate < TARGETS.competentSuccessMinPercent).map((s) => s.strategy);
+  const above = per.filter((s) => s.winRate > TARGETS.competentSuccessMaxPercent);
+  const below = per.filter((s) => s.winRate < TARGETS.competentSuccessMinPercent);
+  const name = (xs: readonly StrategyStats[]): string => xs.map((s) => `${s.strategy} (${pct(s.winRate)}; ${mainProductText(s)})`).join(", ");
   switch (id) {
     case "first-profitable-sale":
-      return "shorten the first run or the first trip: basic's ticks per case, the opening run size the cash allows, or the nearest buyer's route duration.";
-    case "first-upgrade":
+      return "shorten the first run or the first trip: the first recipe's ticks per case, the opening run size the cash allows, or the nearest buyer's route duration.";
+    case "first-upgrade": {
+      const by = firstUpgradeByStrategy(per);
+      const side = (x: UpgradeSide): string => by.filter((b) => b.side === x).map((b) => `${b.strategy}${b.p ? ` (p50 ${minutes(b.p.p50)} min)` : ""}`).join(", ");
+      const parts: string[] = [];
+      if (side("late")) parts.push(`late: ${side("late")}`);
+      if (side("early")) parts.push(`early: ${side("early")}`);
+      if (side("never")) parts.push(`never upgraded: ${side("never")}`);
       return (
-        "the first upgrade is the condenser, LOCKED until the second tier, so its time is the tier-2 reputation time. " +
-        "Move it into 10–15 min by lowering the tier-2 reputation threshold, raising the reputation an early installment pays, or offering the first contract earlier; " +
-        "or lower the condenser's price if cash, not the gate, is what holds it back."
+        `${parts.join("; ") || "the pooled median is outside the window"}. ` +
+        "Compare each strategy's first-upgrade time with its tier times under Milestones: when they coincide, the upgrade waits on a tier unlock, so move the tier's reputation threshold " +
+        "or the reputation an early installment pays; when the upgrade comes well after its unlock, cash holds it back, so move the equipment's price. " +
+        `Late strategies need the lever pulled toward earlier, early ones toward later, until every median sits in ${minutesGoal(TARGETS.firstUpgradeMinTicks, TARGETS.firstUpgradeMaxTicks)}.`
       );
-    case "victory-time":
-      return "victory lands on installment settlements (see \"Why victory times cluster\"), so move the first contract's offer time or installment spacing, or the reputation per installment, rather than prices.";
+    }
+    case "victory-time": {
+      const wins = file.runs.filter((r) => r.victory !== null);
+      const v = percentiles(wins.map((r) => r.victory!.tick));
+      if (v === null) return "no run won, so there is no victory time to move; see the competent-success proposal.";
+      const direction = v.p50 < TARGETS.victoryMinTicks ? "early" : "late";
+      const last = (g: Gate): number => wins.filter((r) => lastGate(r) === g).length;
+      const decisive = [...GATES].sort((a, b) => last(b) - last(a))[0]!;
+      const settled = wins.filter((r) => r.victoryOnSettlement).length;
+      const lever: Record<Gate, string> = {
+        netWorth: "the victory net-worth threshold, or the margins and trip durations that set how fast net worth grows",
+        reputation: "the reputation per installment, the first contract's offer time, or installment spacing",
+        completedContracts: "the first contract's offer time, its installment count, or installment spacing",
+      };
+      return (
+        `the median victory is ${direction} (p50 ${minutes(v.p50)} min). ${pct(percent(settled, wins.length))} of victories land on an installment settlement and the rest on a sale ` +
+        `(see "Why victory times cluster"); the last condition to clear is net worth in ${last("netWorth")}, reputation in ${last("reputation")}, and the contract in ${last("completedContracts")} of ${wins.length} victories. ` +
+        `So the lever is the one behind ${decisive === "netWorth" ? "net worth" : decisive === "reputation" ? "reputation" : "the completed contract"}: ${lever[decisive]}.`
+      );
+    }
     case "competent-success": {
       const parts: string[] = [];
       if (above.length > 0) {
         parts.push(
-          `${above.join(", ")} win above ${TARGETS.competentSuccessMaxPercent}%: tighten standard moonshine` +
-            (standard ? ` (gross ${money(standard.grossPerCase)} a case)` : "") +
-            " through its base price or QC-station price, or add pressure that can actually cost a run (contract penalties that bite, a disruption that books a loss)",
+          `above ${TARGETS.competentSuccessMaxPercent}%: ${name(above)}. Tighten the product they lean on (its base price, or the price of the equipment that unlocks it), ` +
+            "or add pressure that can actually cost a run (contract penalties that bite, a disruption that books a loss)",
         );
       }
-      if (below.length > 0) parts.push(`${below.join(", ")} win below ${TARGETS.competentSuccessMinPercent}%: see "The Volume Producer" for the two options`);
+      if (below.length > 0) {
+        parts.push(
+          `below ${TARGETS.competentSuccessMinPercent}%: ${name(below)}. Widen the margin of the product they lean on, or change what the strategy makes` +
+            (below.some((s) => s.strategy === "volume-producer") ? ' (see "The Volume Producer" for the two options)' : ""),
+        );
+      }
+      return `${parts.join("; ") || "every strategy is in the band"}.`;
+    }
+    case "dominant-advantage": {
+      const sorted = [...per].sort((a, b) => b.winRate - a.winRate);
+      const best = sorted[0];
+      const worst = sorted.at(-1);
+      if (!best || !worst || best === worst) return "fewer than two strategies ran, so there is no gap to measure; run them all.";
+      const bm = mainProduct(best)?.key;
+      const wm = mainProduct(worst)?.key;
+      const sameProduct = bm !== undefined && bm === wm;
+      return (
+        `the gap runs from ${name([best])} to ${name([worst])}. ` +
+        (sameProduct
+          ? "Both lean on the same product, so the gap is in how they play it (upgrade order, contracts, routes) rather than in a product's margin: look at what the leader does that the other doesn't, before touching prices."
+          : `They lean on different products, so narrow the margin gap between ${bm ?? "the leader's product"} and ${wm ?? "the trailer's"} from both ends, or change what the trailing strategy makes.`)
+      );
+    }
+    case "setback-recovery": {
+      const sv = setbackVerdict(file);
+      const thin = sv.per.filter((p) => p.verdict === "INSUFFICIENT EVIDENCE");
+      const low = sv.per.filter((p) => p.verdict === "MISSED");
+      const parts: string[] = [];
+      if (thin.length > 0) {
+        parts.push(
+          `too few judged moderate setbacks for ${thin.map((p) => `${p.strategy} (${p.judged})`).join(", ")}, against the ${TARGETS.setbackMinJudgedRuns} needed. ` +
+            "That is a measurement gap, not a tuning one: the scheduled setback scenario (issue #129) forces one moderate loss for every strategy, and judges recovery there",
+        );
+      }
+      if (low.length > 0 || (sv.verdict === "MISSED" && low.length === 0)) {
+        const who = low.length > 0 ? low.map((p) => `${p.strategy} (${p.recovered}/${p.judged})`).join(", ") : `the pool (${sv.recovered}/${sv.judged})`;
+        parts.push(
+          `recovery below ${TARGETS.setbackRecoveryMinPercent}% for ${who}. Make a moderate loss less final: smaller seizure shares or penalties, ` +
+            "or more room to earn it back (margins, cash buffers) within the window",
+        );
+      }
       return `${parts.join("; ")}.`;
     }
-    case "dominant-advantage":
-      return (
-        "the gap is the spread between the basic-only archetype and the standard-making ones. Narrow it from both ends: lift basic's margin" +
-        (basic ? ` (${money(basic.grossPerCase)} a case)` : "") +
-        " or redefine the Volume Producer, and tighten standard so the leaders fall into the 60–85% band."
-      );
-    case "setback-recovery":
-      return (
-        `${file.runs.filter(judgeable).length === 0 ? "no run had a setback to recover from, so the measure needs one" : "the measure rests on too few strategies"}: ` +
-        "add a lab scenario with a scheduled loss on a fixed day (a seizure or a failed run), run every strategy through it, and judge recovery there."
-      );
     case "reconciliation":
       return "not a tuning matter: an invariant broke. Reproduce the first violating run from its seed and fix the simulation before any tuning.";
     case "replay":

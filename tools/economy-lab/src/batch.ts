@@ -17,15 +17,17 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
+import { TICKS_PER_DAY } from "@eov/contracts";
 import { GAME_DATA_VERSION } from "@eov/game-data";
 import { DEFAULT_BATCH_DAYS, runBatchSeed, type BatchRunOptions, type BatchRunResult } from "./batch-run.ts";
 import type { BatchWorkerInput } from "./batch-worker.ts";
 import { HEADLESS_STRATEGY_NAMES, type HeadlessStrategyName } from "./headless-strategy.ts";
 import { distribution, type Distribution } from "./smoke-report.ts";
 import { TICKS_PER_REAL_MINUTE } from "./smoke-run.ts";
+import { countsAsWin, isLateWin, TARGETS } from "./targets.ts";
 
 /** Bumped when the results file's shape changes. */
-export const BATCH_FORMAT_VERSION = 2;
+export const BATCH_FORMAT_VERSION = 3;
 
 /** Where the results go by default, relative to the working directory (`dist/` is git-ignored). */
 export const DEFAULT_BATCH_OUT = "dist/batch-results.json";
@@ -105,10 +107,13 @@ export interface TimeDistribution extends Distribution {
 export interface StrategySummary {
   readonly strategy: HeadlessStrategyName;
   readonly runs: number;
+  /** Runs that won by `TARGETS.winCutoffTicks`. */
   readonly won: number;
+  /** Runs that won after the cutoff: not counted as wins. */
+  readonly wonLate: number;
   readonly lost: number;
   readonly dayCap: number;
-  /** won / runs, in percent, two decimals. */
+  /** won / runs, in percent, two decimals (wins by the cutoff only). */
   readonly winRatePercent: number;
   readonly timeToVictory: TimeDistribution | null;
   readonly firstProfitableSale: TimeDistribution | null;
@@ -134,12 +139,13 @@ function times(values: readonly number[]): TimeDistribution | null {
 
 export function summarizeStrategy(strategy: HeadlessStrategyName, runs: readonly BatchRunResult[]): StrategySummary {
   const mine = runs.filter((r) => r.strategy === strategy);
-  const won = mine.filter((r) => r.outcome === "WON").length;
+  const won = mine.filter(countsAsWin).length;
   const ticks = (pick: (r: BatchRunResult) => { readonly tick: number } | null): number[] => mine.flatMap((r) => (pick(r) ? [pick(r)!.tick] : []));
   return {
     strategy,
     runs: mine.length,
     won,
+    wonLate: mine.filter(isLateWin).length,
     lost: mine.filter((r) => r.outcome === "LOST").length,
     dayCap: mine.filter((r) => r.outcome === "DAY_CAP").length,
     winRatePercent: mine.length === 0 ? 0 : Math.round((won * 10_000) / mine.length) / 100,
@@ -224,11 +230,12 @@ export function batchFailed(file: BatchFile): boolean {
 /** A one-line-per-strategy summary for the console. */
 export function formatBatchSummary(file: BatchFile): string {
   const lines = [`Batch: ${file.strategies.length} strategies × seeds ${file.seeds.first}..${file.seeds.last}, day cap ${file.days} (game-data ${file.gameDataVersion})`];
-  lines.push("| Strategy | Runs | Won | Lost | Day cap | Win rate | Median time to victory | Invariant runs | Replay divergences |");
-  lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+  lines.push(`A win counts only by tick ${TARGETS.winCutoffTicks} (game day ${TARGETS.winCutoffTicks / TICKS_PER_DAY}); a later victory is a late win.`);
+  lines.push("| Strategy | Runs | Won | Won late | Lost | Day cap | Win rate | Median time to victory | Invariant runs | Replay divergences |");
+  lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
   for (const s of file.summary) {
     const median = s.timeToVictory ? `${s.timeToVictory.median} ticks (${s.timeToVictory.medianRealMinutes.toFixed(1)} min)` : "none";
-    lines.push(`| ${s.strategy} | ${s.runs} | ${s.won} | ${s.lost} | ${s.dayCap} | ${s.winRatePercent.toFixed(2)}% | ${median} | ${s.runsWithInvariantViolations} | ${s.replayDivergences} |`);
+    lines.push(`| ${s.strategy} | ${s.runs} | ${s.won} | ${s.wonLate} | ${s.lost} | ${s.dayCap} | ${s.winRatePercent.toFixed(2)}% | ${median} | ${s.runsWithInvariantViolations} | ${s.replayDivergences} |`);
   }
   return lines.join("\n");
 }
