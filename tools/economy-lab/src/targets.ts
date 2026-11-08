@@ -22,7 +22,14 @@ export const TARGETS = {
   /** M001 victory: 20–30 real minutes. */
   victoryMinTicks: 20 * TICKS_PER_REAL_MINUTE,
   victoryMaxTicks: 30 * TICKS_PER_REAL_MINUTE,
-  /** Competent strategy success: 60–85% of runs win. */
+  /**
+   * A run counts as a win only if victory comes by this tick: game day 15, the
+   * end of the 30-minute M001 session (orchestrator decision on issue #127). A
+   * batch may run longer (its day cap), but a later victory is a late win, not a
+   * win, in every win and success rate the lab reports.
+   */
+  winCutoffTicks: 30 * TICKS_PER_REAL_MINUTE,
+  /** Competent strategy success: 60–85% of runs win (by `winCutoffTicks`). */
   competentSuccessMinPercent: 60,
   competentSuccessMaxPercent: 85,
   /** Dominant strategy advantage: best win rate less worst, under 20 points. */
@@ -33,6 +40,12 @@ export const TARGETS = {
    * definition of a setback and of recovering from one).
    */
   setbackRecoveryMinPercent: 75,
+  /**
+   * A setback is "moderate", and judged, when its loss is at least this share of
+   * net worth at the moment it's booked (orchestrator decision on issue #127). A
+   * share rather than a dollar floor, so it scales as tuning moves prices.
+   */
+  moderateSetbackMinPercent: 15,
   /** A setback counts as recovered once net worth is back to its pre-setback level within this many ticks. */
   setbackRecoveryWindowTicks: 6 * TICKS_PER_REAL_MINUTE,
   /** Fewer judged runs than this is too little evidence to call the recovery target MET. */
@@ -45,4 +58,20 @@ export const TARGETS = {
 /** The M001 victory thresholds, read from game-data (GDD §4, ADR 0020). */
 export function victoryOf(data: GameData = GAME_DATA): GameData["progression"]["victory"] {
   return data.progression.victory;
+}
+
+/** The fields `countsAsWin` reads from a run. */
+export interface RunVictory {
+  readonly outcome: string;
+  readonly victory: { readonly tick: number } | null;
+}
+
+/** Whether a run counts as a win: it won, by `TARGETS.winCutoffTicks`. */
+export function countsAsWin(r: RunVictory): boolean {
+  return r.outcome === "WON" && r.victory !== null && r.victory.tick <= TARGETS.winCutoffTicks;
+}
+
+/** A run that won after `TARGETS.winCutoffTicks`: neither a win nor a loss. */
+export function isLateWin(r: RunVictory): boolean {
+  return r.outcome === "WON" && !countsAsWin(r);
 }
