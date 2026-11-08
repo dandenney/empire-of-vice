@@ -1,0 +1,149 @@
+/* The dispatch route picker (#50, #77). Tokens only (../tokens.ts). */
+
+.route-picker {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.route-picker legend {
+  margin-bottom: var(--space-2);
+  padding: 0;
+}
+
+.route-options {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A whole card is the radio's label. The brass edge marks the picked route. */
+.route-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-rule);
+  border-left: 2px solid var(--color-rule-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.route-option:hover {
+  border-color: var(--color-accent-dim);
+}
+
+.route-option[data-checked="true"] {
+  border-color: var(--color-accent-dim);
+  border-left-color: var(--color-accent);
+  background: var(--color-surface-raised);
+}
+
+.route-option[data-open="false"] {
+  border-left-color: var(--color-loss-line);
+  background: var(--color-bg);
+  cursor: not-allowed;
+}
+
+.route-option[data-open="false"] .route-name,
+.route-option[data-open="false"] .route-description,
+.route-option[data-open="false"] .route-facts {
+  color: var(--color-text-muted);
+}
+
+.route-radio {
+  grid-row: 1;
+  margin: var(--space-1) 0 0;
+  accent-color: var(--color-accent);
+}
+
+.route-option > :not(.route-radio) {
+  grid-column: 2;
+}
+
+.route-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.route-name {
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+}
+
+.route-badges {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+.route-badge {
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-gain-line);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-gain);
+}
+
+.route-badge[data-safety="RISKY"] {
+  border-color: var(--color-accent-dim);
+  color: var(--color-accent);
+}
+
+.route-badge[data-closed="true"] {
+  border-color: var(--color-loss-line);
+  background: var(--color-loss-wash);
+  color: var(--color-text);
+}
+
+.route-description {
+  font-size: var(--text-sm);
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.route-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-6);
+  margin-top: var(--space-1);
+}
+
+.route-fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.route-fact-label {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.route-fact-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.route-closure {
+  font-size: var(--text-sm);
+  color: var(--color-loss);
+}
+
+.route-picker-note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-loss);
+}
