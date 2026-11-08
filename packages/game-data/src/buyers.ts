@@ -73,8 +73,8 @@ export const BUYERS: readonly BuyerDefinition[] = [
     minimumReputation: 0, // PLACEHOLDER (tuning; T07a validates)
     dailyBudget: cents(45_000), // PLACEHOLDER (T05g tuned; T07 tunes next)
     wants: [
-      { productId: MOONSHINE, minimumQuality: "basic", priceRatio: ratio(1_300_000), dailyDemand: 12 }, // PLACEHOLDER (T05g tuned; T07 tunes next)
-      { productId: MOONSHINE, minimumQuality: "standard", priceRatio: ratio(1_200_000), dailyDemand: 6 }, // PLACEHOLDER (T05g tuned; T07 tunes next)
+      { productId: MOONSHINE, minimumQuality: "basic", priceRatio: ratio(1_100_000), dailyDemand: 12 }, // PLACEHOLDER (T07d tuned ratio)
+      { productId: MOONSHINE, minimumQuality: "standard", priceRatio: ratio(1_050_000), dailyDemand: 6 }, // PLACEHOLDER (T07d tuned ratio: standard quoted above basic on nearly every day)
     ],
   },
   {
@@ -85,7 +85,7 @@ export const BUYERS: readonly BuyerDefinition[] = [
     minimumReputation: 20, // PLACEHOLDER (T05g tuned; T07 tunes next)
     dailyBudget: cents(60_000), // PLACEHOLDER (T05g tuned; T07 tunes next)
     wants: [
-      { productId: MOONSHINE, minimumQuality: "standard", priceRatio: ratio(1_300_000), dailyDemand: 10 }, // PLACEHOLDER (T05g tuned; T07 tunes next)
+      { productId: MOONSHINE, minimumQuality: "standard", priceRatio: ratio(1_225_000), dailyDemand: 10 }, // PLACEHOLDER (T07d tuned ratio: the best standard quote)
     ],
   },
 ];

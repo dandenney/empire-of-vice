@@ -157,10 +157,10 @@ describe("progression (ADR 0020 decisions 3, 5, 7, 9, 17)", () => {
 
   it("has decision 5's reputation rules, signed", () => {
     expect(p.reputation).toEqual({
-      firstQualifyingDelivery: 3,
+      firstQualifyingDelivery: 2,
       qualifyingDeliveryMinimumCases: 5,
-      installmentFulfilled: 5,
-      consecutiveInstallmentBonus: 2,
+      installmentFulfilled: 7,
+      consecutiveInstallmentBonus: 4,
       installmentPartial: -3,
       installmentMissed: -8,
     });
@@ -203,8 +203,8 @@ describe("the warehouse (T03b, #76)", () => {
 });
 
 describe("GAME_DATA_VERSION", () => {
-  it("is bumped for T05g and recorded in GAME_DATA", () => {
-    expect(GAME_DATA_VERSION).toBe("0.5.0-t05g-tuning");
+  it("is bumped for T07d and recorded in GAME_DATA", () => {
+    expect(GAME_DATA_VERSION).toBe("0.6.0-t07d-tuning");
     expect(GAME_DATA.version).toBe(GAME_DATA_VERSION);
   });
 });

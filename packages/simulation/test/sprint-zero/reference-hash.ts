@@ -6,4 +6,4 @@
  * the other pins (the economy-lab inline snapshot and the e2e `HEADLESS_HASH`)
  * and explains the move in its PR.
  */
-export const SPRINT_ZERO_HASH = "fnv1a64:89394f5b72fb0418";
+export const SPRINT_ZERO_HASH = "fnv1a64:3169531e5b727cc8";

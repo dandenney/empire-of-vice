@@ -1,7 +1,9 @@
 // The product matrix (T02c1, PROD-001; GDD §6). Definition types per ADR 0012.
-// PLACEHOLDER values: GDD §6 base prices, except moonshine's standard (and premium,
-// to keep the ladder in order), which T05g (#106) raised so standard moonshine
-// carries the M001 victory. T07 tunes them next. Product names are placeholder copy.
+// PLACEHOLDER values: GDD §6 base prices, except moonshine's. T05g (#106) raised
+// standard (and premium, to keep the ladder in order); T07d (#126) raised basic and
+// brought standard down, so with standard's dearer conversion (recipes.ts) a case
+// of either earns a similar margin and a basic-only operation can reach the M001
+// victory in the session too. Product names are placeholder copy.
 
 import { asId, cents, type MaterialId, type Money, type ProductId, type QualityTier } from "@eov/contracts";
 
@@ -27,7 +29,7 @@ export const PRODUCTS: readonly ProductDefinition[] = [
   {
     id: MOONSHINE,
     name: "Moonshine",
-    basePrice: { basic: cents(1_400), standard: cents(4_800), premium: cents(7_200) }, // PLACEHOLDER (T05g tuned standard and premium; T07 tunes next)
+    basePrice: { basic: cents(2_710), standard: cents(3_600), premium: cents(7_200) }, // PLACEHOLDER (T07d tuned basic and standard: four viable strategies)
   },
   {
     id: WHISKEY,

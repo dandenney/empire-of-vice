@@ -101,7 +101,7 @@ describe("formatting", () => {
 
   it("notes who closed a route and when it reopens", () => {
     const route = { ...SNAPSHOT_ROUTES[0]!, status: { open: false as const, reason: "POLICE" as const, reopensAt: tick(1_000) } };
-    expect(closureNote(route, 880)).toEqual([ROUTE_PICKER_COPY.closedReason.POLICE, ROUTE_PICKER_COPY.reopensIn("2 h", 1_000)]);
+    expect(closureNote(route, 880)).toEqual([ROUTE_PICKER_COPY.closedReason.POLICE, "Reopens in 2 h (day 0, 16:40)."]);
     expect(closureNote({ ...route, status: { ...route.status, reopensAt: null } }, 880)).toEqual([ROUTE_PICKER_COPY.closedReason.POLICE, ROUTE_PICKER_COPY.reopensUnknown]);
     expect(closureNote(SNAPSHOT_ROUTES[0]!, 880)).toEqual([]);
   });

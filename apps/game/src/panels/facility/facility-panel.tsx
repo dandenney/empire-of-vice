@@ -10,7 +10,7 @@
 // its typed reason.
 
 import { formatMoney, type EquipmentOption, type FacilitySnapshot, type GameSnapshot } from "@eov/contracts";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { COMMON_COPY } from "../../components/copy.ts";
 import { describeOutcome } from "../../components/format.ts";
 import { useCommand, type CommandHandle } from "../../components/use-command.ts";
@@ -34,10 +34,13 @@ function WorkforceForm({ facility }: { readonly facility: FacilitySnapshot }) {
   const [draft, setDraft] = useState<string | null>(null);
   const workers = draft ?? String(facility.workforce.workers);
   const testId = `facility-${facility.id}-workforce`;
-  const set = async () => {
-    await command.send({ command: { type: "SET_WORKFORCE", facilityId: facility.id, workerCount: Number(workers) } });
-    setDraft(null);
-  };
+  const set = () => command.send({ command: { type: "SET_WORKFORCE", facilityId: facility.id, workerCount: Number(workers) } });
+  // Drop the edit only once the command lands. A rejection keeps it, so the
+  // player can correct the number (#133).
+  const { outcome } = command;
+  useEffect(() => {
+    if (outcome?.kind === "result" && outcome.result.status !== "rejected") setDraft(null);
+  }, [outcome]);
   return (
     <section aria-labelledby={`${testId}-title`} data-testid={testId}>
       <h4 className="group-title" id={`${testId}-title`}>

@@ -1,6 +1,8 @@
 /* Production panel (#48 direction). Tokens only (src/ui/tokens.ts). */
 
-.facility + .facility {
+.facility + .facility,
+section:not(.facility) + .facility {
+  /* The same gap after the repeat card as between facilities (#133). */
   margin-top: var(--space-7);
 }
 
