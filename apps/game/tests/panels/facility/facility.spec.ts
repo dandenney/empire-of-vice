@@ -68,6 +68,8 @@ test("shows storage, equipment, and locked options from the snapshot, and sets t
   await expect(page.getByTestId(`${w}-result`)).toContainText("Rejected:");
   await expect(page.getByTestId(`${w}-result`)).toContainText("WORKFORCE_LIMIT_EXCEEDED");
   expect(await stateHash(page)).toBe(before);
+  // The rejected number stays in the input so the player can correct it (#133).
+  await expect(page.getByTestId(`${w}-input`)).toHaveValue(String(facility.workforce.maximum + 1));
 
   // Within the maximum: applied, and the panel follows the snapshot.
   const crew = facility.workforce.workers + 1;
