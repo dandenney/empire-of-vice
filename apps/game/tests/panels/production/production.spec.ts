@@ -88,6 +88,6 @@ test("clicking a location on the map opens its panel", async ({ page }) => {
   await expect(page.getByTestId("panel-production")).toBeVisible();
   await expect(page.getByTestId("open-production")).toHaveAttribute("aria-pressed", "true");
   await page.locator("[data-testid=map] [data-shape=buyer]").first().click();
-  await expect(page.getByTestId("panel-placeholder")).toBeVisible();
+  await expect(page.getByTestId("panel-market")).toBeVisible();
   await expect(page.getByTestId("open-market")).toHaveAttribute("aria-pressed", "true");
 });

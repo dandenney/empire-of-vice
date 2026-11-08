@@ -1,0 +1,227 @@
+/* Market panel (#48 direction, #50). Tokens only (src/ui/tokens.ts). */
+
+.market-intro {
+  margin: 0 0 var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.market-note {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.market-result {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.market-result:empty {
+  display: none;
+}
+
+/* Repeat orders */
+
+.repeats {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repeat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-rule);
+  border-left: 2px solid var(--color-accent-dim);
+}
+
+.repeat-text {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.repeat-line {
+  font-size: var(--text-sm);
+}
+
+/* Market report */
+
+.price-why td {
+  padding-top: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  text-align: left;
+}
+
+.price-cause {
+  display: block;
+  color: var(--color-loss);
+}
+
+/* Supplier and buyer cards */
+
+.market-card {
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-rule);
+  border-left: 2px solid var(--color-accent-dim);
+}
+
+.market-card + .market-card {
+  margin-top: var(--space-4);
+}
+
+.market-card[data-selected="true"] {
+  border-color: var(--color-accent-dim);
+  border-left-color: var(--color-accent);
+}
+
+.market-card-name {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+}
+
+.market-flavor {
+  margin: var(--space-1) 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+.market-deal {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-gain);
+}
+
+.market-deal[data-will-deal="false"] {
+  color: var(--color-loss);
+}
+
+.market-deliver {
+  margin-bottom: var(--space-3);
+}
+
+.market-select {
+  max-width: 100%;
+}
+
+.market-lines {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.market-line {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-rule);
+}
+
+.market-line-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.market-line-name {
+  font-size: var(--text-md);
+}
+
+.market-badge {
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-accent-dim);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-accent);
+}
+
+.market-badge[data-tone="bad"] {
+  border-color: var(--color-loss-line);
+  background: var(--color-loss-wash);
+  color: var(--color-text);
+}
+
+.market-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-7);
+  margin: var(--space-3) 0;
+}
+
+.market-facts dt {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.market-facts dd {
+  margin: var(--space-1) 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.market-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+}
+
+.market-quantity {
+  width: 4.5em;
+}
+
+/* Sale form */
+
+.sale-form {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-rule);
+}
+
+.sale-title {
+  margin: 0;
+}
+
+.sale-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+}
+
+.sale-field {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.sale-action {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-rule);
+}
+
+.sale-price {
+  margin-right: auto;
+}

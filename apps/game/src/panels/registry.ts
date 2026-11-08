@@ -1,18 +1,17 @@
 // Every management panel: id, title, and component. The shell's navigation
 // and `openPanel` / `openPanelForLocation` use these ids.
 //
-// Market is a placeholder until T04c (#50), which also adds Contracts and
-// Facility.
+// Contracts and Facility come with T04e (#128).
 
 import type { GameSnapshot, LocationId, LocationOccupant } from "@eov/contracts";
-import { createElement, type ComponentType } from "react";
-import { PanelPlaceholder } from "../components/panel-placeholder.tsx";
+import type { ComponentType } from "react";
 import type { PanelId } from "../state/ui-store.ts";
-import { PLACEHOLDER_PANEL_COPY } from "./copy.ts";
 import { DASHBOARD_COPY } from "./dashboard/copy.ts";
 import { DashboardPanel } from "./dashboard/dashboard-panel.tsx";
 import { FINANCE_COPY } from "./finance/copy.ts";
 import { FinancePanel } from "./finance/finance-panel.tsx";
+import { MARKET_COPY } from "./market/copy.ts";
+import { MarketPanel } from "./market/market-panel.tsx";
 import { PRODUCTION_COPY } from "./production/copy.ts";
 import { ProductionPanel } from "./production/production-panel.tsx";
 
@@ -27,13 +26,11 @@ export interface PanelDefinition {
   readonly component: ComponentType<PanelProps>;
 }
 
-const MarketPlaceholder: ComponentType<PanelProps> = () => createElement(PanelPlaceholder, { title: PLACEHOLDER_PANEL_COPY.marketTitle });
-
 export const PANELS: readonly PanelDefinition[] = [
   { id: "dashboard", title: DASHBOARD_COPY.title, component: DashboardPanel },
   { id: "production", title: PRODUCTION_COPY.title, component: ProductionPanel },
   { id: "finance", title: FINANCE_COPY.title, component: FinancePanel },
-  { id: "market", title: PLACEHOLDER_PANEL_COPY.marketTitle, component: MarketPlaceholder },
+  { id: "market", title: MARKET_COPY.title, component: MarketPanel },
 ];
 
 export const DEFAULT_PANEL_ID: PanelId = "dashboard";
