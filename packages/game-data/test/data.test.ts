@@ -188,6 +188,11 @@ describe("families (ADR 0020 decision 12)", () => {
 describe("the warehouse (T03b, #76)", () => {
   it("lists the distillery and a storage-only warehouse, which the First Shipment scenario doesn't own", () => {
     expect(GAME_DATA.facilities.map((f) => f.id)).toEqual(["distillery-main", "riverside-warehouse"]);
+    // Each facility declares its kind; the snapshot reads it rather than inferring it from equipment (T05i, #148).
+    expect(GAME_DATA.facilities.map((f) => [f.id, f.kind])).toEqual([
+      ["distillery-main", "DISTILLERY"],
+      ["riverside-warehouse", "WAREHOUSE"],
+    ]);
     expect(GAME_DATA.locations.map((l) => l.id)).toContain("riverside-depot");
     expect(GAME_DATA.facilityProduction.find((f) => f.facilityId === "riverside-warehouse")).toMatchObject({ equipmentSlots: 0, maximumWorkers: 0 });
     expect(FIRST_SHIPMENT_SCENARIO.facilities.map((f) => f.id)).toEqual(["distillery-main"]);
@@ -203,8 +208,8 @@ describe("the warehouse (T03b, #76)", () => {
 });
 
 describe("GAME_DATA_VERSION", () => {
-  it("is bumped for T07d and recorded in GAME_DATA", () => {
-    expect(GAME_DATA_VERSION).toBe("0.6.0-t07d-tuning");
+  it("is bumped for T05i and recorded in GAME_DATA", () => {
+    expect(GAME_DATA_VERSION).toBe("0.6.1-t05i-facility-kind");
     expect(GAME_DATA.version).toBe(GAME_DATA_VERSION);
   });
 });
