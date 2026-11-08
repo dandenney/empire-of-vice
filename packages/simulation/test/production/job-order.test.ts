@@ -32,7 +32,7 @@ const mainScenarioFacility = FIRST_SHIPMENT_SCENARIO.facilities.find((f) => f.id
 function twoFacilityData(failureChance: number): GameData {
   return {
     ...GAME_DATA,
-    facilities: [...GAME_DATA.facilities, { id: SECOND_DISTILLERY, name: "Second distillery", locationId: HOLLOW_CREEK }],
+    facilities: [...GAME_DATA.facilities, { id: SECOND_DISTILLERY, name: "Second distillery", locationId: HOLLOW_CREEK, kind: "DISTILLERY" }],
     facilityProduction: [...GAME_DATA.facilityProduction, { ...mainProduction, facilityId: SECOND_DISTILLERY }],
     recipes: GAME_DATA.recipes.map((r) => (r.id === BASIC_MOONSHINE_RECIPE ? { ...r, failureChance: ratio(failureChance) } : r)),
   };

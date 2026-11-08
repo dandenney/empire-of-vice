@@ -167,6 +167,17 @@ describe("snapshot projection", () => {
     ]);
   });
 
+  it("takes the facility kind from game-data, so a distillery that sold its still stays a distillery (#148)", () => {
+    const g = newGame();
+    expect(distillery(g.snapshot()).kind).toBe(GAME_DATA.facilities.find((f) => f.id === DISTILLERY_MAIN)!.kind);
+    expectApplied(g.dispatch({ command: { type: "SELL_EQUIPMENT", facilityId: DISTILLERY_MAIN, equipmentId: COPPER_STILL } }));
+    const s = g.snapshot();
+    // No equipment left, so no recipe can run here: the old inference would have said WAREHOUSE.
+    expect(distillery(s).equipment).toEqual([]);
+    expect(distillery(s).recipes.every((r) => r.maxStartableQuantity === 0)).toBe(true);
+    expect(distillery(s).kind).toBe("DISTILLERY");
+  });
+
   it("reports sections with no system yet as empty lists and the scenario's values, never invented numbers", () => {
     const s = newGame().snapshot();
     expect(s.contracts).toEqual({ offers: [], active: [], closed: [] });
