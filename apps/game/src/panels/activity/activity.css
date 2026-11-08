@@ -10,6 +10,12 @@
   margin-top: 0;
 }
 
+/* Room for the progression rows' brass rule. */
+.ledger.activity-feed th:first-child,
+.ledger.activity-feed td:first-child {
+  padding-left: var(--space-4);
+}
+
 .activity-when {
   width: 7.5em;
   font-family: var(--font-mono);
@@ -53,4 +59,8 @@
 
 .activity-note[data-kind="standing"] .activity-note-text {
   font-weight: var(--weight-bold);
+}
+
+.activity-row td {
+  vertical-align: middle;
 }

@@ -30,7 +30,7 @@ export const PROGRESSION_COPY = {
 
   // Victory (GDD §4)
   victoryTitle: "Victory",
-  victoryCaption: "All three at once",
+  victoryNote: "Victory takes all three at once.",
   condition: "Condition",
   completedContracts: "Completed contracts",
 

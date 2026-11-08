@@ -160,7 +160,7 @@ export function ProgressionPanel({ snapshot }: PanelProps) {
         <h3 className="group-title" id="progression-victory-title">
           {C.victoryTitle}
         </h3>
-        <LedgerTable className="ledger-columns progress-table" testId="progression-victory" caption={C.victoryCaption}>
+        <LedgerTable className="ledger-columns progress-table" testId="progression-victory">
           <thead>
             <tr>
               <th scope="col">{C.condition}</th>
@@ -181,6 +181,7 @@ export function ProgressionPanel({ snapshot }: PanelProps) {
             ))}
           </tbody>
         </LedgerTable>
+        <p className="progress-note">{C.victoryNote}</p>
       </section>
 
       <section aria-labelledby="progression-ladder-title">

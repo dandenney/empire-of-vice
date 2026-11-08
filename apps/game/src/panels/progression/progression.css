@@ -20,6 +20,7 @@
 
 /* Met / not yet: the word carries the meaning; colour only backs it up. */
 .progress-status {
+  font-family: var(--font-ui);
   font-size: var(--text-sm);
   font-weight: var(--weight-bold);
   white-space: nowrap;
@@ -38,6 +39,11 @@
 
 .progress-ladder tbody th {
   font-weight: var(--weight-regular);
+}
+
+/* Room for the current standing's brass rule. */
+.ledger.progress-ladder th:first-child {
+  padding-left: var(--space-4);
 }
 
 .progress-tier-name {
