@@ -25,7 +25,7 @@ import { distribution, type Distribution } from "./smoke-report.ts";
 import { TICKS_PER_REAL_MINUTE } from "./smoke-run.ts";
 
 /** Bumped when the results file's shape changes. */
-export const BATCH_FORMAT_VERSION = 1;
+export const BATCH_FORMAT_VERSION = 2;
 
 /** Where the results go by default, relative to the working directory (`dist/` is git-ignored). */
 export const DEFAULT_BATCH_OUT = "dist/batch-results.json";
@@ -193,10 +193,17 @@ export async function runBatchParallel(args: Plan, jobs: number): Promise<BatchF
         new Promise<BatchRunResult[]>((resolveShare, reject) => {
           const workerData: BatchWorkerInput = { days: args.days, tasks: share };
           const worker = new Worker(new URL("./batch-worker.ts", import.meta.url), { workerData });
-          worker.once("message", (results: BatchRunResult[]) => resolveShare(results));
+          let posted = false;
+          worker.once("message", (results: BatchRunResult[]) => {
+            posted = true;
+            resolveShare(results);
+          });
           worker.once("error", reject);
+          // Settles the promise on every exit: a worker that exits cleanly without
+          // posting its results is an error too, not a hang (#122 review).
           worker.once("exit", (code) => {
             if (code !== 0) reject(new Error(`Batch worker exited with code ${code}`));
+            else if (!posted) reject(new Error("Batch worker exited without posting its results"));
           });
         }),
     ),

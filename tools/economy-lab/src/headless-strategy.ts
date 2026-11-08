@@ -59,6 +59,12 @@ export interface Variant {
   readonly spotTolerancePpm: number;
 }
 
+// A note on non-integer values (#122 review): `SpotOffer.rate`, the spot-tolerance
+// floor in `spot()`, and `reserve()` may be fractional. They are decision values used
+// only in comparisons, never stored or sent as money (every command carries integer
+// cents from the snapshot), and IEEE arithmetic is deterministic, so runs replay
+// exactly.
+
 /** The range each variant field is drawn from, inclusive. */
 export interface VariantRanges {
   readonly reserveHalfDays: readonly [number, number];
@@ -80,7 +86,12 @@ export function nextDeadline(c: ContractSnapshot): number {
 
 export const qualitiesFrom = (minimum: QualityTier): readonly QualityTier[] => QUALITY_TIERS.filter((q) => qualityRank(q) >= qualityRank(minimum));
 
-/** The want a buyer prices a case at: the one with the highest minimum quality the case meets. */
+/**
+ * The want a buyer prices a case at: the one with the highest minimum quality the case meets.
+ * This is ADR 0016's documented rule ("a cargo line matches the buyer's most specific
+ * want: the highest `minimumQuality` at or below the line's quality"); the snapshot's
+ * `BuyerWant` doesn't say it, so the strategy applies it itself.
+ */
 export function pricingWant<W extends { readonly productId: ProductId; readonly minimumQuality: QualityTier }>(
   wants: readonly W[],
   productId: ProductId,
