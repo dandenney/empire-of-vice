@@ -17,6 +17,7 @@ import {
   GAME_DATA,
   HOLLOW_CREEK,
   MODEL_TT_TRUCK,
+  MOONSHINE,
 } from "@eov/game-data";
 import { describe, expect, it } from "vitest";
 import { loadGame, newGame, SYSTEMS, type KernelSimulation } from "../../src/index.ts";
@@ -125,9 +126,10 @@ describe("snapshot projection", () => {
         return [def.name, def.minimumReputation, willDeal, quote, willDeal ? Math.min(want.dailyDemand, Math.floor(def.dailyBudget / quote)) : 0];
       }),
     );
+    const standardBasePrice = GAME_DATA.products.find((p) => p.id === MOONSHINE)!.basePrice.standard;
     expect(s.market.products.map((p) => [p.quality, p.basePrice, p.spotPrice, p.demandRatioPpm, p.supplyRatioPpm, p.previousSpotPrice])).toEqual([
       ["basic", cents(1_400), cents(1_400), 1_000_000, 1_000_000, null],
-      ["standard", cents(2_000), cents(2_000), 1_000_000, 1_000_000, null],
+      ["standard", standardBasePrice, standardBasePrice, 1_000_000, 1_000_000, null],
     ]);
     expect(s.locations.map((l) => [l.id, l.occupant.kind])).toEqual([
       ["crossroads", "BUYER"],
