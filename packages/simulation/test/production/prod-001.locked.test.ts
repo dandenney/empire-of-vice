@@ -106,6 +106,7 @@ import {
   GAME_DATA,
   MILLERS_FEED,
   MOONSHINE,
+  RIVERSIDE_WAREHOUSE,
   type EquipmentDefinition,
   type FacilityProductionDefinition,
   type GameData,
@@ -1266,12 +1267,26 @@ describe("PROD-001 snapshot facility section", () => {
   });
 
   // @locked
-  it("a facility that can run no recipe reports 0 capacity per day and is a WAREHOUSE", () => {
+  it("a distillery with no equipment reports 0 capacity per day and stays a DISTILLERY", () => {
     const g = game({ equipment: [] });
     const f = facilityIn(g.sim);
     expect(f.productionCapacityPerDay).toBe(0);
-    expect(f.kind).toBe("WAREHOUSE");
+    expect(f.kind).toBe("DISTILLERY");
     expect(f.equipmentSlots).toEqual({ used: 0, total: facilitySpec().equipmentSlots });
+  });
+
+  // @locked
+  it("a warehouse facility reports WAREHOUSE (#148)", () => {
+    const scenario: ScenarioDefinition = {
+      ...FIRST_SHIPMENT_SCENARIO,
+      facilities: [...FIRST_SHIPMENT_SCENARIO.facilities, { id: RIVERSIDE_WAREHOUSE, equipmentIds: [], workerCount: 0 }],
+    };
+    const sim = newGame({ scenario, data: GAME_DATA });
+    const w = sim.snapshot().facilities.find((x) => x.id === RIVERSIDE_WAREHOUSE);
+    if (!w) throw new Error("No warehouse in the snapshot");
+    expect(w.kind).toBe("WAREHOUSE");
+    expect(w.productionCapacityPerDay).toBe(0);
+    expect(facilityIn(sim).kind).toBe("DISTILLERY");
   });
 
   // @locked
