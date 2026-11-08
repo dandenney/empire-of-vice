@@ -12,7 +12,7 @@ export {
   type ReplayResult,
   type SimulationOptions,
 } from "./kernel/simulation.ts";
-export { journalOf, replayJournal, type Replayable } from "./kernel/replay-journal.ts";
+export { journalOf, replayJournal, type Journal, type Replayable } from "./kernel/replay-journal.ts";
 export {
   createRegistry,
   PHASES,

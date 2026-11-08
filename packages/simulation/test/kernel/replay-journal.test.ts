@@ -44,19 +44,19 @@ describe("replayJournal (ADR 0004 replay procedure)", () => {
       { kind: "now", command: setWorkforce(FACILITIES[0]!, 3) },
     ]);
     const end = original.state.tick;
-    const log = journalOf(original.state);
-    // The last envelope is due at end + 1: it was applied eagerly on the last tick.
-    expect(log.at(-1)!.scheduledTick).toBe(end + 1);
+    const journal = journalOf(original.state);
+    // The last applied envelope is due at end + 1: it was applied eagerly on the last tick.
+    expect(journal.applied.at(-1)!.scheduledTick).toBe(end + 1);
 
     const replayed = fakeSimulation();
-    const results = replayJournal(replayed, log, end);
+    const results = replayJournal(replayed, journal, end);
     expect(results.map((r) => r.status)).not.toContain("rejected");
     expect(replayed.state.tick).toBe(end);
     expect(replayed.stateHash()).toBe(original.stateHash());
 
     // The naive procedure (every envelope up front, then advance) leaves it queued.
     const naive = fakeSimulation();
-    for (const e of log) naive.replay(e);
+    for (const e of [...journal.applied, ...journal.queued]) naive.replay(e);
     naive.advance(end - naive.state.tick);
     expect(naive.stateHash()).not.toBe(original.stateHash());
   });
@@ -81,10 +81,35 @@ describe("replayJournal (ADR 0004 replay procedure)", () => {
     expect(replayed.stateHash()).toBe(original.stateHash());
   });
 
+  it("keeps a command still queued for end + 1 queued, not applied (issue #135 counterexample)", () => {
+    // fast-check seed -2114342056: a purchase dispatched for start + 685, and
+    // the run stops one tick before it. It's due at end + 1 like a last-tick
+    // dispatch, but it was never applied.
+    const { sim: original } = run([
+      { kind: "later", command: buyCorn(1), offset: 685 },
+      { kind: "advance", ticks: 282 },
+      { kind: "advance", ticks: 275 },
+      { kind: "advance", ticks: 127 },
+    ]);
+    const end = original.state.tick;
+    const pending = original.state.queuedCommands.find((e) => e.scheduledTick === end + 1);
+    expect(pending).toBeDefined();
+
+    const replayed = fakeSimulation();
+    replayJournal(replayed, journalOf(original.state), end);
+    expect(replayed.state.queuedCommands).toEqual(original.state.queuedCommands);
+    expect(replayed.state.commandLog).toEqual(original.state.commandLog);
+    expect(replayed.stateHash()).toBe(original.stateHash());
+
+    original.advance(1);
+    replayed.advance(1);
+    expect(replayed.stateHash()).toBe(original.stateHash());
+  });
+
   it("refuses a target already past the end tick", () => {
     const target = fakeSimulation();
     target.advance(10);
-    expect(() => replayJournal(target, [], tick(5))).toThrow(KernelError);
+    expect(() => replayJournal(target, { applied: [], queued: [] }, tick(5))).toThrow(KernelError);
   });
 
   it("reproduces the hash and the events of any run, wherever it stops, and both continue the same", () => {
