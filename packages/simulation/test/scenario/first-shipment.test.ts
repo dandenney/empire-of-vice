@@ -83,8 +83,11 @@ describe("First Shipment: GDD §4", () => {
 });
 
 describe("First Shipment: opening balance sheet (ADR 0020 decision 1)", () => {
-  it("is $2,500 of net worth: cash $1,000, building $800, still $300, truck $400, nothing else", () => {
+  it("is cash $1,000, the scenario's building, still $300, and truck $400, and nothing else", () => {
     const { netWorth, balanceSheet } = newGame().snapshot().finance;
+    // The building's book value is a tuning lever (ADR 0020 decision 15), so it's read from the scenario.
+    const building = FIRST_SHIPMENT_SCENARIO.openingBalance.buildings;
+    const total = cents(100_000 + 30_000 + 40_000 + building);
     expect(balanceSheet.assets).toEqual({
       cash: cents(100_000),
       rawMaterials: cents(0),
@@ -93,13 +96,13 @@ describe("First Shipment: opening balance sheet (ADR 0020 decision 1)", () => {
       receivables: cents(0),
       equipment: cents(30_000),
       vehicles: cents(40_000),
-      facilities: cents(80_000),
+      facilities: building,
     });
     expect(balanceSheet.liabilities).toEqual({ wagesPayable: cents(0), penaltiesPayable: cents(0) });
-    expect(balanceSheet.totalAssets).toBe(cents(250_000));
+    expect(balanceSheet.totalAssets).toBe(total);
     expect(balanceSheet.totalLiabilities).toBe(cents(0));
-    expect(balanceSheet.equity).toBe(cents(250_000));
-    expect(netWorth).toBe(cents(250_000));
+    expect(balanceSheet.equity).toBe(total);
+    expect(netWorth).toBe(total);
   });
 });
 

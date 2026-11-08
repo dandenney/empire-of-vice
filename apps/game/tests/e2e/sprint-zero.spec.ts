@@ -11,6 +11,7 @@
 // must equal the headless run's. New game, Save, and Reload save are the
 // shell's buttons; the figures are checked in the Dashboard.
 
+import { cents, formatMoney, subtractMoney } from "@eov/contracts";
 import { expect, test, type Page } from "@playwright/test";
 import type { EovTestHook } from "../../src/app/test-hook.ts";
 
@@ -122,10 +123,14 @@ test("plays the Sprint Zero path through the worker and matches the headless has
   expect(sold.vehicles[0]!.trip!.leg).toBe("RETURN");
   expect(sold.recentEvents.map((e) => e.type)).toContain("SALE_COMPLETED");
 
-  // Record profit: $14.00 revenue − $11.00 cost of goods = $3.00.
-  expect(sold.finance.toDate.profit).toMatchObject({ revenue: 1_400, costOfGoodsSold: 1_100, netProfit: 300 });
-  await expect(page.getByTestId("dashboard-revenue-toDate")).toHaveText("$14.00");
-  await expect(page.getByTestId("dashboard-profit-toDate")).toHaveText("$3.00");
+  // Record profit: the buyer's quote as revenue, less the case's cost of goods. Both
+  // are basic-economy tuning levers (ADR 0020 decision 15), so they come from the snapshots.
+  const revenue = buyer.wants[0]!.unitPrice;
+  const costOfGoods = pool.averageUnitCost;
+  const gross = subtractMoney(revenue, costOfGoods);
+  expect(sold.finance.toDate.profit).toMatchObject({ revenue, costOfGoodsSold: costOfGoods, netProfit: gross });
+  await expect(page.getByTestId("dashboard-revenue-toDate")).toHaveText(formatMoney(revenue));
+  await expect(page.getByTestId("dashboard-profit-toDate")).toHaveText(formatMoney(gross));
 
   // Save, reload the page, and reload the save.
   await press(page, "save");
@@ -146,8 +151,9 @@ test("plays the Sprint Zero path through the worker and matches the headless has
   const home = await snapshot(page);
   expect(home.vehicles[0]!.trip).toBeNull();
   // The $1.50 transport is paid when the truck gets home (ADR 0019 decision 2).
-  expect(home.finance.toDate.profit.netProfit).toBe(150);
-  await expect(page.getByTestId("dashboard-profit-toDate")).toHaveText("$1.50");
+  const transport = cents(150);
+  expect(home.finance.toDate.profit.netProfit).toBe(subtractMoney(gross, transport));
+  await expect(page.getByTestId("dashboard-profit-toDate")).toHaveText(formatMoney(subtractMoney(gross, transport)));
   expect(await stateHash(page)).toBe(HEADLESS_HASH);
   await expect(page.getByTestId("state-hash")).toHaveText(HEADLESS_HASH);
 });
