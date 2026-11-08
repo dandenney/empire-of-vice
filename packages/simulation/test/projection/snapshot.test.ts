@@ -30,6 +30,23 @@ const distillery = (s: GameSnapshot) => s.facilities.find((f) => f.id === DISTIL
 const basicRecipe = (s: GameSnapshot) => distillery(s).recipes.find((r) => r.recipeId === BASIC_MOONSHINE_RECIPE)!;
 const roadhouseWant = (s: GameSnapshot) => s.market.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!.wants[0]!;
 
+// The basic economy (input prices, labor and overhead, the base price, the building)
+// is a tuning lever (ADR 0020 decision 15), so the path's numbers come from game-data.
+const BASIC = GAME_DATA.recipes.find((r) => r.id === BASIC_MOONSHINE_RECIPE)!;
+const stockLine = (materialId: string) => GAME_DATA.suppliers[0]!.stock.find((l) => l.materialId === materialId)!;
+const inputQuantity = (materialId: string) => BASIC.inputsPerCase.find((i) => i.materialId === materialId)!.quantity;
+const CORN_COST = cents(inputQuantity("corn") * stockLine("corn").unitPrice);
+const SUGAR_COST = cents(inputQuantity("sugar") * stockLine("sugar").unitPrice);
+/** Labor and overhead capitalized into the case, paid in cash at the start (cash flow files them under WAGES). */
+const CONVERSION_COST = cents(BASIC.laborPerCase + BASIC.overheadPerCase);
+const CASE_COST = cents(CORN_COST + SUGAR_COST + CONVERSION_COST);
+const ROADHOUSE_QUOTE = applyRatios(GAME_DATA.products.find((p) => p.id === MOONSHINE)!.basePrice.basic, [
+  GAME_DATA.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!.wants[0]!.priceRatio,
+]);
+/** The state highway's $1.50 (the route table isn't a tuning lever). */
+const TRANSPORT = cents(150);
+const OPENING_NET_WORTH = cents(100_000 + 30_000 + 40_000 + FIRST_SHIPMENT_SCENARIO.openingBalance.buildings);
+
 /** Plays the Sprint Zero path through snapshots, the way the UI does: every input comes from the last snapshot. */
 function playPath(): { sim: KernelSimulation; snapshots: Record<string, GameSnapshot> } {
   const sim = newGame();
@@ -99,9 +116,9 @@ describe("snapshot projection", () => {
       receivables: 0,
       equipment: cents(30_000),
       vehicles: cents(40_000),
-      facilities: cents(80_000),
+      facilities: FIRST_SHIPMENT_SCENARIO.openingBalance.buildings,
     });
-    expect(s.finance.netWorth).toBe(cents(250_000));
+    expect(s.finance.netWorth).toBe(OPENING_NET_WORTH);
     expect(s.finance.previousDay).toBeNull();
     expect(s.finance.toDate.cashFlow.openingCash).toBe(cents(100_000));
     expect(s.finance.recentTransactions.map((t) => t.kind)).toEqual(["OPENING_BALANCE"]);
@@ -111,8 +128,8 @@ describe("snapshot projection", () => {
     ]);
     expect(s.vehicles).toEqual([{ id: MODEL_TT_TRUCK, name: "Model TT truck", capacity: 20, homeLocationId: HOLLOW_CREEK, trip: null }]);
     expect(s.market.suppliers[0]!.materials.map((m) => [m.materialName, m.unitPrice, m.available, m.shortage])).toEqual([
-      ["Corn", cents(250), 160, false],
-      ["Sugar", cents(200), 100, false],
+      ["Corn", stockLine("corn").unitPrice, stockLine("corn").dailyStock, false],
+      ["Sugar", stockLine("sugar").unitPrice, stockLine("sugar").dailyStock, false],
     ]);
     // Opening quotes are spot (= base price) × the want's price ratio. A buyer deals
     // only at or above its minimum reputation, and then takes at most
@@ -126,9 +143,10 @@ describe("snapshot projection", () => {
         return [def.name, def.minimumReputation, willDeal, quote, willDeal ? Math.min(want.dailyDemand, Math.floor(def.dailyBudget / quote)) : 0];
       }),
     );
+    const basicBasePrice = GAME_DATA.products.find((p) => p.id === MOONSHINE)!.basePrice.basic;
     const standardBasePrice = GAME_DATA.products.find((p) => p.id === MOONSHINE)!.basePrice.standard;
     expect(s.market.products.map((p) => [p.quality, p.basePrice, p.spotPrice, p.demandRatioPpm, p.supplyRatioPpm, p.previousSpotPrice])).toEqual([
-      ["basic", cents(1_400), cents(1_400), 1_000_000, 1_000_000, null],
+      ["basic", basicBasePrice, basicBasePrice, 1_000_000, 1_000_000, null],
       ["standard", standardBasePrice, standardBasePrice, 1_000_000, 1_000_000, null],
     ]);
     expect(s.locations.map((l) => [l.id, l.occupant.kind])).toEqual([
@@ -173,7 +191,7 @@ describe("snapshot projection", () => {
       ],
       unlocked: ["spot-sales"],
       victory: {
-        netWorth: { current: cents(250_000), target: GAME_DATA.progression.victory.netWorth },
+        netWorth: { current: OPENING_NET_WORTH, target: GAME_DATA.progression.victory.netWorth },
         reputation: { current: 0, target: GAME_DATA.progression.victory.reputation },
         completedContracts: { current: 0, target: GAME_DATA.progression.victory.completedContracts },
       },
@@ -217,45 +235,51 @@ describe("snapshot projection", () => {
   it("tracks inventory, reservations, the job, and the truck along the path", () => {
     const { snapshots } = playPath();
     expect(distillery(snapshots.bought!).materials.map((m) => [m.materialName, m.quantity, m.reservedQuantity, m.totalCost])).toEqual([
-      ["Corn", 2, 0, cents(500)],
-      ["Sugar", 1, 0, cents(200)],
+      ["Corn", inputQuantity("corn"), 0, CORN_COST],
+      ["Sugar", inputQuantity("sugar"), 0, SUGAR_COST],
     ]);
     expect(distillery(snapshots.producing!).materials.map((m) => m.reservedQuantity)).toEqual([2, 1]);
     expect(snapshots.producing!.productionJobs[0]).toMatchObject({ facilityId: DISTILLERY_MAIN, productId: "moonshine", quality: "basic", quantity: 1, startedAt: 1, completesAt: 145 });
     expect(distillery(snapshots.produced!).products).toEqual([
-      { productId: "moonshine", productName: "Moonshine", quality: "basic", quantity: 1, reservedQuantity: 0, totalCost: cents(1_100), averageUnitCost: cents(1_100) },
+      { productId: "moonshine", productName: "Moonshine", quality: "basic", quantity: 1, reservedQuantity: 0, totalCost: CASE_COST, averageUnitCost: CASE_COST },
     ]);
     expect(distillery(snapshots.produced!).storage.used).toBe(1);
     const trip = snapshots.dispatched!.vehicles[0]!.trip!;
     expect(trip).toMatchObject({ routeId: "state-highway", leg: "OUTBOUND", cargo: [{ productId: "moonshine", quality: "basic", quantity: 1 }] });
-    expect(trip.purpose).toEqual({ kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: cents(1_400) });
+    expect(trip.purpose).toEqual({ kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: ROADHOUSE_QUOTE });
     // One case committed: demand and budget each drop by one case (GDD §7 liquidity).
     const roadhouse = GAME_DATA.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!;
     const daily = roadhouse.wants[0]!.dailyDemand;
-    const afterOne = Math.min(daily - 1, Math.floor((roadhouse.dailyBudget - cents(1_400)) / cents(1_400)));
+    const afterOne = Math.min(daily - 1, Math.floor((roadhouse.dailyBudget - ROADHOUSE_QUOTE) / ROADHOUSE_QUOTE));
     expect(roadhouseWant(snapshots.dispatched!)).toMatchObject({ demandRemaining: daily - 1, maxAcceptableQuantity: afterOne });
     expect(snapshots.sold!.vehicles[0]!.trip!.leg).toBe("RETURN");
     expect(snapshots.home!.vehicles[0]!.trip).toBeNull();
   });
 
-  it("records the profit: $14.00 revenue, $11.00 cost of goods, $1.50 transport, $1.50 net", () => {
+  it("records the profit: the roadhouse quote as revenue, the case's cost as cost of goods, $1.50 transport", () => {
     const { snapshots } = playPath();
     const profit = snapshots.home!.finance.toDate.profit;
     // The state highway's $1.50 transport is paid when the truck gets home (ADR 0019 decision 2).
-    expect(profit).toMatchObject({ revenue: cents(1_400), costOfGoodsSold: cents(1_100), grossProfit: cents(300), gains: 0, netProfit: cents(150) });
+    expect(profit).toMatchObject({
+      revenue: ROADHOUSE_QUOTE,
+      costOfGoodsSold: CASE_COST,
+      grossProfit: ROADHOUSE_QUOTE - CASE_COST,
+      gains: 0,
+      netProfit: ROADHOUSE_QUOTE - CASE_COST - TRANSPORT,
+    });
     expect(profit.expenses.map((e) => e.category)).toEqual(["WAGES", "OVERHEAD", "TRANSPORT", "PENALTIES", "LOSSES"]);
     // Profit and cash flow differ: cash paid for materials and labor before the sale.
     expect(snapshots.produced!.finance.toDate.profit.netProfit).toBe(0);
-    expect(snapshots.produced!.finance.toDate.cashFlow.netChange).toBe(cents(-1_100));
+    expect(snapshots.produced!.finance.toDate.cashFlow.netChange).toBe(-CASE_COST);
     const flow = snapshots.home!.finance.toDate.cashFlow;
     expect(Object.fromEntries(flow.lines.map((l) => [l.category, l.amount]))).toMatchObject({
-      SALES: cents(1_400),
-      MATERIALS: cents(-700),
-      WAGES: cents(-400),
-      TRANSPORT: cents(-150),
+      SALES: ROADHOUSE_QUOTE,
+      MATERIALS: -(CORN_COST + SUGAR_COST),
+      WAGES: -CONVERSION_COST,
+      TRANSPORT: -TRANSPORT,
     });
     expect(flow.closingCash).toBe(snapshots.home!.finance.cash);
-    expect(snapshots.home!.finance.netWorth).toBe(cents(250_150));
+    expect(snapshots.home!.finance.netWorth).toBe(OPENING_NET_WORTH + ROADHOUSE_QUOTE - CASE_COST - TRANSPORT);
   });
 
   it("reports a vehicle return as the transaction that pays the trip's transport cost", () => {
@@ -287,7 +311,7 @@ describe("snapshot projection", () => {
       expect(sheet.totalAssets, step).toBe(Object.values(sheet.assets).reduce((a, b) => a + b, 0));
       expect(sheet.equity, step).toBe(sheet.totalAssets - sheet.totalLiabilities);
       expect(s.finance.netWorth, step).toBe(sheet.equity);
-      expect(s.finance.netWorth - s.finance.toDate.profit.netProfit, step).toBe(cents(250_000));
+      expect(s.finance.netWorth - s.finance.toDate.profit.netProfit, step).toBe(OPENING_NET_WORTH);
       expect(s.finance.toDate.cashFlow.closingCash, step).toBe(s.finance.cash);
       expect(s.progression.victory.netWorth.current, step).toBe(s.finance.netWorth);
     }
@@ -296,8 +320,9 @@ describe("snapshot projection", () => {
   it("splits finance into today and the previous day at midnight", () => {
     const { sim } = playPath();
     const sameDay = sim.snapshot();
-    // $3.00 gross profit less the $1.50 transport paid at the truck's return (ADR 0019 decision 2).
-    expect(sameDay.finance.today.profit.netProfit).toBe(cents(150));
+    // The gross profit less the $1.50 transport paid at the truck's return (ADR 0019 decision 2).
+    const pathProfit = ROADHOUSE_QUOTE - CASE_COST - TRANSPORT;
+    expect(sameDay.finance.today.profit.netProfit).toBe(pathProfit);
     // The midnight settlement (T02c2, #63) expenses tonight's wages and overhead into the day that ended.
     const wages =
       GAME_DATA.characters.reduce((n, c) => n + c.dailyWage, 0) +
@@ -310,7 +335,7 @@ describe("snapshot projection", () => {
     expect(nextDay.finance.today).toMatchObject({ fromTick: 1_440, toTick: 1_440 });
     expect(nextDay.finance.today.profit.netProfit).toBe(0);
     expect(nextDay.finance.previousDay).toMatchObject({ fromTick: 0, toTick: 1_440 });
-    expect(nextDay.finance.previousDay!.profit.netProfit).toBe(cents(150) - wages - overhead);
+    expect(nextDay.finance.previousDay!.profit.netProfit).toBe(pathProfit - wages - overhead);
     expect(nextDay.finance.today.cashFlow.openingCash).toBe(nextDay.finance.previousDay!.cashFlow.closingCash);
   });
 
