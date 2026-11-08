@@ -61,6 +61,25 @@ export const MarketIcon = () => (
   </Icon>
 );
 
+/** A signed agreement: a page with lines and a signature flourish. */
+export const ContractsIcon = () => (
+  <Icon>
+    <path d="M5 2.5h7.5l2.5 2.5v12.5H5z" />
+    <path d="M12.5 2.5V5H15" />
+    <path d="M7.5 7.5h5M7.5 10h5" />
+    <path d="M7.5 14.5c1-1.5 1.8-1.5 2.2 0s1.2 1.5 2.8-.5" />
+  </Icon>
+);
+
+/** A works: a sawtooth roof over a wide door. */
+export const FacilityIcon = () => (
+  <Icon>
+    <path d="M2.5 16.5h15" />
+    <path d="M3.5 16.5V8l4 2.5V8l4 2.5V8l5 3v5.5" />
+    <path d="M8 16.5v-3.5h4v3.5" />
+  </Icon>
+);
+
 /** Fallback for a panel without its own icon. */
 export const PanelIcon = () => (
   <Icon>
@@ -112,4 +131,6 @@ export const PANEL_ICONS: Readonly<Record<string, () => ReactNode>> = {
   production: ProductionIcon,
   finance: FinanceIcon,
   market: MarketIcon,
+  contracts: ContractsIcon,
+  facility: FacilityIcon,
 };

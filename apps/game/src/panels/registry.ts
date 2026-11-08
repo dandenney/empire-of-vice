@@ -1,13 +1,15 @@
 // Every management panel: id, title, and component. The shell's navigation
 // and `openPanel` / `openPanelForLocation` use these ids.
-//
-// Contracts and Facility come with T04e (#128).
 
 import type { GameSnapshot, LocationId, LocationOccupant } from "@eov/contracts";
 import type { ComponentType } from "react";
 import type { PanelId } from "../state/ui-store.ts";
+import { CONTRACTS_COPY } from "./contracts/copy.ts";
+import { ContractsPanel } from "./contracts/contracts-panel.tsx";
 import { DASHBOARD_COPY } from "./dashboard/copy.ts";
 import { DashboardPanel } from "./dashboard/dashboard-panel.tsx";
+import { FACILITY_COPY } from "./facility/copy.ts";
+import { FacilityPanel } from "./facility/facility-panel.tsx";
 import { FINANCE_COPY } from "./finance/copy.ts";
 import { FinancePanel } from "./finance/finance-panel.tsx";
 import { MARKET_COPY } from "./market/copy.ts";
@@ -31,6 +33,8 @@ export const PANELS: readonly PanelDefinition[] = [
   { id: "production", title: PRODUCTION_COPY.title, component: ProductionPanel },
   { id: "finance", title: FINANCE_COPY.title, component: FinancePanel },
   { id: "market", title: MARKET_COPY.title, component: MarketPanel },
+  { id: "contracts", title: CONTRACTS_COPY.title, component: ContractsPanel },
+  { id: "facility", title: FACILITY_COPY.title, component: FacilityPanel },
 ];
 
 export const DEFAULT_PANEL_ID: PanelId = "dashboard";
