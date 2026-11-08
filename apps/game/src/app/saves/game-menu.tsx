@@ -1,14 +1,16 @@
 // The top bar's game menu (T06a, #135), replacing the S0 New game / Save /
 // Reload buttons:
 //   - New game;
-//   - Save: to the slot this game was last saved to or loaded from, or a new
-//     one, named after the game date;
-//   - Continue: loads the newest save;
+//   - while a game runs, Save: to the slot this game was last saved to or
+//     loaded from, or a new one, named after the game date;
+//   - while none does (a fresh page), Continue in its place: loads the newest
+//     save;
 //   - Saves…: the saves dialog (save to a new named slot, load, delete).
 // A failed load opens the load-error screen; nothing is loaded.
 //
 // The current slot and the save list are UI state; game state stays in the
-// worker. The list is re-read from storage after every change.
+// worker. The list is re-read from storage on opening the dialog and after
+// every change.
 
 import type { SaveSummary } from "@eov/persistence";
 import { useCallback, useEffect, useState } from "react";
@@ -87,6 +89,13 @@ export function GameMenu({
       return SAVES_COPY.removed(label);
     });
 
+  /** Opens the dialog on a fresh list: storage may have changed (another tab). */
+  const openDialog = run(async () => {
+    await refresh();
+    setDialogOpen(true);
+    return null;
+  });
+
   const latest = continueTarget(saves);
 
   return (
@@ -104,13 +113,16 @@ export function GameMenu({
       >
         {SAVES_COPY.newGame}
       </button>
-      <button type="button" className="button" data-testid="save" disabled={busy || defaultLabel === null} onClick={() => defaultLabel !== null && void save(defaultLabel, currentSlot)()}>
-        {SAVES_COPY.save}
-      </button>
-      <button type="button" className="button" data-testid="reload" disabled={busy || latest === null} onClick={() => latest && void load(latest)()}>
-        {SAVES_COPY.continue}
-      </button>
-      <button type="button" className="button" data-testid="open-saves" disabled={busy} onClick={() => setDialogOpen(true)}>
+      {defaultLabel !== null ? (
+        <button type="button" className="button" data-testid="save" disabled={busy} onClick={() => void save(defaultLabel, currentSlot)()}>
+          {SAVES_COPY.save}
+        </button>
+      ) : (
+        <button type="button" className="button" data-testid="reload" disabled={busy || latest === null} onClick={() => latest && void load(latest)()}>
+          {SAVES_COPY.continue}
+        </button>
+      )}
+      <button type="button" className="button" data-testid="open-saves" disabled={busy} onClick={openDialog}>
         {SAVES_COPY.openSaves}
       </button>
       <SavesDialog

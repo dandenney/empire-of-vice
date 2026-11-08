@@ -5,7 +5,7 @@
 // tab visibility to the worker (hidden auto-pauses, ADR 0014); and, in test
 // builds, installs the `window.__eov` test hook.
 
-import { IndexedDbStorageAdapter } from "@eov/persistence";
+import { IndexedDbStorageAdapter } from "@eov/persistence/indexed-db";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/app.tsx";
