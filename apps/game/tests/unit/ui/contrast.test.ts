@@ -29,7 +29,7 @@ const PAIRS: readonly { readonly what: string; readonly fg: string; readonly bg:
   { what: "body text on the page / map", fg: COLOR.text, bg: COLOR.bg, min: TEXT },
   { what: "muted text on the panel", fg: COLOR.textMuted, bg: COLOR.surface, min: TEXT },
   { what: "muted text on bars and tiles", fg: COLOR.textMuted, bg: COLOR.surfaceRaised, min: TEXT },
-  { what: "muted text on the map (state hash)", fg: COLOR.textMuted, bg: COLOR.bg, min: TEXT },
+  { what: "muted text on the page or map", fg: COLOR.textMuted, bg: COLOR.bg, min: TEXT },
   { what: "brass captions and group titles on the panel", fg: COLOR.accent, bg: COLOR.surface, min: TEXT },
   { what: "brass masthead and badges on raised surfaces", fg: COLOR.accent, bg: COLOR.surfaceRaised, min: TEXT },
   { what: "bright brass section titles on the panel", fg: COLOR.accentStrong, bg: COLOR.surface, min: TEXT },

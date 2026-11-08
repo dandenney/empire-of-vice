@@ -197,18 +197,6 @@ body {
   background: var(--color-bg);
 }
 
-.state-hash {
-  position: absolute;
-  right: var(--space-3);
-  bottom: var(--space-3);
-  padding: 0 var(--space-2);
-  background: var(--color-bg);
-  color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  pointer-events: none;
-}
-
 /* ---- Docked panel ------------------------------------------------------- */
 
 .dock {
@@ -218,6 +206,18 @@ body {
   box-sizing: border-box;
   background: var(--color-surface);
   border-left: 3px double var(--color-accent-dim);
+}
+
+/* Test builds: the state hash, under the panel (kept out of the map and panel screenshots). */
+.dock-footer {
+  padding: 0 var(--space-6) var(--space-5);
+  text-align: right;
+}
+
+.state-hash {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
 
 /* The game's name over the panel, continuing the top bar's band. */

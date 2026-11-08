@@ -113,11 +113,6 @@ export function App({ showStateHash }: { readonly showStateHash: boolean }) {
             <MapSlot snapshot={snapshot} />
           </FontsReady>
         )}
-        {showStateHash && stateHash && (
-          <code className="state-hash" data-testid="state-hash">
-            {stateHash}
-          </code>
-        )}
       </div>
       <div className="dock">
         <header className="masthead">
@@ -128,6 +123,13 @@ export function App({ showStateHash }: { readonly showStateHash: boolean }) {
         </header>
         {/* With no game, the masthead's status line says so. */}
         <main>{snapshot && <Panel snapshot={snapshot} />}</main>
+        {showStateHash && stateHash && (
+          <footer className="dock-footer">
+            <code className="state-hash" data-testid="state-hash">
+              {stateHash}
+            </code>
+          </footer>
+        )}
       </div>
       <ToastHost />
     </div>
