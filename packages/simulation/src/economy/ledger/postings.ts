@@ -123,6 +123,11 @@ export function cargoLossEntries(cost: Money): readonly LedgerEntry[] {
   return entries(["LOSSES", "DEBIT", cost], ["GOODS_IN_TRANSIT", "CREDIT", cost]);
 }
 
+/** Cash taken by a scheduled shakedown (issue #129): Dr LOSSES / Cr CASH. The caller caps it at cash. */
+export function cashLossEntries(amount: Money): readonly LedgerEntry[] {
+  return entries(["LOSSES", "DEBIT", amount], ["CASH", "CREDIT", amount]);
+}
+
 /** Writing down a long-lived asset: Dr LOSSES / Cr EQUIPMENT or VEHICLES. */
 export function impairmentEntries(amount: Money, account: "EQUIPMENT" | "VEHICLES"): readonly LedgerEntry[] {
   return entries(["LOSSES", "DEBIT", amount], [account, "CREDIT", amount]);

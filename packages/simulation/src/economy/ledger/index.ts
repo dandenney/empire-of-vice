@@ -13,6 +13,7 @@ export {
 } from "./ledger.ts";
 export {
   cargoLossEntries,
+  cashLossEntries,
   dispatchEntries,
   equipmentPurchaseEntries,
   impairmentEntries,
