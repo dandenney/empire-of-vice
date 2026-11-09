@@ -48,7 +48,6 @@ import {
   resaleValue,
   storageAvailable,
   storageCapacity,
-  supportsRecipe,
 } from "../production/index.ts";
 import { projectFinance } from "./finance.ts";
 
@@ -266,13 +265,12 @@ function projectFacility(state: GameState, facility: FacilityState, deps: Projec
       totalCost: m.totalCost,
     }));
   const owned = facility.equipment.map((e) => named(data.equipment, e.equipmentId, "equipment"));
-  // Game-data has no facility kind (T03), so a facility that can run a recipe is a distillery.
-  const distills = data.recipes.some((r) => supportsRecipe(facility, r));
   return {
     id: facility.id,
     name: def.name,
     locationId: def.locationId,
-    kind: distills ? "DISTILLERY" : "WAREHOUSE",
+    // From game-data, not inferred from current equipment: a distillery that sold its still is still a distillery (T05i, #148).
+    kind: def.kind,
     equipment: facility.equipment.map((e, i) => ({
       id: e.equipmentId,
       name: owned[i]!.name,

@@ -1,34 +1,28 @@
-import { SAVE_SCHEMA_VERSION, type SaveMeta } from "@eov/contracts";
-import { BASIC_MOONSHINE_RECIPE, CORN, CROSSROADS_ROADHOUSE, DISTILLERY_MAIN, MILLERS_FEED, MODEL_TT_TRUCK, MOONSHINE, SUGAR } from "@eov/game-data";
-import { loadGame, newGame } from "@eov/simulation";
+import { SAVE_SCHEMA_VERSION, type SaveFile, type SaveMeta } from "@eov/contracts";
+import { FIRST_SHIPMENT_SCENARIO, GAME_DATA_VERSION } from "@eov/game-data";
+import { journalOf, loadGame, newGame, replayJournal } from "@eov/simulation";
+import { hashState } from "@eov/simulation/hash";
 import { describe, expect, it } from "vitest";
-import { createSaveFile, MemoryStorageAdapter, parseSaveFile, readSave, serializeSaveFile, writeSave } from "../src/index.ts";
+import {
+  createSaveFile,
+  listSaves,
+  MemoryStorageAdapter,
+  nextSlotId,
+  parseSaveFile,
+  readSave,
+  serializeSaveFile,
+  writeSave,
+} from "../src/index.ts";
+import { rawStateHash } from "../src/save-file.ts";
+import { gameInProgress, meta } from "./game.ts";
 
-const meta: SaveMeta = { slot: "slot-1", label: "Day 1", savedAt: "2026-11-04T18:30:00.000Z", appVersion: "0.0.0-test" };
+const current = { scenarioId: FIRST_SHIPMENT_SCENARIO.id, gameDataVersion: GAME_DATA_VERSION };
 
-/** A game mid-way through the Sprint Zero path: a case is on the truck. */
-function gameInProgress() {
-  const sim = newGame();
-  sim.dispatch({ command: { type: "PURCHASE_MATERIALS", supplierId: MILLERS_FEED, materialId: CORN, quantity: 2, facilityId: DISTILLERY_MAIN } });
-  sim.dispatch({ command: { type: "PURCHASE_MATERIALS", supplierId: MILLERS_FEED, materialId: SUGAR, quantity: 1, facilityId: DISTILLERY_MAIN } });
-  sim.dispatch({ command: { type: "START_PRODUCTION", facilityId: DISTILLERY_MAIN, recipeId: BASIC_MOONSHINE_RECIPE, quantity: 1 } });
-  sim.advance(200);
-  const price = sim.state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!.wants[0]!.unitPrice;
-  const result = sim.dispatch({
-    command: {
-      type: "DISPATCH_DELIVERY",
-      vehicleId: MODEL_TT_TRUCK,
-      cargo: [{ productId: MOONSHINE, quality: "basic", quantity: 1 }],
-      purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: price },
-      routeId: null,
-    },
-  });
-  expect(result.status).toBe("applied");
-  sim.advance(30);
-  return sim;
+function withSave(file: SaveFile, save: Record<string, unknown>): string {
+  return JSON.stringify({ ...file, save: { ...file.save, ...save } });
 }
 
-describe("persistence (S0 stub)", () => {
+describe("saving and loading", () => {
   it("saves through a storage adapter and loads back the same state", async () => {
     const storage = new MemoryStorageAdapter();
     const sim = gameInProgress();
@@ -36,62 +30,158 @@ describe("persistence (S0 stub)", () => {
     expect(written.stateHash).toBe(sim.stateHash());
     expect(await storage.list()).toEqual(["slot-1"]);
 
-    const loaded = await readSave(storage, "slot-1");
+    const loaded = await readSave(storage, "slot-1", current);
     if (!loaded.ok) throw new Error(JSON.stringify(loaded.error));
     expect(loaded.file.meta).toEqual(meta);
     expect(loaded.file.stateHash).toBe(sim.stateHash());
+    expect(loaded.migratedFrom).toBeNull();
+    expect(loaded.gameDataChanged).toBe(false);
   });
 
-  it("save → load → continue gives the same state hash as an uninterrupted run", async () => {
+  it("save → close → load → continue gives the same state hash as an uninterrupted run, and as a replay of the journal", async () => {
     const storage = new MemoryStorageAdapter();
     const sim = gameInProgress();
+    expect(sim.state.queuedCommands.length).toBeGreaterThan(0);
     await writeSave(storage, sim, meta);
-    const loaded = await readSave(storage, "slot-1");
+
+    // "Close": nothing survives but the stored text.
+    const reopened = new MemoryStorageAdapter();
+    await reopened.write("slot-1", (await storage.read("slot-1"))!);
+    const loaded = await readSave(reopened, "slot-1", current);
     if (!loaded.ok) throw new Error(JSON.stringify(loaded.error));
     const resumed = loadGame(loaded.file.save);
-
-    sim.advance(1_000);
-    resumed.advance(1_000);
     expect(resumed.stateHash()).toBe(sim.stateHash());
-    expect(resumed.state.ledger.transactions.map((t) => t.kind)).toContain("SALE");
-  });
 
-  it("rejects text that isn't a save", () => {
-    expect(parseSaveFile("not json")).toEqual({ ok: false, error: { code: "NOT_A_SAVE" } });
-    expect(parseSaveFile(JSON.stringify({ save: { format: "something-else" } }))).toEqual({ ok: false, error: { code: "NOT_A_SAVE" } });
+    sim.advance(2_000);
+    resumed.advance(2_000);
+    expect(resumed.stateHash()).toBe(sim.stateHash());
+    // The queued purchase applied after the load, and the sale went through.
+    expect(resumed.state.queuedCommands).toHaveLength(0);
+    expect(resumed.state.ledger.transactions.map((t) => t.kind)).toContain("SALE");
+
+    // The kernel's journal replay reaches the same state from a fresh game.
+    const replayed = newGame();
+    replayJournal(replayed, journalOf(sim.state), sim.state.tick);
+    expect(replayed.stateHash()).toBe(sim.stateHash());
   });
 
   it("reports an empty slot as NOT_A_SAVE", async () => {
     expect(await readSave(new MemoryStorageAdapter(), "empty")).toEqual({ ok: false, error: { code: "NOT_A_SAVE" } });
   });
+});
 
-  it("rejects saves from a newer build, and older versions until T06 adds migrations", () => {
-    const file = createSaveFile(gameInProgress().serialize(), meta);
-    const withVersion = (v: number) => serializeSaveFile({ ...file, save: { ...file.save, schemaVersion: v as typeof SAVE_SCHEMA_VERSION } });
-    expect(parseSaveFile(withVersion(SAVE_SCHEMA_VERSION + 1))).toEqual({
+describe("rejecting bad saves with a typed reason", () => {
+  const file = createSaveFile(gameInProgress().serialize(), meta);
+
+  it("rejects text that isn't a save", () => {
+    for (const text of ["not json", "null", "[]", "42", JSON.stringify({ save: { format: "something-else", schemaVersion: 1 } }), JSON.stringify({})]) {
+      expect(parseSaveFile(text), text).toEqual({ ok: false, error: { code: "NOT_A_SAVE" } });
+    }
+    expect(parseSaveFile(withSave(file, { schemaVersion: 0 }))).toEqual({ ok: false, error: { code: "NOT_A_SAVE" } });
+    expect(parseSaveFile(withSave(file, { schemaVersion: "1" }))).toEqual({ ok: false, error: { code: "NOT_A_SAVE" } });
+  });
+
+  it("rejects saves from a newer build (no downgrades)", () => {
+    expect(parseSaveFile(withSave(file, { schemaVersion: SAVE_SCHEMA_VERSION + 1 }))).toEqual({
       ok: false,
       error: { code: "NEWER_VERSION", saveVersion: SAVE_SCHEMA_VERSION + 1, supportedVersion: SAVE_SCHEMA_VERSION },
     });
-    expect(parseSaveFile(withVersion(0)).ok).toBe(false);
   });
 
-  it("validates against saveFileSchema", () => {
-    const file = createSaveFile(gameInProgress().serialize(), meta);
-    const broken = { ...file, save: { ...file.save, state: { ...file.save.state, tick: -1 } } };
-    const result = parseSaveFile(JSON.stringify(broken));
+  it("validates against saveFileSchema, listing the issues", () => {
+    const broken = withSave(file, { state: { ...file.save.state, tick: -1 } });
+    const result = parseSaveFile(broken);
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.code).toBe("INVALID");
-      if (result.error.code === "INVALID") expect(result.error.issues.join("\n")).toContain("save.state.tick");
-    }
+    if (!result.ok && result.error.code === "INVALID") expect(result.error.issues.join("\n")).toContain("save.state.tick");
+    else throw new Error(`expected INVALID, got ${JSON.stringify(result)}`);
+
+    const badMeta = JSON.stringify({ ...file, meta: { ...file.meta, savedAt: "yesterday" } });
+    expect(parseSaveFile(badMeta)).toMatchObject({ ok: false, error: { code: "INVALID" } });
   });
 
-  it("checks the state hash on load", () => {
-    const file = createSaveFile(gameInProgress().serialize(), meta);
+  it("checks the state hash", () => {
     const state = file.save.state;
     // Valid by the schema, but not the state that was hashed.
-    const tampered = { ...file, save: { ...file.save, state: { ...state, family: { ...state.family, reputation: 50 } } } };
-    const result = parseSaveFile(serializeSaveFile(tampered));
-    expect(result).toEqual({ ok: false, error: { code: "HASH_MISMATCH", expected: file.stateHash, actual: expect.any(String) } });
+    const tampered = withSave(file, { state: { ...state, family: { ...state.family, reputation: 50 } } });
+    expect(parseSaveFile(tampered)).toEqual({ ok: false, error: { code: "HASH_MISMATCH", expected: file.stateHash, actual: expect.any(String) } });
+  });
+
+  it("rejects a save for another scenario, which the simulation can't resume", () => {
+    const other = withSave(file, { scenarioId: "another-scenario", state: { ...file.save.state, scenarioId: "another-scenario" } });
+    const rehashed = JSON.parse(other) as SaveFile;
+    const text = serializeSaveFile(createSaveFile(rehashed.save, rehashed.meta));
+    expect(parseSaveFile(text).ok).toBe(true);
+    const result = parseSaveFile(text, current);
+    expect(result).toMatchObject({ ok: false, error: { code: "INVALID", issues: [expect.stringContaining("save.scenarioId")] } });
+  });
+
+  it("checks gameDataVersion: other game-data still loads (ADR 0009) and is reported", () => {
+    const older = serializeSaveFile({ ...file, save: { ...file.save, gameDataVersion: "0.1.0-old" } });
+    const loaded = parseSaveFile(older, current);
+    expect(loaded).toMatchObject({ ok: true, gameDataChanged: true });
+    expect(parseSaveFile(serializeSaveFile(file), current)).toMatchObject({ ok: true, gameDataChanged: false });
+    // Without a version to compare with, nothing is reported.
+    expect(parseSaveFile(older)).toMatchObject({ ok: true, gameDataChanged: false });
+  });
+});
+
+describe("listing saves", () => {
+  it("lists every slot newest first, with the saves that won't load and why", async () => {
+    const storage = new MemoryStorageAdapter();
+    const sim = gameInProgress();
+    const at = (slot: string, savedAt: string, label: string): SaveMeta => ({ ...meta, slot, savedAt, label });
+    await writeSave(storage, sim, at("slot-1", "2026-11-04T10:00:00.000Z", "Morning"));
+    await writeSave(storage, sim, at("slot-2", "2026-11-04T12:00:00.000Z", "Noon"));
+    await storage.write("slot-3", JSON.stringify({ save: { format: "empire-of-vice/save", schemaVersion: 99 }, meta: { label: "Future", savedAt: "2026-11-04T11:00:00.000Z" } }));
+    await storage.write("slot-4", "garbage");
+
+    const summaries = await listSaves(storage, current);
+    expect(summaries.map((s) => s.slot)).toEqual(["slot-2", "slot-3", "slot-1", "slot-4"]);
+    expect(summaries[0]).toEqual({ slot: "slot-2", ok: true, meta: at("slot-2", "2026-11-04T12:00:00.000Z", "Noon"), gameDataVersion: GAME_DATA_VERSION, gameDataChanged: false });
+    expect(summaries[1]).toEqual({
+      slot: "slot-3",
+      ok: false,
+      meta: { label: "Future", savedAt: "2026-11-04T11:00:00.000Z" },
+      error: { code: "NEWER_VERSION", saveVersion: 99, supportedVersion: SAVE_SCHEMA_VERSION },
+    });
+    expect(summaries[3]).toEqual({ slot: "slot-4", ok: false, meta: {}, error: { code: "NOT_A_SAVE" } });
+  });
+
+  it("picks the first free slot id", () => {
+    expect(nextSlotId([])).toBe("slot-1");
+    expect(nextSlotId(["slot-1", "slot-3"])).toBe("slot-2");
+    expect(nextSlotId(["slot-2", "slot-1", "other"])).toBe("slot-3");
+  });
+});
+
+describe("removing", () => {
+  it("removes a slot", async () => {
+    const storage = new MemoryStorageAdapter();
+    await writeSave(storage, gameInProgress(), meta);
+    await storage.remove("slot-1");
+    expect(await storage.list()).toEqual([]);
+    expect(await readSave(storage, "slot-1")).toEqual({ ok: false, error: { code: "NOT_A_SAVE" } });
+  });
+});
+
+// An older version's state is hashed raw, before migration. parseSaveFile only
+// takes that path once SAVE_SCHEMA_VERSION goes above 1, so the hash is tested
+// directly: parsed JSON that can't be canonicalized is INVALID, not a throw.
+describe("rawStateHash", () => {
+  it("hashes a raw state as the kernel does", () => {
+    const state = gameInProgress().serialize().state;
+    expect(rawStateHash(JSON.parse(JSON.stringify(state)))).toEqual({ ok: true, hash: hashState(state) });
+  });
+
+  it("is INVALID for a state that isn't an object", () => {
+    expect(rawStateHash([1, 2])).toEqual({ ok: false, error: { code: "INVALID", issues: ["save.state: not a JSON object"] } });
+  });
+
+  it("is INVALID, not a throw, for a number JSON parses as Infinity", () => {
+    const state: unknown = JSON.parse('{"tick": 1e400}');
+    expect(rawStateHash(state)).toEqual({
+      ok: false,
+      error: { code: "INVALID", issues: [expect.stringContaining("save.state: Non-finite number")] },
+    });
   });
 });

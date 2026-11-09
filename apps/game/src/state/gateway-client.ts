@@ -7,10 +7,12 @@
 // store of its own (CLAUDE.md rule 7, ADR 0014 decision 10).
 // Saves go through @eov/persistence: the worker serializes, persistence wraps,
 // hashes, and stores the SaveFile; on load, persistence checks schema and hash
-// before the SaveGame goes back to the worker.
+// before the SaveGame goes back to the worker. Each save records the app's
+// version (`version` in apps/game/package.json) in its SaveMeta.
 
 import type { CommandResult, GameEvent, GameSnapshot, SaveLoadError, SaveMeta } from "@eov/contracts";
 import { readSave, writeSave, type StorageAdapter } from "@eov/persistence";
+import { version as APP_VERSION } from "../../package.json";
 import { WORKER_COPY } from "../workers/copy.ts";
 import type { RequestId, WorkerMessage, WorkerRequest, WorkerResponse } from "../workers/protocol.ts";
 import { PAUSED_STATUS, type SchedulerStatus, type Speed } from "../workers/scheduler.ts";
@@ -36,8 +38,6 @@ type RequestBody = Distribute<WorkerRequest>;
 export class GatewayError extends Error {
   override readonly name = "GatewayError";
 }
-
-const APP_VERSION = "s0-browser";
 
 export class GatewayClient {
   readonly #worker: Worker;

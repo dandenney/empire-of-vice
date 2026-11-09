@@ -1,8 +1,6 @@
-// S0 stub: extended by T06 (IndexedDB adapter, migrations, load-error UI).
-//
 // Persistence talks to storage only through this interface, so the same save
-// code runs against IndexedDB in the browser (T06) and memory in Node and tests.
-// Async because IndexedDB is.
+// code runs against IndexedDB in the browser (indexed-db.ts) and memory in
+// Node and tests. Async because IndexedDB is.
 
 export interface StorageAdapter {
   /** The stored text for a slot, or null if the slot is empty. */
