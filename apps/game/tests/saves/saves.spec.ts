@@ -263,7 +263,10 @@ test("a bad save shows the load-error screen and loads nothing", async ({ page }
   await expect(screen.getByTestId("load-error-details").locator("li")).toHaveText(["HASH_MISMATCH", /^expected \S+$/, /^actual \S+$/]);
   expect(await stateHash(page)).toBe(before);
 
-  if (process.platform === "linux") await expect(screen).toHaveScreenshot("load-error.png");
+  // The checksums are masked: they change whenever the saved state's shape or values do.
+  if (process.platform === "linux") {
+    await expect(screen).toHaveScreenshot("load-error.png", { mask: [screen.getByTestId("load-error-details").locator("li").nth(1), screen.getByTestId("load-error-details").locator("li").nth(2)] });
+  }
 
   // Back to the dialog; then delete the newer-build save from its error screen.
   await screen.getByTestId("load-error-back").click();
