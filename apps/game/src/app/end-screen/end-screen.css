@@ -1,0 +1,135 @@
+/*
+ * The end screen (#136): a modal card over the shell, in the #48 direction.
+ * A Deco frame (double brass rule, lozenges on the eyebrow); the loss trades
+ * brass for oxblood. Tokens only (src/ui/tokens.ts).
+ */
+
+.end-screen {
+  --end-tone: var(--color-accent);
+  --end-tone-dim: var(--color-accent-dim);
+  box-sizing: border-box;
+  width: min(34rem, calc(100vw - 2 * var(--space-7)));
+  max-height: calc(100vh - 2 * var(--space-7));
+  padding: var(--space-8) var(--space-8) var(--space-7);
+  border: 3px double var(--end-tone-dim);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 var(--space-6) var(--space-8) var(--color-shadow);
+  text-align: center;
+}
+
+.end-screen[data-outcome="loss"] {
+  --end-tone: var(--color-loss);
+  --end-tone-dim: var(--color-loss-line);
+}
+
+.end-screen::backdrop {
+  background: color-mix(in srgb, var(--color-shadow) 78%, transparent);
+}
+
+.end-eyebrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--end-tone);
+}
+
+.end-eyebrow::before,
+.end-eyebrow::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  transform: rotate(45deg);
+  background: var(--end-tone);
+}
+
+.end-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--weight-regular);
+  font-size: calc(var(--text-xxl) * 1.5);
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  color: var(--color-accent-strong);
+}
+
+.end-screen[data-outcome="loss"] .end-title {
+  color: var(--color-text);
+}
+
+.end-lead {
+  margin: var(--space-6) 0 0;
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--end-tone-dim);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-medium);
+  line-height: 1.35;
+  text-wrap: balance;
+}
+
+.end-support {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-md);
+  line-height: 1.55;
+  color: var(--color-text-muted);
+  text-wrap: pretty;
+}
+
+.end-facts {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-7);
+  margin: var(--space-7) 0 0;
+  padding: var(--space-5) 0;
+  border-top: 1px solid var(--color-rule);
+  border-bottom: 1px solid var(--color-rule);
+}
+
+/* Labels may wrap to two lines; the figures stay on one baseline. */
+.end-facts > div {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.end-facts dt {
+  max-width: 8em;
+  margin: 0 auto;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.end-facts dd {
+  margin: var(--space-1) 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+}
+
+.end-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-4);
+  margin-top: var(--space-7);
+}
+
+.end-actions .button {
+  margin: 0;
+}
+
+.end-error {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-loss);
+}

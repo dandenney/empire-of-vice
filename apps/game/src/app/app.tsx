@@ -17,6 +17,7 @@ import { TokenStyle } from "../ui/token-style.tsx";
 import { ToastHost } from "../ui/toasts/toast-host.tsx";
 import "../ui/fonts.ts";
 import "../ui/components.css";
+import { EndScreen } from "./end-screen/end-screen.tsx";
 import { MapSlot } from "./map-slot.tsx";
 import { GameMenu } from "./saves/game-menu.tsx";
 import type { SaveLibrary } from "./saves/save-library.ts";
@@ -76,6 +77,7 @@ export function App({ showStateHash, saves }: { readonly showStateHash: boolean;
         )}
       </div>
       <ToastHost />
+      <EndScreen />
     </div>
   );
 }

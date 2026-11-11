@@ -1,4 +1,4 @@
-// The save/load UI's access to saves (T06a, #135): list, save, load, delete.
+// The save/load UI's access to saves (T06a, #135; T06f, #152): list, save, load, delete.
 //
 // Saving and loading go through the gateway (GatewayClient.save / .load): the
 // worker serializes and resumes, persistence wraps, checks, and stores. Before
@@ -27,6 +27,12 @@ export type LoadAttempt =
 
 export type SaveGateway = Pick<GatewayClient, "save" | "load">;
 
+/** Where a save went, and the name it has there. */
+export interface SavedTo {
+  readonly slot: string;
+  readonly label: string;
+}
+
 export class SaveLibrary {
   readonly #storage: StorageAdapter;
   readonly #gateway: SaveGateway;
@@ -43,11 +49,46 @@ export class SaveLibrary {
     return listSaves(this.#storage, this.#build);
   }
 
-  /** Saves the running game to `slot`, or to a new slot when `slot` is null. Returns the slot used. */
-  async save(label: string, slot: string | null): Promise<string> {
-    const target = slot ?? nextSlotId(await this.#storage.list());
-    await this.#gateway.save(target, label);
-    return target;
+  /**
+   * The top bar's Save (#145). With a current slot, overwrites it and keeps
+   * that slot's name (only its contents and saved-at time change), so a
+   * player's name is never replaced by the game date. With none, or if the
+   * slot has gone (deleted in another tab), saves to a new slot named
+   * `defaultLabel`. A slot with an empty name gets `defaultLabel` too. No
+   * confirmation: this is the quick save.
+   *
+   * Only the current slot is read, and only for its name: it's about to be
+   * overwritten, so its save isn't checked. A damaged save keeps whatever name
+   * can still be read, as the saves list shows it.
+   */
+  async quickSave(slot: string | null, defaultLabel: string): Promise<SavedTo> {
+    if (slot === null) return this.saveNew(defaultLabel);
+    const text = await this.#storage.read(slot);
+    if (text === null) return this.saveNew(defaultLabel);
+    const label = readableLabel(text) || defaultLabel;
+    await this.#write(slot, label);
+    return { slot, label };
+  }
+
+  /**
+   * Saves the running game to a new slot named `label`, always: the label is
+   * used as given, and may repeat another slot's (slot ids stay unique).
+   */
+  async saveNew(label: string): Promise<SavedTo> {
+    const slot = nextSlotId(await this.#storage.list());
+    await this.#write(slot, label);
+    return { slot, label };
+  }
+
+  /**
+   * One save, written in a single storage write: the save text is built
+   * before storage is touched, and the adapter replaces a slot's contents in
+   * one step (one IndexedDB put, in its own transaction). So a save that
+   * fails, whether serializing or writing, leaves the slot's previous save as
+   * it was.
+   */
+  #write(slot: string, label: string): Promise<void> {
+    return this.#gateway.save(slot, label);
   }
 
   async load(slot: string): Promise<LoadAttempt> {
@@ -67,6 +108,19 @@ export class SaveLibrary {
   remove(slot: string): Promise<void> {
     return this.#storage.remove(slot);
   }
+}
+
+/** A save's `meta.label` if its text has one (else ""), without checking the rest of the save. */
+function readableLabel(text: string): string {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return "";
+  }
+  const meta = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>)["meta"] : undefined;
+  const label = typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>)["label"] : undefined;
+  return typeof label === "string" ? label : "";
 }
 
 /** The save `Continue` loads: the newest one that loads, else the newest (to show why it won't), else none. */

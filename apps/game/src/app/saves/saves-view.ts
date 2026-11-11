@@ -11,11 +11,18 @@ export function describeLoadError(error: SaveLoadError): string {
   return describe(error);
 }
 
-/** The load-error screen's reason, and the technical details under it (the code, and any schema issues). */
+/** The load-error screen's reason, and the technical details under it (the code, then any schema issues or checksums). */
 export function describeLoadFailure(failure: LoadFailure): { readonly reason: string; readonly details: readonly string[] } {
   if (failure.kind === "start") return { reason: SAVES_COPY.startFailed(failure.message), details: [] };
   const { error } = failure;
-  return { reason: describeLoadError(error), details: [error.code, ...(error.code === "INVALID" ? error.issues : [])] };
+  return { reason: describeLoadError(error), details: [error.code, ...technicalDetails(error)] };
+}
+
+/** The raw facts behind an error, for Details: the schema issues, or the two checksums. */
+function technicalDetails(error: SaveLoadError): readonly string[] {
+  if (error.code === "INVALID") return error.issues;
+  if (error.code === "HASH_MISMATCH") return [`expected ${error.expected}`, `actual ${error.actual}`];
+  return [];
 }
 
 /** A save's name in the list, or a stand-in for a damaged save without one. */

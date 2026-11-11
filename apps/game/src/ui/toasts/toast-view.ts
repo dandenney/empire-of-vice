@@ -34,6 +34,16 @@ export type NotifyEventType = Extract<
   | "GAME_LOST"
 >;
 
+/**
+ * Log events that still get a toast. EQUIPMENT_SOLD is `log` in EVENT_IMPORTANCE,
+ * so it reaches the UI with the next snapshot rather than at once, but the #99
+ * sign-off gives it a notification (#136).
+ */
+export type LoggedToastEventType = Extract<GameEventType, "EQUIPMENT_SOLD">;
+
+/** Every event type that gets a toast. */
+export type ToastEventType = NotifyEventType | LoggedToastEventType;
+
 /** How a toast is accented. Colour is never the only signal: the title says what happened. */
 export type ToastTone = "good" | "bad" | "neutral";
 
@@ -41,7 +51,7 @@ export interface ToastView extends ToastText {
   /** The event's id: unique, and the React key. */
   readonly id: string;
   readonly tone: ToastTone;
-  readonly eventType: NotifyEventType;
+  readonly eventType: ToastEventType;
 }
 
 /** The rival closure the #99 strings are written for. */
@@ -76,6 +86,11 @@ class Names {
       id
     );
   }
+  /** Owned items, then the items on offer: a sold item has left the owned list by the time its event arrives. */
+  equipment(facilityId: string, equipmentId: string): string {
+    const facility = this.snapshot?.facilities.find((f) => f.id === facilityId);
+    return facility?.equipment.find((e) => e.id === equipmentId)?.name ?? facility?.equipmentOptions.find((o) => o.equipmentId === equipmentId)?.name ?? equipmentId;
+  }
   vehicle(id: string): string {
     return this.snapshot?.vehicles.find((v) => v.id === id)?.name ?? id;
   }
@@ -98,7 +113,7 @@ interface Context {
   lastClosure(routeId: string, before: GameEvent): EventOfType<"ROUTE_CLOSED"> | null;
 }
 
-type Mapper<T extends NotifyEventType> = (event: EventOfType<T>, ctx: Context) => { readonly text: ToastText; readonly tone: ToastTone };
+type Mapper<T extends ToastEventType> = (event: EventOfType<T>, ctx: Context) => { readonly text: ToastText; readonly tone: ToastTone };
 
 const isRivalRoadblock = (e: EventOfType<"ROUTE_CLOSED">) => e.routeId === RIVAL_ROAD && e.reason === "RIVAL";
 
@@ -139,14 +154,28 @@ const MAPPERS: { readonly [T in NotifyEventType]: Mapper<T> } = {
   GAME_LOST: () => ({ tone: "bad", text: TOAST_COPY.gameLost }),
 };
 
+/** The log events that get a toast anyway (see LoggedToastEventType). */
+const LOGGED_MAPPERS: { readonly [T in LoggedToastEventType]: Mapper<T> } = {
+  EQUIPMENT_SOLD: (e, { names }) => ({ tone: "neutral", text: TOAST_COPY.equipmentSold(names.equipment(e.facilityId, e.equipmentId), formatMoney(e.proceeds)) }),
+};
+
 export const NOTIFY_EVENT_TYPES = Object.keys(MAPPERS) as readonly NotifyEventType[];
 
 export function isNotifyEvent(event: GameEvent): event is EventOfType<NotifyEventType> {
   return EVENT_IMPORTANCE[event.type] === "notify" && event.type in MAPPERS;
 }
 
+function isLoggedToastEvent(event: GameEvent): event is EventOfType<LoggedToastEventType> {
+  return event.type in LOGGED_MAPPERS;
+}
+
+function mapperFor(event: EventOfType<ToastEventType>): Mapper<ToastEventType> {
+  return (isNotifyEvent(event) ? MAPPERS[event.type] : LOGGED_MAPPERS[event.type as LoggedToastEventType]) as Mapper<ToastEventType>;
+}
+
 /**
- * The toasts for one delivered batch of events, in order. Log events get none.
+ * The toasts for one delivered batch of events, in order. Log events get none,
+ * except the LoggedToastEventType ones.
  * `snapshot` is the latest one the UI has; it's read for names, never kept.
  */
 export function toastsFor(events: readonly GameEvent[], snapshot: GameSnapshot | null): ToastView[] {
@@ -165,9 +194,10 @@ export function toastsFor(events: readonly GameEvent[], snapshot: GameSnapshot |
       return null;
     },
   };
-  return events.filter(isNotifyEvent).map((event) => {
-    const map = MAPPERS[event.type] as Mapper<NotifyEventType>;
-    const { text, tone } = map(event as never, ctx);
-    return { id: event.id, eventType: event.type, tone, title: text.title, body: text.body };
-  });
+  return events
+    .filter((e): e is EventOfType<ToastEventType> => isNotifyEvent(e) || isLoggedToastEvent(e))
+    .map((event) => {
+      const { text, tone } = mapperFor(event)(event as never, ctx);
+      return { id: event.id, eventType: event.type, tone, title: text.title, body: text.body };
+    });
 }

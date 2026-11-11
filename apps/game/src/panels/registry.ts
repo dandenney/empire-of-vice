@@ -4,6 +4,8 @@
 import type { GameSnapshot, LocationId, LocationOccupant } from "@eov/contracts";
 import type { ComponentType } from "react";
 import type { PanelId } from "../state/ui-store.ts";
+import { ACTIVITY_COPY } from "./activity/copy.ts";
+import { ActivityPanel } from "./activity/activity-panel.tsx";
 import { CONTRACTS_COPY } from "./contracts/copy.ts";
 import { ContractsPanel } from "./contracts/contracts-panel.tsx";
 import { DASHBOARD_COPY } from "./dashboard/copy.ts";
@@ -16,6 +18,8 @@ import { MARKET_COPY } from "./market/copy.ts";
 import { MarketPanel } from "./market/market-panel.tsx";
 import { PRODUCTION_COPY } from "./production/copy.ts";
 import { ProductionPanel } from "./production/production-panel.tsx";
+import { PROGRESSION_COPY } from "./progression/copy.ts";
+import { ProgressionPanel } from "./progression/progression-panel.tsx";
 
 export interface PanelProps {
   /** The latest snapshot. Panels render from it alone. */
@@ -35,6 +39,8 @@ export const PANELS: readonly PanelDefinition[] = [
   { id: "market", title: MARKET_COPY.title, component: MarketPanel },
   { id: "contracts", title: CONTRACTS_COPY.title, component: ContractsPanel },
   { id: "facility", title: FACILITY_COPY.title, component: FacilityPanel },
+  { id: "progression", title: PROGRESSION_COPY.title, component: ProgressionPanel },
+  { id: "activity", title: ACTIVITY_COPY.title, component: ActivityPanel },
 ];
 
 export const DEFAULT_PANEL_ID: PanelId = "dashboard";

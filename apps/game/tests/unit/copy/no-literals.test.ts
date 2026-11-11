@@ -1,6 +1,8 @@
 // Issue #58: every player-facing string in apps/game/src comes from a copy.ts
 // marked PLACEHOLDER copy (story decision), so a copy pass changes wording
-// without touching components.
+// without touching components. A copy.ts whose wording the human has approved
+// says so instead, in a first-line header that cites the approving issue:
+// `// APPROVED copy (#145): ...` (#155).
 //
 // The scan parses every source file outside copy.ts and flags:
 //   - JSX text with anything but whitespace;
@@ -70,6 +72,13 @@ function sourceFiles(dir: string): string[] {
 }
 
 const isCopyFile = (path: string): boolean => /(^|\/)copy\.ts$/.test(path);
+
+const PLACEHOLDER_MARKER = "PLACEHOLDER copy (story decision)";
+/** An approved copy file's first line: the marker and the issue that approved it. */
+const APPROVED_HEADER = /^\/\/ APPROVED copy \(#\d+\)/;
+
+/** A copy.ts is still placeholder wording, or its first line says which issue approved it. */
+const isMarkedCopy = (code: string): boolean => code.includes(PLACEHOLDER_MARKER) || APPROVED_HEADER.test(code);
 
 /** The literal text of a string or template literal (template parts only), or null. */
 function literalText(node: ts.Node): string | null {
@@ -155,9 +164,19 @@ describe("player-facing strings live in copy.ts (#58)", () => {
     expect(violations).toEqual([]);
   });
 
-  it("every copy.ts is marked PLACEHOLDER copy (story decision)", () => {
-    const unmarked = files.filter(isCopyFile).filter((f) => !readFileSync(f, "utf8").includes("PLACEHOLDER copy (story decision)"));
+  it("every copy.ts is marked PLACEHOLDER copy (story decision), or APPROVED copy (#N) in its header", () => {
+    const unmarked = files.filter(isCopyFile).filter((f) => !isMarkedCopy(readFileSync(f, "utf8")));
     expect(unmarked.map((f) => relative(SRC, f))).toEqual([]);
+  });
+
+  it("the copy marker check accepts only the two markers (#155)", () => {
+    expect(isMarkedCopy(`// ${PLACEHOLDER_MARKER}: shell strings.\nexport const A = "a";`)).toBe(true);
+    expect(isMarkedCopy(`// APPROVED copy (#145): save/load strings.\nexport const A = "a";`)).toBe(true);
+    // A copy file with neither marker is caught.
+    expect(isMarkedCopy(`// Shell strings.\nexport const A = "a";`)).toBe(false);
+    // Approval cites the approving issue, and is the file's header, not a passing mention.
+    expect(isMarkedCopy(`// APPROVED copy: save/load strings.\nexport const A = "a";`)).toBe(false);
+    expect(isMarkedCopy(`// Shell strings.\n// APPROVED copy (#145)\nexport const A = "a";`)).toBe(false);
   });
 
   it("the scan catches each kind of literal it's meant to", () => {

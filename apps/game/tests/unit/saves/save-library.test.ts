@@ -1,10 +1,10 @@
-// The save/load UI's library (T06a, #135) against memory storage and a
+// The save/load UI's library (T06a, #135; T06f, #152) against memory storage and a
 // gateway that does what GatewayClient does (persistence + the simulation),
 // without a worker.
 
-import { SAVE_SCHEMA_VERSION, type SaveLoadError, type SaveMeta } from "@eov/contracts";
+import { SAVE_SCHEMA_VERSION, type SaveLoadError } from "@eov/contracts";
 import { GAME_DATA_VERSION } from "@eov/game-data";
-import { createSaveFile, MemoryStorageAdapter, readSave, serializeSaveFile, writeSave } from "@eov/persistence";
+import { createSaveFile, MemoryStorageAdapter, readSave, serializeSaveFile, writeSave, type StorageAdapter } from "@eov/persistence";
 import { loadGame, newGame, type KernelSimulation } from "@eov/simulation";
 import { describe, expect, it } from "vitest";
 import { LOAD_ERROR_COPY, SAVES_COPY } from "../../../src/app/saves/copy.ts";
@@ -15,12 +15,16 @@ import { describeLoadError, describeLoadFailure, formatSavedAt, saveLabel } from
 class FakeGateway implements SaveGateway {
   sim: KernelSimulation = newGame();
   loads = 0;
+  saves = 0;
   failStart: string | null = null;
-  constructor(private readonly storage: MemoryStorageAdapter) {}
+  failSerialize = false;
+  constructor(private readonly storage: StorageAdapter) {}
 
+  /** Each save a second after the last, so saved-at times differ. */
   async save(slot: string, label: string): Promise<void> {
-    const meta: SaveMeta = { slot, label, savedAt: `2026-11-08T12:00:0${slot.slice(-1)}.000Z`, appVersion: "test" };
-    await writeSave(this.storage, this.sim, meta);
+    const savedAt = `2026-11-08T12:00:${String(++this.saves).padStart(2, "0")}.000Z`;
+    const game = this.failSerialize ? { serialize: (): never => { throw new Error("worker gone"); } } : this.sim;
+    await writeSave(this.storage, game, { slot, label, savedAt, appVersion: "test" });
   }
 
   async load(slot: string) {
@@ -33,29 +37,128 @@ class FakeGateway implements SaveGateway {
   }
 }
 
+/** Memory storage whose writes can be made to fail, as a full disk or an aborted transaction would. */
+class FlakyStorage extends MemoryStorageAdapter {
+  failWrites = false;
+  /** Slots read, in order, to check what a quick save looks at. */
+  reads: string[] = [];
+  override async read(slot: string): Promise<string | null> {
+    this.reads.push(slot);
+    return super.read(slot);
+  }
+  override async write(slot: string, contents: string): Promise<void> {
+    if (this.failWrites) throw new Error("QuotaExceededError");
+    await super.write(slot, contents);
+  }
+}
+
 function setup() {
-  const storage = new MemoryStorageAdapter();
+  const storage = new FlakyStorage();
   const gateway = new FakeGateway(storage);
   return { storage, gateway, library: new SaveLibrary(storage, gateway) };
 }
 
+const DEFAULT = "1920-01-17 06:40";
+const labels = async (library: SaveLibrary) => (await library.list()).map((s) => [s.slot, s.meta.label, s.meta.savedAt]);
+
 describe("SaveLibrary", () => {
-  it("saves to a new slot, or to the slot it's given", async () => {
-    const { library, storage } = setup();
-    expect(await library.save("First", null)).toBe("slot-1");
-    expect(await library.save("Second", null)).toBe("slot-2");
-    expect(await library.save("First again", "slot-1")).toBe("slot-1");
-    expect(await storage.list()).toEqual(["slot-1", "slot-2"]);
-    expect((await library.list()).map((s) => [s.slot, s.meta.label])).toEqual([
-      ["slot-2", "Second"],
-      ["slot-1", "First again"],
+  it("quick save with no current slot: a new slot, named with the default (in-game date and time)", async () => {
+    const { library } = setup();
+    expect(await library.quickSave(null, DEFAULT)).toEqual({ slot: "slot-1", label: DEFAULT });
+    expect(await library.quickSave(null, "1920-01-17 09:00")).toEqual({ slot: "slot-2", label: "1920-01-17 09:00" });
+    expect(await labels(library)).toEqual([
+      ["slot-2", "1920-01-17 09:00", "2026-11-08T12:00:02.000Z"],
+      ["slot-1", DEFAULT, "2026-11-08T12:00:01.000Z"],
     ]);
+  });
+
+  it("quick save over the current slot: new contents and saved-at time, and the slot keeps its name (#145)", async () => {
+    const { library, gateway, storage } = setup();
+    await library.saveNew("Before the first batch");
+    gateway.sim.advance(2 * 1_440);
+    expect(await library.quickSave("slot-1", DEFAULT)).toEqual({ slot: "slot-1", label: "Before the first batch" });
+    expect(await storage.list()).toEqual(["slot-1"]);
+    expect(await labels(library)).toEqual([["slot-1", "Before the first batch", "2026-11-08T12:00:02.000Z"]]);
+    const saved = await readSave(storage, "slot-1");
+    expect(saved.ok && saved.file.save.state.tick).toBe(gateway.sim.serialize().state.tick);
+
+    // A default-named slot keeps its default name too: it isn't renamed to the new game date.
+    await library.quickSave(null, DEFAULT);
+    expect(await library.quickSave("slot-2", "1920-01-19 06:40")).toEqual({ slot: "slot-2", label: DEFAULT });
+  });
+
+  it("quick save over a slot with an empty name names it with the default", async () => {
+    const { library } = setup();
+    await library.saveNew("");
+    expect(await labels(library)).toEqual([["slot-1", "", "2026-11-08T12:00:01.000Z"]]);
+    expect(await library.quickSave("slot-1", DEFAULT)).toEqual({ slot: "slot-1", label: DEFAULT });
+    expect(await labels(library)).toEqual([["slot-1", DEFAULT, "2026-11-08T12:00:02.000Z"]]);
+  });
+
+  it("quick save reads only the current slot, not every save", async () => {
+    const { library, storage } = setup();
+    await library.saveNew("Morning");
+    await library.saveNew("Noon");
+    await library.saveNew("Evening");
+    storage.reads = [];
+    expect(await library.quickSave("slot-2", DEFAULT)).toEqual({ slot: "slot-2", label: "Noon" });
+    expect(storage.reads).toEqual(["slot-2"]);
+  });
+
+  it("quick save over a damaged save keeps the name it still has, else the default", async () => {
+    const { library, storage } = setup();
+    await storage.write("slot-1", JSON.stringify({ meta: { label: "Broken but named" } }));
+    expect(await library.quickSave("slot-1", DEFAULT)).toEqual({ slot: "slot-1", label: "Broken but named" });
+    await storage.write("slot-2", "{ not json");
+    expect(await library.quickSave("slot-2", DEFAULT)).toEqual({ slot: "slot-2", label: DEFAULT });
+    expect((await library.list()).map((s) => [s.slot, s.ok, s.meta.label])).toEqual([
+      ["slot-2", true, DEFAULT],
+      ["slot-1", true, "Broken but named"],
+    ]);
+  });
+
+  it("quick save to a slot that has gone (deleted elsewhere) makes a new one with the default name", async () => {
+    const { library } = setup();
+    await library.saveNew("Morning");
+    await library.remove("slot-1");
+    expect(await library.quickSave("slot-1", DEFAULT)).toEqual({ slot: "slot-1", label: DEFAULT });
+  });
+
+  it("save as a new slot: always another slot, the name as given, and repeated names allowed", async () => {
+    const { library, storage } = setup();
+    await library.quickSave(null, DEFAULT);
+    expect(await library.saveNew("Corn bought")).toEqual({ slot: "slot-2", label: "Corn bought" });
+    expect(await library.saveNew("Corn bought")).toEqual({ slot: "slot-3", label: "Corn bought" });
+    expect(await library.saveNew(DEFAULT)).toEqual({ slot: "slot-4", label: DEFAULT });
+    expect(await storage.list()).toEqual(["slot-1", "slot-2", "slot-3", "slot-4"]);
+    expect((await library.list()).map((s) => s.meta.label).sort()).toEqual(["Corn bought", "Corn bought", DEFAULT, DEFAULT].sort());
+  });
+
+  it("an overwrite that fails leaves the previous save intact and loadable", async () => {
+    const { library, gateway, storage } = setup();
+    gateway.sim.advance(300);
+    await library.saveNew("Before the first batch");
+    const before = await storage.read("slot-1");
+    const savedHash = gateway.sim.stateHash();
+    gateway.sim.advance(600);
+
+    storage.failWrites = true;
+    await expect(library.quickSave("slot-1", DEFAULT)).rejects.toThrow("QuotaExceededError");
+    storage.failWrites = false;
+    gateway.failSerialize = true;
+    await expect(library.quickSave("slot-1", DEFAULT)).rejects.toThrow("worker gone");
+    gateway.failSerialize = false;
+
+    expect(await storage.read("slot-1")).toBe(before);
+    expect(await labels(library)).toEqual([["slot-1", "Before the first batch", "2026-11-08T12:00:01.000Z"]]);
+    expect(await library.load("slot-1")).toMatchObject({ ok: true, label: "Before the first batch" });
+    expect(gateway.sim.stateHash()).toBe(savedHash);
   });
 
   it("loads a save, and save → load → continue matches the uninterrupted run", async () => {
     const { library, gateway } = setup();
     gateway.sim.advance(500);
-    await library.save("Morning", null);
+    await library.saveNew("Morning");
     const uninterrupted = gateway.sim;
     gateway.sim = newGame();
 
@@ -86,7 +189,7 @@ describe("SaveLibrary", () => {
 
   it("reports a save the worker couldn't resume", async () => {
     const { library, gateway } = setup();
-    await library.save("Morning", null);
+    await library.saveNew("Morning");
     gateway.failStart = "boom";
     expect(await library.load("slot-1")).toEqual({ ok: false, slot: "slot-1", failure: { kind: "start", message: "boom" } });
   });
@@ -102,7 +205,7 @@ describe("SaveLibrary", () => {
 
   it("deletes a save", async () => {
     const { library } = setup();
-    await library.save("Morning", null);
+    await library.saveNew("Morning");
     await library.remove("slot-1");
     expect(await library.list()).toEqual([]);
   });
@@ -139,7 +242,9 @@ describe("saves view", () => {
     expect(describeLoadError(errors[1]!)).toContain(String(SAVE_SCHEMA_VERSION + 1));
     expect(describeLoadError(errors[3]!)).toContain("no money field");
     expect(describeLoadFailure({ kind: "save", error: errors[4]! }).details).toEqual(["INVALID", "save.state.tick: Too small", "meta.savedAt: Invalid"]);
-    expect(describeLoadFailure({ kind: "save", error: errors[5]! }).details).toEqual(["HASH_MISMATCH"]);
+    // The integrity failure is said plainly; the checksums are under Details.
+    expect(describeLoadError(errors[5]!)).not.toContain("fnv1a64");
+    expect(describeLoadFailure({ kind: "save", error: errors[5]! }).details).toEqual(["HASH_MISMATCH", "expected fnv1a64:1", "actual fnv1a64:2"]);
     expect(describeLoadFailure({ kind: "start", message: "boom" })).toEqual({ reason: SAVES_COPY.startFailed("boom"), details: [] });
   });
 

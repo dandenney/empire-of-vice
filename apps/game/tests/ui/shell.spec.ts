@@ -7,12 +7,14 @@
 import { FIRST_SHIPMENT_SCENARIO, type ScenarioRouteClosure } from "@eov/game-data";
 import { expect, test, type Page } from "@playwright/test";
 import { SHELL_COPY } from "../../src/components/copy.ts";
+import { ACTIVITY_COPY } from "../../src/panels/activity/copy.ts";
 import { CONTRACTS_COPY } from "../../src/panels/contracts/copy.ts";
 import { DASHBOARD_COPY } from "../../src/panels/dashboard/copy.ts";
 import { FACILITY_COPY } from "../../src/panels/facility/copy.ts";
 import { FINANCE_COPY } from "../../src/panels/finance/copy.ts";
 import { MARKET_COPY } from "../../src/panels/market/copy.ts";
 import { PRODUCTION_COPY } from "../../src/panels/production/copy.ts";
+import { PROGRESSION_COPY } from "../../src/panels/progression/copy.ts";
 import { TOAST_HOST_COPY } from "../../src/ui/toasts/copy.ts";
 import { COLOR, LAYOUT } from "../../src/ui/tokens.ts";
 
@@ -23,6 +25,8 @@ const PANELS = [
   { id: "market", title: MARKET_COPY.title },
   { id: "contracts", title: CONTRACTS_COPY.title },
   { id: "facility", title: FACILITY_COPY.title },
+  { id: "progression", title: PROGRESSION_COPY.title },
+  { id: "activity", title: ACTIVITY_COPY.title },
 ] as const;
 
 /** "#rrggbb" → the "rgb(r, g, b)" getComputedStyle reports. */

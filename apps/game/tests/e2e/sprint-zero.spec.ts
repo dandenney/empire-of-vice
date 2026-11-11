@@ -139,7 +139,7 @@ test("plays the Sprint Zero path through the worker and matches the headless has
   await expect(page.getByTestId("new-game")).toBeEnabled();
   expect(await page.evaluate(() => window.__eov?.snapshot ?? null)).toBeNull();
   await press(page, "reload");
-  await expect(page.getByTestId("message")).toHaveText("Save reloaded.");
+  await expect(page.getByTestId("message")).toHaveText("Game loaded.");
   const reloaded = await snapshot(page);
   expect(reloaded.clock.tick).toBe(sold.clock.tick);
   expect(await stateHash(page)).toBe(savedHash);
