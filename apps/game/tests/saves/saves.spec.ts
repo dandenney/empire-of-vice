@@ -194,9 +194,30 @@ test("the saves dialog saves named slots, loads one, and deletes one", async ({ 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 
-  // Save (top bar) now writes over the slot the game was loaded from.
+  // Save (top bar) now writes over the slot the game was loaded from, with no
+  // confirmation, and the slot keeps its name rather than taking the game date (#145).
+  await advance(page, 60);
+  const laterHash = await stateHash(page);
   await press(page, "save");
+  await expect(page.getByTestId("message")).toHaveText(SAVES_COPY.saved("Before the first batch"));
   expect(await storedSlots(page)).toEqual(["slot-1"]);
+  const overwritten = JSON.parse(await readRaw(page, "slot-1")) as { meta: { label: string } };
+  expect(overwritten.meta.label).toBe("Before the first batch");
+  await page.getByTestId("open-saves").click();
+  await expect(dialog.getByTestId("save-slot-1")).toContainText("Before the first batch");
+  await expect(dialog.getByTestId("save-slot-1")).toContainText(SAVES_COPY.savedAt("Nov 8, 2026, 5:30 PM"));
+  await expect(dialog.getByTestId("save-slot-1")).not.toContainText(await page.getByTestId("game-date").innerText());
+
+  // Save as a new slot always makes another slot, even under a name already in use.
+  await dialog.getByTestId("save-new-label").fill("Before the first batch");
+  await dialog.getByTestId("save-new").click();
+  await expect(dialog.getByTestId("save-slot-2")).toContainText("Before the first batch");
+  expect(await storedSlots(page)).toEqual(["slot-1", "slot-2"]);
+
+  // Loading the overwritten slot gives the state it was overwritten with.
+  await dialog.getByTestId("save-slot-1-load").click();
+  await expect(page.getByTestId("message")).toHaveText(SAVES_COPY.loaded);
+  expect(await stateHash(page)).toBe(laterHash);
 });
 
 test("a bad save shows the load-error screen and loads nothing", async ({ page }) => {
@@ -238,10 +259,14 @@ test("a bad save shows the load-error screen and loads nothing", async ({ page }
   await expect(screen).toContainText(SAVES_COPY.errorSave("Doctored ledger"));
   await expect(screen.getByTestId("load-error-reason")).toHaveText(LOAD_ERROR_COPY.HASH_MISMATCH({ code: "HASH_MISMATCH", expected: "", actual: "" }));
   await screen.locator("summary").click();
-  await expect(screen.getByTestId("load-error-details")).toHaveText("HASH_MISMATCH");
+  // The checksums stay available under Details.
+  await expect(screen.getByTestId("load-error-details").locator("li")).toHaveText(["HASH_MISMATCH", /^expected \S+$/, /^actual \S+$/]);
   expect(await stateHash(page)).toBe(before);
 
-  if (process.platform === "linux") await expect(screen).toHaveScreenshot("load-error.png");
+  // The checksums are masked: they change whenever the saved state's shape or values do.
+  if (process.platform === "linux") {
+    await expect(screen).toHaveScreenshot("load-error.png", { mask: [screen.getByTestId("load-error-details").locator("li").nth(1), screen.getByTestId("load-error-details").locator("li").nth(2)] });
+  }
 
   // Back to the dialog; then delete the newer-build save from its error screen.
   await screen.getByTestId("load-error-back").click();

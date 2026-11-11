@@ -1,8 +1,9 @@
 // The top bar's game menu (T06a, #135), replacing the S0 New game / Save /
 // Reload buttons:
 //   - New game;
-//   - while a game runs, Save: to the slot this game was last saved to or
-//     loaded from, or a new one, named after the game date;
+//   - while a game runs, Save: overwrites the slot this game was last saved
+//     to or loaded from, keeping that slot's name (#145); with no such slot,
+//     a new one named after the in-game date and time;
 //   - while none does (a fresh page), Continue in its place: loads the newest
 //     save;
 //   - Saves…: the saves dialog (save to a new named slot, load, delete).
@@ -18,7 +19,7 @@ import { formatGameDate } from "../../components/format.ts";
 import { useGateway, useGatewayView } from "../../state/app-context.tsx";
 import { SAVES_COPY } from "./copy.ts";
 import { LoadErrorScreen, type FailedLoad } from "./load-error.tsx";
-import { continueTarget, type SaveLibrary } from "./save-library.ts";
+import { continueTarget, type SavedTo, type SaveLibrary } from "./save-library.ts";
 import { SavesDialog } from "./saves-dialog.tsx";
 import { saveLabel } from "./saves-view.ts";
 import "./saves.css";
@@ -61,11 +62,12 @@ export function GameMenu({
 
   const defaultLabel = snapshot ? SAVES_COPY.defaultLabel(formatGameDate(snapshot.clock.date)) : null;
 
-  const save = (label: string, slot: string | null) =>
+  const save = (write: () => Promise<SavedTo>) =>
     run(async () => {
-      setCurrentSlot(await library.save(label, slot));
+      const saved = await write();
+      setCurrentSlot(saved.slot);
       await refresh();
-      return SAVES_COPY.saved(label);
+      return SAVES_COPY.saved(saved.label);
     });
 
   const load = (summary: SaveSummary) =>
@@ -114,7 +116,7 @@ export function GameMenu({
         {SAVES_COPY.newGame}
       </button>
       {defaultLabel !== null ? (
-        <button type="button" className="button" data-testid="save" disabled={busy} onClick={() => void save(defaultLabel, currentSlot)()}>
+        <button type="button" className="button" data-testid="save" disabled={busy} onClick={() => void save(() => library.quickSave(currentSlot, defaultLabel))()}>
           {SAVES_COPY.save}
         </button>
       ) : (
@@ -132,7 +134,7 @@ export function GameMenu({
         currentSlot={currentSlot}
         defaultLabel={defaultLabel}
         busy={busy}
-        onSave={(label) => void save(label, null)()}
+        onSave={(label) => void save(() => library.saveNew(label))()}
         onLoad={(summary) => void load(summary)()}
         onRemove={(summary) => void remove(summary.slot, saveLabel(summary))()}
       />
