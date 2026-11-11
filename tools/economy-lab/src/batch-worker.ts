@@ -3,16 +3,16 @@
 // how the runs are split across threads never changes the results file.
 
 import { parentPort, workerData } from "node:worker_threads";
-import { runBatchSeed, type BatchRunResult } from "./batch-run.ts";
-import type { HeadlessStrategyName } from "./headless-strategy.ts";
+import type { BatchRunResult } from "./batch-run.ts";
+import { runBatchTask, type BatchTask } from "./batch.ts";
 
 export interface BatchWorkerInput {
   readonly days: number;
-  readonly tasks: readonly { readonly strategy: HeadlessStrategyName; readonly seed: number }[];
+  readonly tasks: readonly BatchTask[];
 }
 
 if (parentPort) {
   const input = workerData as BatchWorkerInput;
-  const results: BatchRunResult[] = input.tasks.map((t) => runBatchSeed(t.strategy, t.seed, { days: input.days }));
+  const results: BatchRunResult[] = input.tasks.map((t) => runBatchTask(t, { days: input.days }));
   parentPort.postMessage(results);
 }

@@ -71,9 +71,12 @@ test("shows storage, equipment, and locked options from the snapshot, and sets t
   // The rejected number stays in the input so the player can correct it (#133).
   await expect(page.getByTestId(`${w}-input`)).toHaveValue(String(facility.workforce.maximum + 1));
 
-  // Within the maximum: applied, and the panel follows the snapshot.
+  // Within the maximum: applied, and the panel follows the snapshot. The edit
+  // is typed with a leading zero, so the input only reads the plain number
+  // once the draft has cleared and the snapshot's crew shows instead (#142).
   const crew = facility.workforce.workers + 1;
-  await page.getByTestId(`${w}-input`).fill(String(crew));
+  await page.getByTestId(`${w}-input`).fill(`0${crew}`);
+  await expect(page.getByTestId(`${w}-input`)).toHaveValue(`0${crew}`);
   await page.getByTestId(`${w}-set`).click();
   await expect(page.getByTestId(`${w}-result`)).toHaveText("Done.");
   const hired = (await snapshot(page)).facilities[0]!;

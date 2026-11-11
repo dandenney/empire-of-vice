@@ -7,12 +7,7 @@ export const CONTRACTS_COPY = {
   title: "Contracts",
   intro: "A contract fixes the price for every installment. Miss a deadline and the buyer charges a penalty on the missing cases.",
 
-  // Durations and times
-  /** "day 3, 18:00". */
-  dayTime: (day: number, hour: string, minute: string) => `day ${day}, ${hour}:${minute}`,
-  /** "2 days", "1 day 6 h", "45 min". */
-  span: (days: number, hours: number, minutes: number) =>
-    [days > 0 ? `${days} ${days === 1 ? "day" : "days"}` : "", hours > 0 ? `${hours} h` : "", minutes > 0 || (days === 0 && hours === 0) ? `${minutes} min` : ""].filter((p) => p !== "").join(" "),
+  // Rates (times and spans are ui/format's, #142)
   /** "20%". */
   percent: (value: string) => `${value}%`,
 

@@ -1,10 +1,8 @@
-// PLACEHOLDER copy (story decision): the save/load UI's strings (T06a, #135):
-// the top bar's game menu, the saves dialog, and the load-error screen.
+// APPROVED copy (#145): the save/load UI's strings (T06a, #135): the top bar's
+// game menu, the saves dialog, and the load-error screen.
 //
-// Exception: every string in this file is approved on #145 (plain, practical
-// system wording, not in-world dialogue). Keep them verbatim. The marker above
-// stays only because tests/unit/copy/no-literals.test.ts requires it in every
-// copy.ts.
+// Every string in this file is approved on #145 (plain, practical system
+// wording, not in-world dialogue). Keep them verbatim.
 
 import type { SaveLoadError } from "@eov/contracts";
 

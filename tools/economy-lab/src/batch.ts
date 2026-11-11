@@ -12,6 +12,10 @@
 // Runs are split across J worker threads (default: the machine's parallelism, up
 // to 8). Every run is independent and the results are put back in (strategy,
 // seed) order, so J never changes the file.
+//
+// T07f (issue #129) plays every strategy and seed a second time on the lab's
+// setback scenario (The First Shipment with a scheduled SHAKEDOWN) and writes
+// those runs apart, under `setback`, for the report's setback section.
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
@@ -19,15 +23,17 @@ import { dirname, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
 import { TICKS_PER_DAY } from "@eov/contracts";
 import { GAME_DATA_VERSION } from "@eov/game-data";
+import type { ScenarioShakedown } from "@eov/game-data";
 import { DEFAULT_BATCH_DAYS, runBatchSeed, type BatchRunOptions, type BatchRunResult } from "./batch-run.ts";
 import type { BatchWorkerInput } from "./batch-worker.ts";
 import { HEADLESS_STRATEGY_NAMES, type HeadlessStrategyName } from "./headless-strategy.ts";
+import { SETBACK_SCENARIO, SETBACK_SHAKEDOWN } from "./setback-scenario.ts";
 import { distribution, type Distribution } from "./smoke-report.ts";
 import { TICKS_PER_REAL_MINUTE } from "./smoke-run.ts";
 import { countsAsWin, isLateWin, TARGETS } from "./targets.ts";
 
 /** Bumped when the results file's shape changes. */
-export const BATCH_FORMAT_VERSION = 3;
+export const BATCH_FORMAT_VERSION = 4;
 
 /** Where the results go by default, relative to the working directory (`dist/` is git-ignored). */
 export const DEFAULT_BATCH_OUT = "dist/batch-results.json";
@@ -122,6 +128,13 @@ export interface StrategySummary {
   readonly replayDivergences: number;
 }
 
+/** The setback scenario's runs (issue #129): the same strategies and seeds, with one scheduled SHAKEDOWN. */
+export interface SetbackScenarioRuns {
+  readonly shakedown: ScenarioShakedown;
+  readonly summary: readonly StrategySummary[];
+  readonly runs: readonly BatchRunResult[];
+}
+
 export interface BatchFile {
   readonly format: number;
   readonly gameDataVersion: string;
@@ -129,7 +142,23 @@ export interface BatchFile {
   readonly days: number;
   readonly strategies: readonly HeadlessStrategyName[];
   readonly summary: readonly StrategySummary[];
+  /** The First Shipment as it ships. */
   readonly runs: readonly BatchRunResult[];
+  readonly setback: SetbackScenarioRuns;
+}
+
+/** Which scenario a batch run plays: the First Shipment, or the lab's setback variant of it. */
+export type BatchScenario = "first-shipment" | "setback";
+
+export interface BatchTask {
+  readonly scenario: BatchScenario;
+  readonly strategy: HeadlessStrategyName;
+  readonly seed: number;
+}
+
+/** Runs one batch task. The setback scenario replaces any scenario in `options`. */
+export function runBatchTask(task: BatchTask, options: BatchRunOptions = {}): BatchRunResult {
+  return runBatchSeed(task.strategy, task.seed, task.scenario === "setback" ? { ...options, scenario: SETBACK_SCENARIO } : options);
 }
 
 function times(values: readonly number[]): TimeDistribution | null {
@@ -161,13 +190,19 @@ type Plan = Pick<BatchArgs, "seeds" | "days" | "strategy">;
 
 const strategiesOf = (args: Plan): HeadlessStrategyName[] => (args.strategy === null ? [...HEADLESS_STRATEGY_NAMES] : [args.strategy]);
 
-/** Every run, in file order: each strategy in GDD order, seeds 1..N. */
-export function batchTasks(args: Plan): { readonly strategy: HeadlessStrategyName; readonly seed: number }[] {
-  return strategiesOf(args).flatMap((strategy) => Array.from({ length: args.seeds }, (_, i) => ({ strategy, seed: i + 1 })));
+/** Every run, in file order: the First Shipment then the setback scenario, each strategy in GDD order, seeds 1..N. */
+export function batchTasks(args: Plan): BatchTask[] {
+  return (["first-shipment", "setback"] as const).flatMap((scenario) =>
+    strategiesOf(args).flatMap((strategy) => Array.from({ length: args.seeds }, (_, i) => ({ scenario, strategy, seed: i + 1 }))),
+  );
 }
 
-function assemble(args: Plan, runs: readonly BatchRunResult[]): BatchFile {
+/** Builds the file from every task's result, in `batchTasks` order. */
+function assemble(args: Plan, results: readonly BatchRunResult[]): BatchFile {
   const strategies = strategiesOf(args);
+  const half = results.length / 2;
+  const runs = results.slice(0, half);
+  const setbackRuns = results.slice(half);
   return {
     format: BATCH_FORMAT_VERSION,
     gameDataVersion: GAME_DATA_VERSION,
@@ -176,6 +211,7 @@ function assemble(args: Plan, runs: readonly BatchRunResult[]): BatchFile {
     strategies,
     summary: strategies.map((s) => summarizeStrategy(s, runs)),
     runs,
+    setback: { shakedown: SETBACK_SHAKEDOWN, summary: strategies.map((s) => summarizeStrategy(s, setbackRuns)), runs: setbackRuns },
   };
 }
 
@@ -183,7 +219,7 @@ function assemble(args: Plan, runs: readonly BatchRunResult[]): BatchFile {
 export function runBatch(args: Plan, options: Omit<BatchRunOptions, "days"> = {}): BatchFile {
   return assemble(
     args,
-    batchTasks(args).map((t) => runBatchSeed(t.strategy, t.seed, { ...options, days: args.days })),
+    batchTasks(args).map((t) => runBatchTask(t, { ...options, days: args.days })),
   );
 }
 
@@ -222,9 +258,12 @@ export function formatBatchFile(file: BatchFile): string {
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
-/** Whether the batch failed: any invariant violation or replay divergence. */
+/** Both scenarios' per-strategy summaries. */
+const allSummaries = (file: BatchFile): readonly StrategySummary[] => [...file.summary, ...file.setback.summary];
+
+/** Whether the batch failed: any invariant violation or replay divergence, in either scenario. */
 export function batchFailed(file: BatchFile): boolean {
-  return file.summary.some((s) => s.runsWithInvariantViolations > 0 || s.replayDivergences > 0);
+  return allSummaries(file).some((s) => s.runsWithInvariantViolations > 0 || s.replayDivergences > 0);
 }
 
 /** A one-line-per-strategy summary for the console. */
@@ -233,10 +272,18 @@ export function formatBatchSummary(file: BatchFile): string {
   lines.push(`A win counts only by tick ${TARGETS.winCutoffTicks} (game day ${TARGETS.winCutoffTicks / TICKS_PER_DAY}); a later victory is a late win.`);
   lines.push("| Strategy | Runs | Won | Won late | Lost | Day cap | Win rate | Median time to victory | Invariant runs | Replay divergences |");
   lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
-  for (const s of file.summary) {
-    const median = s.timeToVictory ? `${s.timeToVictory.median} ticks (${s.timeToVictory.medianRealMinutes.toFixed(1)} min)` : "none";
-    lines.push(`| ${s.strategy} | ${s.runs} | ${s.won} | ${s.wonLate} | ${s.lost} | ${s.dayCap} | ${s.winRatePercent.toFixed(2)}% | ${median} | ${s.runsWithInvariantViolations} | ${s.replayDivergences} |`);
-  }
+  const table = (summary: readonly StrategySummary[]): void => {
+    for (const s of summary) {
+      const median = s.timeToVictory ? `${s.timeToVictory.median} ticks (${s.timeToVictory.medianRealMinutes.toFixed(1)} min)` : "none";
+      lines.push(`| ${s.strategy} | ${s.runs} | ${s.won} | ${s.wonLate} | ${s.lost} | ${s.dayCap} | ${s.winRatePercent.toFixed(2)}% | ${median} | ${s.runsWithInvariantViolations} | ${s.replayDivergences} |`);
+    }
+  };
+  table(file.summary);
+  const sd = file.setback.shakedown;
+  lines.push(`Setback scenario: a ${sd.reason} SHAKEDOWN of ${sd.netWorthSharePpm / 10_000}% of net worth (capped at cash) at tick ${sd.tick}, game day ${sd.tick / TICKS_PER_DAY}.`);
+  lines.push("| Strategy | Runs | Won | Won late | Lost | Day cap | Win rate | Median time to victory | Invariant runs | Replay divergences |");
+  lines.push("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+  table(file.setback.summary);
   return lines.join("\n");
 }
 
@@ -279,10 +326,10 @@ export async function batchMain(argv: readonly string[], io: BatchIo = NODE_IO, 
   io.write(path, formatBatchFile(file));
   io.out(formatBatchSummary(file));
   io.out(`Wrote ${path}`);
-  io.err(`Wall time: ${seconds.toFixed(1)} s for ${file.runs.length} runs on ${onThread ? 1 : Math.min(args.jobs, file.runs.length)} thread(s)`);
+  io.err(`Wall time: ${seconds.toFixed(1)} s for ${file.runs.length + file.setback.runs.length} runs on ${onThread ? 1 : Math.min(args.jobs, file.runs.length + file.setback.runs.length)} thread(s)`);
   if (batchFailed(file)) {
-    const bad = file.summary.reduce((n, s) => n + s.runsWithInvariantViolations, 0);
-    const diverged = file.summary.reduce((n, s) => n + s.replayDivergences, 0);
+    const bad = allSummaries(file).reduce((n, s) => n + s.runsWithInvariantViolations, 0);
+    const diverged = allSummaries(file).reduce((n, s) => n + s.replayDivergences, 0);
     io.err(`${bad} run(s) broke an invariant and ${diverged} replay(s) diverged.`);
     return 1;
   }

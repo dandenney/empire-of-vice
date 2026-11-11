@@ -8,7 +8,7 @@
 import { formatMoney } from "@eov/contracts";
 import { expect, test } from "@playwright/test";
 import { END_SCREEN_COPY as C } from "../../src/app/end-screen/copy.ts";
-import { formatDayTime } from "../../src/panels/contracts/contracts-view.ts";
+import { formatDayTime } from "../../src/ui/format/time-format.ts";
 import { advance, newGame, planVictory, playToLoss, replay, snapshot } from "./campaign.ts";
 import { prShot } from "./pr-shots.ts";
 
