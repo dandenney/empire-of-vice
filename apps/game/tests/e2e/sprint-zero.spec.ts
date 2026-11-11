@@ -13,6 +13,7 @@
 
 import { cents, formatMoney, subtractMoney } from "@eov/contracts";
 import { expect, test, type Page } from "@playwright/test";
+import { SAVES_COPY } from "../../src/app/saves/copy.ts";
 import type { EovTestHook } from "../../src/app/test-hook.ts";
 
 /**
@@ -139,7 +140,7 @@ test("plays the Sprint Zero path through the worker and matches the headless has
   await expect(page.getByTestId("new-game")).toBeEnabled();
   expect(await page.evaluate(() => window.__eov?.snapshot ?? null)).toBeNull();
   await press(page, "reload");
-  await expect(page.getByTestId("message")).toHaveText("Game loaded.");
+  await expect(page.getByTestId("message")).toHaveText(SAVES_COPY.loaded);
   const reloaded = await snapshot(page);
   expect(reloaded.clock.tick).toBe(sold.clock.tick);
   expect(await stateHash(page)).toBe(savedHash);

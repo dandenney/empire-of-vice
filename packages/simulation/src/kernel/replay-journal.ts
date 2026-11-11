@@ -1,4 +1,5 @@
-// Replaying a command journal (ADR 0004 amendment, replay procedure, issue #66).
+// Replaying a command journal (ADR 0004 amendment, replay procedure: issue #66,
+// corrected in issue #146).
 // One implementation for every caller: the economy lab's replay check (T07b),
 // the save/load hash-parity tests (T06a, issue #135), and anything else that
 // rebuilds a run from its start state and its journal.
@@ -23,8 +24,11 @@
 // applied. (One due at the start tick + 1 would apply at once, but a run
 // can't leave one queued: dispatching it would have applied it.)
 //
-// ADR 0004's text says only applied commands can be due at E + 1; issue #135's
-// property test found the still-queued case (a command scheduled for E + 1).
+// ADR 0004's replay procedure, as corrected in issue #146, matches this: it
+// places applied envelopes by scheduledTick (≤ E before the advance, after E
+// once it's done) and every still-queued envelope before the advance. Issue
+// #135's property test found the still-queued case (a command scheduled for
+// E + 1) that the earlier text missed.
 
 import type { CommandEnvelope, GameState, Tick } from "@eov/contracts";
 import { KernelError, type ReplayResult } from "./simulation.ts";

@@ -30,6 +30,14 @@ export interface GatewayView {
   readonly scheduler: SchedulerStatus;
   /** The last scheduler fault (the game paused itself), or null. */
   readonly fault: string | null;
+  /**
+   * Which game this is: 0 before the first one, then one more for each new
+   * game or load that the worker accepted (#147). UI state that belongs to one
+   * game, such as a dismissed end screen, is keyed to it. It changes when the
+   * request's reply arrives, so it never marks the previous game's last
+   * snapshots as the new game's.
+   */
+  readonly game: number;
 }
 
 type Distribute<T> = T extends unknown ? Omit<T, "requestId"> : never;
@@ -46,7 +54,8 @@ export class GatewayClient {
   readonly #snapshotListeners = new Set<(view: GatewayView) => void>();
   readonly #eventListeners = new Set<(events: readonly GameEvent[], importance: "notify" | "log") => void>();
   #nextRequestId: RequestId = 1;
-  #view: GatewayView = { snapshot: null, stateHash: null, scheduler: PAUSED_STATUS, fault: null };
+  #game = 0;
+  #view: GatewayView = { snapshot: null, stateHash: null, scheduler: PAUSED_STATUS, fault: null, game: this.#game };
 
   constructor(worker: Worker, storage: StorageAdapter) {
     this.#worker = worker;
@@ -75,7 +84,7 @@ export class GatewayClient {
 
   async newGame(): Promise<void> {
     await this.#expect("READY", { type: "NEW_GAME" });
-    this.#clearFault();
+    this.#nextGame();
   }
 
   /** `request` is sent as-is; the worker validates it with `commandRequestSchema`. */
@@ -109,7 +118,7 @@ export class GatewayClient {
     const loaded = await readSave(this.#storage, slot);
     if (!loaded.ok) return { ok: false, error: loaded.error };
     await this.#expect("READY", { type: "LOAD_GAME", save: loaded.file.save });
-    this.#clearFault();
+    this.#nextGame();
     return { ok: true };
   }
 
@@ -132,8 +141,9 @@ export class GatewayClient {
     }
   }
 
-  #clearFault(): void {
-    if (this.#view.fault !== null) this.#setView({ ...this.#view, fault: null });
+  /** A new game or load was accepted: its snapshot is already in `view` (the worker posts it before READY). Clears any fault. */
+  #nextGame(): void {
+    this.#setView({ ...this.#view, fault: null, game: ++this.#game });
   }
 
   #setView(view: GatewayView): void {

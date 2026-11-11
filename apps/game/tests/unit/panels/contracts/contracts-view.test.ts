@@ -1,12 +1,11 @@
-// The Contracts panel's view helpers (#128): deadlines and spans from ticks,
-// the penalty rate from ppm, the buyer's map location, which qualities a
+// The Contracts panel's view helpers (#128): the penalty rate from ppm, the buyer's map location, which qualities a
 // delivery can carry, and every reserved quantity with who holds it.
 
-import { asId, cents, tick, TICKS_PER_DAY, TICKS_PER_HOUR, type GameSnapshot, type InventoryPoolSnapshot } from "@eov/contracts";
+import { asId, cents, type GameSnapshot, type InventoryPoolSnapshot } from "@eov/contracts";
 import { midGameSnapshot } from "@eov/contracts/fixtures";
 import { describe, expect, it } from "vitest";
 import { formatQuality } from "../../../../src/components/format.ts";
-import { buyerLocationId, deliveryQualities, formatDayTime, formatPpmPercent, formatSpan, reservedLines } from "../../../../src/panels/contracts/contracts-view.ts";
+import { buyerLocationId, deliveryQualities, formatPpmPercent, reservedLines } from "../../../../src/panels/contracts/contracts-view.ts";
 
 const moonshine = asId("Product", "moonshine");
 const pool = (quality: InventoryPoolSnapshot["quality"], quantity: number): InventoryPoolSnapshot => ({
@@ -19,20 +18,7 @@ const pool = (quality: InventoryPoolSnapshot["quality"], quantity: number): Inve
   averageUnitCost: cents(1_000),
 });
 
-describe("times", () => {
-  it("shows a tick as the game day and time of day", () => {
-    expect(formatDayTime(tick(0))).toBe("day 0, 00:00");
-    expect(formatDayTime(tick(3 * TICKS_PER_DAY + 18 * TICKS_PER_HOUR))).toBe("day 3, 18:00");
-    expect(formatDayTime(tick(TICKS_PER_DAY + 9 * TICKS_PER_HOUR + 5))).toBe("day 1, 09:05");
-  });
-
-  it("shows a span in days, hours, and minutes", () => {
-    expect(formatSpan(2 * TICKS_PER_DAY)).toBe("2 days");
-    expect(formatSpan(TICKS_PER_DAY + 6 * TICKS_PER_HOUR)).toBe("1 day 6 h");
-    expect(formatSpan(45)).toBe("45 min");
-    expect(formatSpan(0)).toBe("0 min");
-  });
-
+describe("rates", () => {
   it("shows a ppm rate as a percent", () => {
     expect(formatPpmPercent(200_000)).toBe("20%");
     expect(formatPpmPercent(125_000)).toBe("12.5%");
