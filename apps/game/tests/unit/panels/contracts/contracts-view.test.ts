@@ -6,7 +6,8 @@ import { asId, cents, tick, TICKS_PER_DAY, TICKS_PER_HOUR, type GameSnapshot, ty
 import { midGameSnapshot } from "@eov/contracts/fixtures";
 import { describe, expect, it } from "vitest";
 import { formatQuality } from "../../../../src/components/format.ts";
-import { buyerLocationId, deliveryQualities, formatDayTime, formatPpmPercent, formatSpan, reservedLines } from "../../../../src/panels/contracts/contracts-view.ts";
+import { buyerLocationId, deliveryQualities, formatPpmPercent, reservedLines } from "../../../../src/panels/contracts/contracts-view.ts";
+import { formatDayTime, formatSpan } from "../../../../src/ui/format/time-format.ts";
 
 const moonshine = asId("Product", "moonshine");
 const pool = (quality: InventoryPoolSnapshot["quality"], quantity: number): InventoryPoolSnapshot => ({

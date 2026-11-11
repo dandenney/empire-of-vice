@@ -19,7 +19,8 @@ import { LedgerTable, MoneyFigure } from "../../ui/ledger.tsx";
 import type { PanelProps } from "../registry.ts";
 import { CommandResult } from "./command-result.tsx";
 import { CONTRACTS_COPY as C } from "./copy.ts";
-import { formatDayTime, formatPpmPercent, formatSpan, reservedLines } from "./contracts-view.ts";
+import { formatDayTime, formatSpan } from "../../ui/format/time-format.ts";
+import { formatPpmPercent, reservedLines } from "./contracts-view.ts";
 import { DeliveryForm } from "./delivery-form.tsx";
 import "./contracts.css";
 

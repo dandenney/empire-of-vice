@@ -3,36 +3,8 @@
 // which installment a delivery counts toward, what a reservation holds, and
 // whether an offer can be accepted are the simulation's (ADR 0007, ADR 0013).
 
-import {
-  dayIndex,
-  minuteOfDay,
-  qualityRank,
-  TICKS_PER_DAY,
-  TICKS_PER_HOUR,
-  type BuyerId,
-  type ContractTerms,
-  type GameSnapshot,
-  type InventoryPoolSnapshot,
-  type LocationId,
-  type Tick,
-} from "@eov/contracts";
+import { qualityRank, type BuyerId, type ContractTerms, type GameSnapshot, type InventoryPoolSnapshot, type LocationId } from "@eov/contracts";
 import { CONTRACTS_COPY as C } from "./copy.ts";
-
-const pad2 = (n: number) => String(n).padStart(2, "0");
-
-/** A tick as "day 3, 18:00": the game day (as the Dashboard counts it) and the time of day. */
-export function formatDayTime(t: Tick): string {
-  const minute = minuteOfDay(t);
-  return C.dayTime(dayIndex(t), pad2(Math.floor(minute / TICKS_PER_HOUR)), pad2(minute % TICKS_PER_HOUR));
-}
-
-/** A span of ticks as "2 days", "1 day 6 h", "45 min". */
-export function formatSpan(ticks: number): string {
-  const whole = Math.max(0, ticks);
-  const days = Math.floor(whole / TICKS_PER_DAY);
-  const rest = whole % TICKS_PER_DAY;
-  return C.span(days, Math.floor(rest / TICKS_PER_HOUR), rest % TICKS_PER_HOUR);
-}
 
 /** Parts per million as a percent: "20" for 200 000; one decimal when it isn't whole. */
 export function formatPpmPercent(ppm: number): string {

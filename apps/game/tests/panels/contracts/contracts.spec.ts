@@ -11,7 +11,8 @@ import { CONTRACTS } from "@eov/game-data";
 import { expect, test, type Page } from "@playwright/test";
 import { formatQuality } from "../../../src/components/format.ts";
 import { CONTRACTS_COPY as C } from "../../../src/panels/contracts/copy.ts";
-import { formatDayTime, formatPpmPercent, formatSpan } from "../../../src/panels/contracts/contracts-view.ts";
+import { formatPpmPercent } from "../../../src/panels/contracts/contracts-view.ts";
+import { formatDayTime, formatSpan } from "../../../src/ui/format/time-format.ts";
 
 const snapshot = async (page: Page) => (await page.evaluate(() => window.__eov!.snapshot))!;
 const stateHash = (page: Page) => page.evaluate(() => window.__eov!.stateHash);
