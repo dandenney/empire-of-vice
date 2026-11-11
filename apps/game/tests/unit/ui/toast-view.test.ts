@@ -1,12 +1,12 @@
 // Issue #61: toasts for `notify` events. Every notify event type maps to a
-// toast, the #99 strings come out exactly as approved, and the host's queue
+// toast except the outcome events the end screen announces (#147), the #99 strings come out exactly as approved, and the host's queue
 // stays bounded.
 
 import { asId, cents, EVENT_IMPORTANCE, GAME_EVENT_TYPES, tick, type GameEvent, type GameSnapshot } from "@eov/contracts";
 import { ids, midGameSnapshot } from "@eov/contracts/fixtures";
 import { describe, expect, it } from "vitest";
 import { MAX_TOASTS, enqueue } from "../../../src/ui/toasts/toast-host.tsx";
-import { NOTIFY_EVENT_TYPES, toastsFor, type NotifyEventType, type ToastView } from "../../../src/ui/toasts/toast-view.ts";
+import { END_SCREEN_EVENT_TYPES, TOASTED_NOTIFY_EVENT_TYPES, toastsFor, type NotifyEventType, type ToastView } from "../../../src/ui/toasts/toast-view.ts";
 
 let next = 0;
 const meta = (at = 100) => ({ id: asId("Event", `evt-${++next}`), tick: tick(at), causedBy: null });
@@ -106,12 +106,18 @@ const countyReopened = (at: number): GameEvent => ({ ...meta(at), type: "ROUTE_R
 const withRecent = (events: readonly GameEvent[]): GameSnapshot => ({ ...snapshot, recentEvents: [...snapshot.recentEvents, ...events] });
 
 describe("toast mapping (issue #61)", () => {
-  it("covers exactly the notify events in EVENT_IMPORTANCE", () => {
+  it("covers exactly the notify events in EVENT_IMPORTANCE, apart from the end screen's", () => {
     const notify = GAME_EVENT_TYPES.filter((t) => EVENT_IMPORTANCE[t] === "notify");
-    expect([...NOTIFY_EVENT_TYPES].sort()).toEqual([...notify].sort());
+    expect([...TOASTED_NOTIFY_EVENT_TYPES, ...END_SCREEN_EVENT_TYPES].sort()).toEqual([...notify].sort());
+    expect(TOASTED_NOTIFY_EVENT_TYPES).not.toContain("VICTORY_ACHIEVED");
+    expect(TOASTED_NOTIFY_EVENT_TYPES).not.toContain("GAME_LOST");
   });
 
-  it.each(NOTIFY_EVENT_TYPES)("%s maps to a toast with a title and a line of text", (type) => {
+  it.each(END_SCREEN_EVENT_TYPES)("%s gets no toast: the end screen announces it (#147)", (type) => {
+    expect(toastsFor([SAMPLES[type]()], snapshot)).toEqual([]);
+  });
+
+  it.each(TOASTED_NOTIFY_EVENT_TYPES)("%s maps to a toast with a title and a line of text", (type) => {
     const toast = one(SAMPLES[type]());
     expect(toast.eventType).toBe(type);
     expect(toast.title.trim()).not.toBe("");
@@ -165,7 +171,7 @@ describe("#99 strings, verbatim", () => {
 });
 
 describe("toast queue", () => {
-  const view = (id: string): ToastView => ({ id, eventType: "GAME_LOST", tone: "bad", title: "t", body: "b" });
+  const view = (id: string): ToastView => ({ id, eventType: "CARGO_LOST", tone: "bad", title: "t", body: "b" });
 
   it("keeps the newest MAX_TOASTS and skips repeats", () => {
     const ids = Array.from({ length: MAX_TOASTS + 2 }, (_, i) => `e${i}`);

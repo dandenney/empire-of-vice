@@ -60,10 +60,7 @@ export const TOAST_COPY = {
   }),
   contractCompleted: (buyer: string): ToastText => ({ title: "Contract complete", body: `The contract with ${buyer} is complete.` }),
   unlockGranted: { title: "Unlocked", body: "Something new is open to you." } satisfies ToastText,
-  /** A plain toast; the end screen is T06's (#14). */
-  victoryAchieved: { title: "Victory", body: "You've won." } satisfies ToastText,
-  /** A plain toast; the end screen is T06's (#14). */
-  gameLost: { title: "Game over", body: "The operation is finished." } satisfies ToastText,
+  // VICTORY_ACHIEVED and GAME_LOST get no toast: the end screen announces them (#147).
 } as const;
 
 /** Installment outcomes, for INSTALLMENT_SETTLED toasts. */
