@@ -5,12 +5,13 @@
 //
 // "Review the operation" closes it so the player can look over the panels
 // (the outcome is sticky and the game still runs, ADR 0020 decision 8). On a
-// loss, "Start again" starts a new game through the gateway. It holds only
+// loss, "Start again" starts a new game through the same action as the game
+// menu's New game, which also clears the current save slot. It holds only
 // which outcome was dismissed: UI state, not game state (CLAUDE.md rule 7).
 
 import { useEffect, useRef, useState } from "react";
 import { formatDayTime } from "../../panels/contracts/contracts-view.ts";
-import { useGateway, useGatewayView } from "../../state/app-context.tsx";
+import { useGateway, useGatewayView, useStartNewGame } from "../../state/app-context.tsx";
 import { MoneyFigure } from "../../ui/ledger.tsx";
 import { END_SCREEN_COPY as C } from "./copy.ts";
 import { endScreenFor, type EndScreenView } from "./end-screen-view.ts";
@@ -54,6 +55,7 @@ function Facts({ view }: { readonly view: EndScreenView }) {
 
 export function EndScreen() {
   const gateway = useGateway();
+  const startNewGame = useStartNewGame();
   const { snapshot } = useGatewayView();
   const view = endScreenFor(snapshot);
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -85,7 +87,7 @@ export function EndScreen() {
     setStarting(true);
     setError(null);
     try {
-      await gateway.newGame();
+      await startNewGame();
     } catch (e) {
       setError(C.error(e instanceof Error ? e.message : String(e)));
     } finally {

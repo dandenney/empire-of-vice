@@ -3,6 +3,7 @@
 
 import type { SaveSummary } from "@eov/persistence";
 import { useState } from "react";
+import { useCurrentSlot } from "../../state/app-context.tsx";
 import { SAVES_COPY } from "./copy.ts";
 import { Modal } from "./modal.tsx";
 import { describeLoadError, formatSavedAt, saveLabel } from "./saves-view.ts";
@@ -11,7 +12,6 @@ export function SavesDialog({
   open,
   onClose,
   saves,
-  currentSlot,
   defaultLabel,
   busy,
   onSave,
@@ -21,7 +21,6 @@ export function SavesDialog({
   readonly open: boolean;
   readonly onClose: () => void;
   readonly saves: readonly SaveSummary[];
-  readonly currentSlot: string | null;
   /** The new save's suggested name, or null when no game is running (nothing to save). */
   readonly defaultLabel: string | null;
   readonly busy: boolean;
@@ -29,6 +28,7 @@ export function SavesDialog({
   readonly onLoad: (summary: SaveSummary) => void;
   readonly onRemove: (summary: SaveSummary) => void;
 }) {
+  const [currentSlot] = useCurrentSlot();
   return (
     <Modal open={open} onClose={onClose} labelledBy="saves-title" testId="saves-dialog" className="saves">
       <header className="modal-header">

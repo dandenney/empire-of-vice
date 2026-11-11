@@ -3,8 +3,13 @@
 // `useGatewayView` reads the latest snapshot straight from GatewayClient with
 // useSyncExternalStore (ADR 0014 decision 10). Game values never pass through
 // Zustand; `useUi` is for UI-only state.
+//
+// The current save slot (the slot this game was last saved to or loaded
+// from) is shared session state: the game menu saves to it, and every way of
+// starting a new game must clear it, or the next Save would overwrite the
+// previous game's save. `useStartNewGame` is that one way.
 
-import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useStore } from "zustand";
 import type { GatewayClient, GatewayView } from "./gateway-client.ts";
 import type { UiState, UiStore } from "./ui-store.ts";
@@ -14,14 +19,25 @@ interface AppServices {
   readonly ui: UiStore;
 }
 
-const AppContext = createContext<AppServices | null>(null);
-
-export function AppProvider({ gateway, ui, children }: AppServices & { readonly children: ReactNode }) {
-  const services = useMemo(() => ({ gateway, ui }), [gateway, ui]);
-  return <AppContext.Provider value={services}>{children}</AppContext.Provider>;
+interface AppSession extends AppServices {
+  readonly currentSlot: string | null;
+  readonly setCurrentSlot: (slot: string | null) => void;
+  readonly startNewGame: () => Promise<void>;
 }
 
-function useServices(): AppServices {
+const AppContext = createContext<AppSession | null>(null);
+
+export function AppProvider({ gateway, ui, children }: AppServices & { readonly children: ReactNode }) {
+  const [currentSlot, setCurrentSlot] = useState<string | null>(null);
+  const startNewGame = useCallback(async () => {
+    await gateway.newGame();
+    setCurrentSlot(null);
+  }, [gateway]);
+  const session = useMemo(() => ({ gateway, ui, currentSlot, setCurrentSlot, startNewGame }), [gateway, ui, currentSlot, startNewGame]);
+  return <AppContext.Provider value={session}>{children}</AppContext.Provider>;
+}
+
+function useServices(): AppSession {
   const services = useContext(AppContext);
   if (!services) throw new Error("AppProvider is missing");
   return services;
@@ -39,4 +55,15 @@ export function useGatewayView(): GatewayView {
 
 export function useUi<T>(selector: (state: UiState) => T): T {
   return useStore(useServices().ui, selector);
+}
+
+/** The save slot this game was last saved to or loaded from (null for a new game), and its setter. */
+export function useCurrentSlot(): readonly [string | null, (slot: string | null) => void] {
+  const { currentSlot, setCurrentSlot } = useServices();
+  return [currentSlot, setCurrentSlot];
+}
+
+/** Starts a new game and clears the current slot. Every New game / Start again goes through this. */
+export function useStartNewGame(): () => Promise<void> {
+  return useServices().startNewGame;
 }
