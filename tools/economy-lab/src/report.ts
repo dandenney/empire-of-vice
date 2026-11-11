@@ -213,6 +213,19 @@ export function scheduledSetbackVerdict(file: BatchFile): ReturnType<typeof setb
   return setbackVerdict({ runs: shakedownRuns(file), strategies: file.strategies });
 }
 
+/**
+ * The setback scenario's win rate by the cutoff, per strategy and pooled: an INFO
+ * line under the targets table, not a gated target (issue #159).
+ */
+export function setbackWinRateInfo(file: BatchFile): string {
+  const runs = file.setback.runs;
+  const rate = (mine: readonly BatchRunResult[]): string => pct(percent(mine.filter(countsAsWin).length, mine.length));
+  return (
+    `INFO (not a gated target): on the setback scenario, wins by ${at(TARGETS.winCutoffTicks)}: ` +
+    `${file.strategies.map((s) => `${s} ${rate(runs.filter((r) => r.strategy === s))}`).join(", ")}; pooled ${rate(runs)} of ${runs.length} runs.`
+  );
+}
+
 type UpgradeSide = "in" | "early" | "late" | "never";
 
 /** Where a first-upgrade median falls against the 10–15 min window. */
@@ -417,7 +430,7 @@ export function formatBalanceReport(file: BatchFile, data: GameData = GAME_DATA)
     align(4, 0),
   );
   for (const t of targets) lines.push(row([t.target, t.goal, t.measured, `**${t.verdict}**`]));
-  lines.push("");
+  lines.push("", setbackWinRateInfo(file), "");
   const gate = targets.find((t) => t.id === "competent-success")!;
   const viable = per.filter((s) => s.won > 0).map((s) => s.strategy);
   lines.push(

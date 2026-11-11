@@ -53,6 +53,7 @@ const CASH_ORDER: readonly CashFlowCategory[] = [
   "OVERHEAD",
   "TRANSPORT",
   "PENALTIES",
+  "LOSSES",
 ];
 
 function incomeStatement(revenue: Money, cogs: Money, expenses: Partial<Record<ExpenseCategory, Money>>): IncomeStatement {

@@ -352,6 +352,19 @@ describe("scheduled setbacks (#129)", () => {
     expect(m.setbackCount).toBe(2);
   });
 
+  it("a shakedown that took nothing is recorded but isn't a loss event, even at net worth ≤ 0 (#156 review, N1)", () => {
+    const o = new RunObserver({}, -5_000 as Money);
+    o.observe([lossBooked(20, 0, -5_000, 0)]);
+    expect([o.setbackCount, o.moderateSetbackCount]).toEqual([0, 0]);
+    expect(o.setback()).toBeNull();
+    expect(o.shakedown()).toEqual({ kind: "SHAKEDOWN", tick: 20, loss: 0, netWorthBefore: -5_000, recoveredAt: null });
+    // Capped at no cash on a positive net worth: the same.
+    const c = new RunObserver({}, 100_000 as Money);
+    c.observe([lossBooked(20, 0, 100_000, 16_000)]);
+    expect([c.setbackCount, c.moderateSetbackCount]).toEqual([0, 0]);
+    expect(c.shakedown()!.loss).toBe(0);
+  });
+
   it("the setback scenario is the First Shipment plus one moderate SHAKEDOWN on a fixed day", () => {
     expect(SETBACK_SCENARIO.scheduledEvents).toEqual([...FIRST_SHIPMENT_SCENARIO.scheduledEvents, SETBACK_SHAKEDOWN]);
     expect(SETBACK_SHAKEDOWN.kind).toBe("SHAKEDOWN");

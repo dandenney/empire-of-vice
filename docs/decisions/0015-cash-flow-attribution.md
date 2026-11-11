@@ -4,7 +4,7 @@ Status: accepted (decided while refreshing T02b, issue #6, decision 3)
 
 ## Context
 
-The cash flow statement (`CashFlowStatement` in contracts, FIN-001) reports each period's net cash movement in categories: `SALES`, `ASSET_SALES`, `MATERIALS`, `EQUIPMENT`, `WAGES`, `OVERHEAD`, `TRANSPORT`, `PENALTIES`. A `LedgerEntry` has no category, so the projection has to infer one per transaction.
+The cash flow statement (`CashFlowStatement` in contracts, FIN-001) reports each period's net cash movement in categories: `SALES`, `ASSET_SALES`, `MATERIALS`, `EQUIPMENT`, `WAGES`, `OVERHEAD`, `TRANSPORT`, `PENALTIES`, and (since #159) `LOSSES`. A `LedgerEntry` has no category, so the projection has to infer one per transaction.
 
 The Sprint Zero projection filed a transaction's cash under its `TransactionKind` only. A daily settlement that pays wages and overhead in one transaction therefore reported both as `WAGES`, and so did a settlement that only pays overhead. Options:
 
@@ -54,3 +54,14 @@ Production capitalizes labor and overhead into the goods (Dr `FINISHED_GOODS` / 
 - The rule reads only accounts and kinds, so it needs no contract change and works on every existing save: reports are derived (ADR 0008), so old logs are simply re-reported.
 - A new account or kind must be added to the table or to `CASH_FLOW_CATEGORY`. An unmapped account falls back to the kind's default, so forgetting one misfiles cash but never breaks the reconciliation (`lines` sum to `netChange` either way).
 - State hashes are unaffected: the rule changes only the projection.
+
+## Amendment: a LOSSES line (issue #159)
+
+A scheduled `SHAKEDOWN` (T07f) takes cash as Dr `LOSSES` / Cr `CASH`. It was posted under the `DAILY_SETTLEMENT` kind. `LOSSES` has no category, so rule 3 filed the cash under `DAILY_SETTLEMENT`'s default, `WAGES`, while the income statement showed it under `LOSSES`.
+
+There are two contract additions, both additive union members:
+
+- `CashFlowCategory` gains `LOSSES`, last in the statement's fixed order.
+- `TransactionKind` gains `LOSS`, whose default category is `LOSSES`. The shakedown now posts under it.
+
+The account table doesn't change. `LOSSES` stays uncategorized. Mapping the account instead would also move any transaction whose only non-cash account is `LOSSES` to the new line, whatever its kind. The FIN-001 locked reference (`fin-001.locked.test.ts`) pins rule 1's table as it stands, so the change goes through a kind default instead, as `VEHICLE_RETURN` did (ADR 0019).

@@ -209,7 +209,7 @@ describe("the warehouse (T03b, #76)", () => {
 
 describe("GAME_DATA_VERSION", () => {
   it("is bumped for T07f and recorded in GAME_DATA", () => {
-    expect(GAME_DATA_VERSION).toBe("0.6.2-t07f-shakedown");
+    expect(GAME_DATA_VERSION).toBe("0.7.0-t07h-setback-tuning");
     expect(GAME_DATA.version).toBe(GAME_DATA_VERSION);
   });
 });

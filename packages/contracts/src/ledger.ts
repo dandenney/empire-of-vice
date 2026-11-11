@@ -71,6 +71,11 @@ export type TransactionKind =
    */
   | "VEHICLE_RETURN"
   /**
+   * A loss of cash booked by a scheduled world event (a SHAKEDOWN, T07f): Dr LOSSES /
+   * Cr CASH. Its cash flow line is LOSSES (#159).
+   */
+  | "LOSS"
+  /**
    * Reputation, tier, unlock, and outcome changes (ADR 0020 decision 14). It never
    * has entries and isn't a money line: the finance ledger skips these rows, and the
    * player-facing category comes from the event, not this kind (#99 point 4).

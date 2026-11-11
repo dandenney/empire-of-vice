@@ -8,6 +8,7 @@ import {
   formatBalanceReport,
   hasModerateSetback,
   setbackVerdict,
+  setbackWinRateInfo,
   scheduledSetbackVerdict,
   integrityFailed,
   parseBatchFile,
@@ -315,6 +316,22 @@ describe("balance report", () => {
     expect(verdict(many, "setback-recovery")).toBe("MET");
     // An integrity failure in a setback run fails the report.
     expect(integrityFailed({ ...file, setback: { ...file.setback, runs: file.setback.runs.map((r, i) => (i === 0 ? { ...r, replayDiverged: true } : r)) } })).toBe(true);
+  });
+
+  it("reports the setback scenario's win rate by the cutoff as an INFO line, not a target (#159)", () => {
+    const report = formatBalanceReport(file);
+    expect(report).toContain(setbackWinRateInfo(file));
+    expect(evaluateTargets(file).map((t) => t.id)).toEqual(ALL_TARGETS);
+    // Every run a win by the cutoff, then every run a late win.
+    const winAt = (t: number): BatchFile => ({
+      ...file,
+      setback: { ...file.setback, runs: file.setback.runs.map((r) => ({ ...r, outcome: "WON" as const, victory: { tick: t, realMinutes: 0 } })) },
+    });
+    const all = setbackWinRateInfo(winAt(TARGETS.winCutoffTicks));
+    expect(all.startsWith("INFO (not a gated target)")).toBe(true);
+    for (const s of file.strategies) expect(all).toContain(`${s} 100.00%`);
+    expect(all).toContain(`pooled 100.00% of ${file.setback.runs.length} runs`);
+    expect(setbackWinRateInfo(winAt(TARGETS.winCutoffTicks + 1))).toContain("pooled 0.00%");
   });
 
   it("judges the first upgrade per strategy as well as pooled", () => {

@@ -197,12 +197,17 @@ export function batchTasks(args: Plan): BatchTask[] {
   );
 }
 
-/** Builds the file from every task's result, in `batchTasks` order. */
-function assemble(args: Plan, results: readonly BatchRunResult[]): BatchFile {
+/**
+ * Builds the file from every task's result: `results[i]` is `tasks[i]`'s. Runs are
+ * grouped by their task's scenario, so the split never depends on how many tasks
+ * each scenario has (#156 review, N5).
+ */
+function assemble(args: Plan, tasks: readonly BatchTask[], results: readonly BatchRunResult[]): BatchFile {
+  if (tasks.length !== results.length) throw new Error(`Batch has ${results.length} result(s) for ${tasks.length} task(s)`);
   const strategies = strategiesOf(args);
-  const half = results.length / 2;
-  const runs = results.slice(0, half);
-  const setbackRuns = results.slice(half);
+  const of = (scenario: BatchScenario): BatchRunResult[] => results.filter((_, i) => tasks[i]!.scenario === scenario);
+  const runs = of("first-shipment");
+  const setbackRuns = of("setback");
   return {
     format: BATCH_FORMAT_VERSION,
     gameDataVersion: GAME_DATA_VERSION,
@@ -217,9 +222,11 @@ function assemble(args: Plan, results: readonly BatchRunResult[]): BatchFile {
 
 /** Runs the batch on this thread. */
 export function runBatch(args: Plan, options: Omit<BatchRunOptions, "days"> = {}): BatchFile {
+  const tasks = batchTasks(args);
   return assemble(
     args,
-    batchTasks(args).map((t) => runBatchTask(t, { ...options, days: args.days })),
+    tasks,
+    tasks.map((t) => runBatchTask(t, { ...options, days: args.days })),
   );
 }
 
@@ -250,7 +257,7 @@ export async function runBatchParallel(args: Plan, jobs: number): Promise<BatchF
         }),
     ),
   );
-  return assemble(args, parts.flat());
+  return assemble(args, tasks, parts.flat());
 }
 
 /** The results file's text. Deterministic: plain objects built in a fixed key order. */

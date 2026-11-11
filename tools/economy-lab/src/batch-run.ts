@@ -346,7 +346,9 @@ export class RunObserver {
         case "LOSS_BOOKED":
           // A scheduled SHAKEDOWN (issue #129): net worth before it is the event's, on its own tick.
           this.firstShakedown ??= { kind: "SHAKEDOWN", tick: e.tick, loss: e.amount, netWorthBefore: e.netWorthBefore, recoveredAt: null };
-          this.lose("SHAKEDOWN", e.tick, e.amount, e.netWorthBefore);
+          // One that took nothing (no cash, or net worth at or below zero) isn't a loss event: with net worth
+          // at or below zero, `isModerateLoss` would call a $0 loss moderate (#156 review, N1).
+          if (e.amount > 0) this.lose("SHAKEDOWN", e.tick, e.amount, e.netWorthBefore);
           break;
         case "INSTALLMENT_SETTLED":
           this.installments[e.outcome]++;

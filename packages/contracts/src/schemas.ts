@@ -370,7 +370,7 @@ const ledgerAccountSchema = z.enum(Object.keys(LEDGER_ACCOUNTS) as [LedgerAccoun
 const transactionKindSchema = z.enum([
   "OPENING_BALANCE", "MATERIAL_PURCHASE", "PRODUCTION", "PRODUCTION_WRITE_OFF", "EQUIPMENT_PURCHASE",
   "DISPATCH", "SALE", "TRANSFER", "CARGO_LOSS", "DAILY_SETTLEMENT", "INSTALLMENT_SETTLEMENT",
-  "RESERVATION", "ASSET_SALE", "VEHICLE_RETURN", "PROGRESSION",
+  "RESERVATION", "ASSET_SALE", "VEHICLE_RETURN", "LOSS", "PROGRESSION",
 ] as const satisfies readonly TransactionKind[]);
 
 const ledgerEntrySchema = z.strictObject({
