@@ -66,6 +66,47 @@ test("Start again on the loss screen starts a new game", async ({ page }) => {
   expect(fresh.clock.tick).toBe(0);
 });
 
+test("a dismissal lasts until the game changes: saving keeps it, reloading the same slot shows the screen again (#147)", async ({ page }) => {
+  await newGame(page);
+  await playToLoss(page);
+  const lost = await snapshot(page);
+  const screen = page.getByTestId("end-screen-loss");
+  await expect(screen).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(screen).toBeHidden();
+
+  // Saving the dismissed game (slot-1 becomes the current slot) leaves it dismissed.
+  const dialog = page.getByTestId("saves-dialog");
+  await page.getByTestId("open-saves").click();
+  await dialog.getByTestId("save-new").click();
+  await expect(dialog.getByTestId("save-slot-1")).toBeVisible();
+  await dialog.getByTestId("saves-close").click();
+  await expect(dialog).toBeHidden();
+  await expect(screen).toBeHidden();
+
+  // Loading that same slot back is a new load: the screen returns, with the same outcome and tick.
+  await page.getByTestId("open-saves").click();
+  await dialog.getByTestId("save-slot-1-load").click();
+  await expect(dialog).toBeHidden();
+  await expect(screen).toBeVisible();
+  expect((await snapshot(page)).outcome).toEqual(lost.outcome);
+});
+
+test("after Start again, a later loss shows the screen again (#147)", async ({ page }) => {
+  await newGame(page);
+  await playToLoss(page);
+  const first = await snapshot(page);
+  const screen = page.getByTestId("end-screen-loss");
+  await expect(screen).toBeVisible();
+  await page.getByTestId("end-start-again").click();
+  await expect(screen).toBeHidden();
+
+  // The same play loses at the same tick: the outcome repeats, the game doesn't.
+  await playToLoss(page);
+  expect((await snapshot(page)).outcome).toEqual(first.outcome);
+  await expect(screen).toBeVisible();
+});
+
 test("a victory shows The Road to Chicago, with the figures from VICTORY_ACHIEVED", async ({ page }) => {
   test.setTimeout(120_000);
   const plan = planVictory();
