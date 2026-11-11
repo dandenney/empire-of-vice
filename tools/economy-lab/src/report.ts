@@ -11,7 +11,8 @@
 // target not MET. Narrative and proposals are generated from the results (T07e,
 // issue #127): no strategy, tick or dollar figure is written in by hand. A run
 // counts as a win only by TARGETS.winCutoffTicks. Proposals only: nothing here
-// changes game-data.
+// changes game-data. T07f (issue #129) judges setback recovery on the lab's
+// setback scenario, where every strategy meets one scheduled SHAKEDOWN.
 //
 // The report is a pure function of the results file and game-data: no clock, no
 // environment, keys in a fixed order. The same file gives a byte-identical
@@ -178,7 +179,9 @@ export interface SetbackJudgement {
  * strategy has enough evidence and recovers often enough; otherwise INSUFFICIENT
  * EVIDENCE.
  */
-export function setbackVerdict(file: BatchFile): SetbackJudgement & { readonly per: readonly (SetbackJudgement & { readonly strategy: HeadlessStrategyName })[] } {
+export function setbackVerdict(
+  file: Pick<BatchFile, "runs" | "strategies">,
+): SetbackJudgement & { readonly per: readonly (SetbackJudgement & { readonly strategy: HeadlessStrategyName })[] } {
   const judge = (runs: readonly BatchRunResult[]): SetbackJudgement => {
     const j = runs.filter(judgeable);
     const ok = j.filter(recovered).length;
@@ -195,6 +198,19 @@ export function setbackVerdict(file: BatchFile): SetbackJudgement & { readonly p
         ? "MET"
         : "INSUFFICIENT EVIDENCE";
   return { ...pooled, verdict, per };
+}
+
+/** The setback scenario's runs with each run's setback set to its scheduled SHAKEDOWN, so the setback measures judge it. */
+export const shakedownRuns = (file: BatchFile): readonly BatchRunResult[] => file.setback.runs.map((r) => ({ ...r, setback: r.shakedown }));
+
+/**
+ * Setback recovery on the setback scenario (issue #129): `setbackVerdict` over
+ * each run's scheduled SHAKEDOWN. This is the GDD §13 target's verdict. A run
+ * that ended before the shakedown, or whose shakedown was capped at cash below
+ * the moderate share, isn't judged.
+ */
+export function scheduledSetbackVerdict(file: BatchFile): ReturnType<typeof setbackVerdict> {
+  return setbackVerdict({ runs: shakedownRuns(file), strategies: file.strategies });
 }
 
 type UpgradeSide = "in" | "early" | "late" | "never";
@@ -267,12 +283,12 @@ export function evaluateTargets(file: BatchFile): TargetResult[] {
     verdict: per.length > 1 && gap < TARGETS.dominantAdvantageMaxPoints ? "MET" : "MISSED",
   });
 
-  const sv = setbackVerdict(file);
+  const sv = scheduledSetbackVerdict(file);
   out.push({
     id: "setback-recovery",
     target: "Recovery from one moderate setback",
     goal:
-      `≥ ${TARGETS.setbackRecoveryMinPercent}% of runs with a moderate setback (a loss ≥ ${TARGETS.moderateSetbackMinPercent}% of net worth) recover within ` +
+      `on the setback scenario, ≥ ${TARGETS.setbackRecoveryMinPercent}% of runs whose scheduled shakedown was moderate (a loss ≥ ${TARGETS.moderateSetbackMinPercent}% of net worth) recover within ` +
       `${minutes(TARGETS.setbackRecoveryWindowTicks)} min, pooled and for every strategy, each over at least ${TARGETS.setbackMinJudgedRuns} judged runs (see "Setbacks and recovery")`,
     measured:
       (sv.judged === 0 ? "pooled: no judged moderate setback" : `pooled ${sv.recovered}/${sv.judged} recovered (${pct(percent(sv.recovered, sv.judged))})`) +
@@ -280,22 +296,24 @@ export function evaluateTargets(file: BatchFile): TargetResult[] {
     verdict: sv.verdict,
   });
 
-  const violations = sum(all.map((r) => r.invariantViolationCount));
-  const violatingRuns = all.filter((r) => r.invariantViolationCount > 0).length;
+  // Integrity counts both scenarios' runs.
+  const checked = [...all, ...file.setback.runs];
+  const violations = sum(checked.map((r) => r.invariantViolationCount));
+  const violatingRuns = checked.filter((r) => r.invariantViolationCount > 0).length;
   out.push({
     id: "reconciliation",
     target: "Financial reconciliation failures",
     goal: "zero",
-    measured: `${violations} invariant violation(s) in ${violatingRuns}/${all.length} runs`,
+    measured: `${violations} invariant violation(s) in ${violatingRuns}/${checked.length} runs (both scenarios)`,
     verdict: violations <= TARGETS.reconciliationFailuresMax ? "MET" : "MISSED",
   });
 
-  const diverged = all.filter((r) => r.replayDiverged).length;
+  const diverged = checked.filter((r) => r.replayDiverged).length;
   out.push({
     id: "replay",
     target: "Deterministic replay divergence",
     goal: "zero",
-    measured: `${diverged}/${all.length} runs diverged on replay`,
+    measured: `${diverged}/${checked.length} runs diverged on replay (both scenarios)`,
     verdict: diverged <= TARGETS.replayDivergencesMax ? "MET" : "MISSED",
   });
   return out;
@@ -303,7 +321,7 @@ export function evaluateTargets(file: BatchFile): TargetResult[] {
 
 /** Whether the file records an integrity failure: an invariant violation or a replay divergence. */
 export function integrityFailed(file: BatchFile): boolean {
-  return file.runs.some((r) => r.invariantViolationCount > 0 || r.replayDiverged);
+  return [...file.runs, ...file.setback.runs].some((r) => r.invariantViolationCount > 0 || r.replayDiverged);
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +370,7 @@ function marketLines(file: BatchFile, data: GameData): MarketLine[] {
 // The report
 // ---------------------------------------------------------------------------
 
+/** The kinds a First Shipment run can book; SHAKEDOWN only comes from the setback scenario. */
 const SETBACK_KINDS: readonly SetbackKind[] = ["SEIZURE", "FAILED_RUN", "PENALTY"];
 const GATES = ["netWorth", "reputation", "completedContracts"] as const;
 type Gate = (typeof GATES)[number];
@@ -560,17 +579,66 @@ export function formatBalanceReport(file: BatchFile, data: GameData = GAME_DATA)
   // Setbacks.
   const judged = file.runs.filter(judgeable);
   const sv = setbackVerdict(file);
+  const sd = file.setback.shakedown;
+  const scheduled = shakedownRuns(file);
+  const ssv = scheduledSetbackVerdict(file);
   lines.push(
     "## Setbacks and recovery",
     "",
     "**Definition.** A *loss event* is cargo seized on a risky route (CARGO_LOST), a production run's inputs written off (PRODUCTION_FAILED), " +
-      "or an installment penalty (INSTALLMENT_SETTLED with a penalty). A run's *moderate setback* is its first loss event of at least " +
+      "an installment penalty (INSTALLMENT_SETTLED with a penalty), or a scheduled shakedown (LOSS_BOOKED). A *moderate setback* is a loss event of at least " +
       `${TARGETS.moderateSetbackMinPercent}% of net worth at the moment it's booked; smaller losses are counted but never judged. ` +
       "The run *recovers* if its net worth is back to at least its level just before the setback within " +
       `${at(TARGETS.setbackRecoveryWindowTicks)} (${TARGETS.setbackRecoveryWindowTicks / TICKS_PER_DAY} game days), and it doesn't go bankrupt. ` +
       "A run whose window outlasts the run without a recovery isn't judged. " +
       `"Usually possible" is read as at least ${TARGETS.setbackRecoveryMinPercent}% of judged runs recovering, pooled and for each strategy; ` +
       `fewer than ${TARGETS.setbackMinJudgedRuns} judged runs is INSUFFICIENT EVIDENCE.`,
+    "",
+    "### Scheduled setback scenario",
+    "",
+    `The target is judged here. Every strategy plays the same seeds again on a lab variant of the First Shipment that schedules one ${sd.reason} \`SHAKEDOWN\` ` +
+      `at ${at(sd.tick)}, game day ${(sd.tick / TICKS_PER_DAY).toFixed(1)}: a loss of ${pct(sd.netWorthSharePpm / 10_000)} of net worth on that tick, capped at cash. ` +
+      "Net worth before it is the event's own (LOSS_BOOKED), not the last stop's. A run that ended before the shakedown isn't judged, " +
+      `and neither is one whose loss was capped at cash below ${TARGETS.moderateSetbackMinPercent}% of net worth.`,
+    "",
+    row(["Strategy", "Runs", "Ended before it", "Booked", "Capped at cash below moderate", "Judged", "Recovered", "Verdict", "Loss p50", "Loss share p50", "Recovery time p50", "Win rate: First Shipment → setback"]),
+    align(1, 11),
+  );
+  for (const s of per) {
+    const mine = scheduled.filter((r) => r.strategy === s.strategy);
+    const booked = mine.filter((r) => r.setback !== null);
+    const hit = booked.filter(hasModerateSetback);
+    const j = hit.filter(judgeable);
+    const rec = j.filter(recovered);
+    const loss = percentiles(booked.map((r) => r.setback!.loss));
+    const share = percentiles(booked.filter((r) => r.setback!.netWorthBefore > 0).map((r) => Math.round((r.setback!.loss * 100) / r.setback!.netWorthBefore)));
+    const time = percentiles(rec.map((r) => r.setback!.recoveredAt! - r.setback!.tick));
+    lines.push(
+      row([
+        s.strategy,
+        String(mine.length),
+        String(mine.length - booked.length),
+        String(booked.length),
+        String(booked.length - hit.length),
+        String(j.length),
+        `${rec.length} (${pct(percent(rec.length, j.length))})`,
+        ssv.per.find((x) => x.strategy === s.strategy)?.verdict ?? "",
+        loss ? money(loss.p50) : "",
+        share ? `${share.p50}%` : "",
+        time ? at(time.p50) : "",
+        `${pct(s.winRate)} → ${pct(percent(mine.filter(countsAsWin).length, mine.length))}`,
+      ]),
+    );
+  }
+  lines.push(
+    "",
+    ssv.judged === 0
+      ? "No scheduled shakedown was judgeable."
+      : `Pooled, ${ssv.recovered} of ${ssv.judged} judged runs recovered (${pct(percent(ssv.recovered, ssv.judged))}): **${ssv.verdict}**.`,
+    "",
+    "### Incidental setbacks (the First Shipment)",
+    "",
+    "The losses strategies happen to book on the First Shipment as it ships, for comparison; the target isn't judged on them, since only some strategies book a moderate one.",
     "",
     row(["Strategy", "Runs with any loss", "Runs with a moderate setback", ...SETBACK_KINDS, "Judged", "Recovered", "Verdict", "Loss p50", "Loss share p50", "Recovery time p50", "Won (by the cutoff) after a setback"]),
     align(1, 12),
@@ -612,12 +680,6 @@ export function formatBalanceReport(file: BatchFile, data: GameData = GAME_DATA)
     `${judged.length} of ${total} runs (${pct(percent(judged.length, total))}) had a judgeable moderate setback; ` +
       `${smallOnly} more booked only losses under ${TARGETS.moderateSetbackMinPercent}% of net worth, which aren't judged. ` +
       `${covered.length} of ${per.length} strategies have enough judged runs (${covered.join(", ") || "none"}).`,
-    "",
-    "### Scheduled setback scenario",
-    "",
-    "Not run yet. Until it is, the measure above judges only the moderate setbacks strategies happen to book. A lab variant of the First Shipment that forces " +
-      "one moderate loss on a fixed day for every strategy would measure recovery for all of them, but a scenario can schedule only route closures, which book no loss. " +
-      "It needs a scheduled loss-booking world event (`SHAKEDOWN`) in the simulation first; issue #129 adds the event and the scenario.",
     "",
   );
 
@@ -862,21 +924,22 @@ function proposal(id: TargetId, per: readonly StrategyStats[], markets: readonly
       );
     }
     case "setback-recovery": {
-      const sv = setbackVerdict(file);
+      const sv = scheduledSetbackVerdict(file);
       const thin = sv.per.filter((p) => p.verdict === "INSUFFICIENT EVIDENCE");
       const low = sv.per.filter((p) => p.verdict === "MISSED");
       const parts: string[] = [];
       if (thin.length > 0) {
         parts.push(
-          `too few judged moderate setbacks for ${thin.map((p) => `${p.strategy} (${p.judged})`).join(", ")}, against the ${TARGETS.setbackMinJudgedRuns} needed. ` +
-            "That is a measurement gap, not a tuning one: the scheduled setback scenario (issue #129) forces one moderate loss for every strategy, and judges recovery there",
+          `too few judged scheduled shakedowns for ${thin.map((p) => `${p.strategy} (${p.judged})`).join(", ")}, against the ${TARGETS.setbackMinJudgedRuns} needed. ` +
+            "That is a measurement gap, not a tuning one: run more seeds, or, if the shakedown was capped at cash below the moderate share or came after the game ended " +
+            "(see \"Scheduled setback scenario\"), move it to an earlier day in the lab's setback scenario",
         );
       }
       if (low.length > 0 || (sv.verdict === "MISSED" && low.length === 0)) {
         const who = low.length > 0 ? low.map((p) => `${p.strategy} (${p.recovered}/${p.judged})`).join(", ") : `the pool (${sv.recovered}/${sv.judged})`;
         parts.push(
-          `recovery below ${TARGETS.setbackRecoveryMinPercent}% for ${who}. Make a moderate loss less final: smaller seizure shares or penalties, ` +
-            "or more room to earn it back (margins, cash buffers) within the window",
+          `recovery from the scheduled shakedown below ${TARGETS.setbackRecoveryMinPercent}% for ${who}. Make a moderate loss less final: ` +
+            "more room to earn it back (margins, cash buffers) within the window, or smaller incidental losses (seizure shares, penalties) stacked on it",
         );
       }
       return `${parts.join("; ")}.`;

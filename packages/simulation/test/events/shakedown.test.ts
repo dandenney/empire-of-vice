@@ -2,6 +2,7 @@
 
 import { cents, gameStateSchema, tick, type EventOfType, type GameState, type LedgerTransaction } from "@eov/contracts";
 import { FIRST_SHIPMENT_SCENARIO, GAME_DATA, type ScenarioDefinition, type ScenarioShakedown } from "@eov/game-data";
+import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
   balanceSheet,
@@ -160,5 +161,76 @@ describe("SHAKEDOWN", () => {
     expect(load(shakedown(150_000, { tick: tick(0) }))).toThrow(ScenarioSetupError);
     expect(load(shakedown(1))).not.toThrow();
     expect(load(shakedown(1_000_000))).not.toThrow();
+  });
+});
+
+/** Exact `netWorth × ppm / 1 000 000`, half away from zero, in BigInt: the reference the assessment must match. */
+function exactShare(netWorth: number, ppm: number): number {
+  if (netWorth <= 0) return 0;
+  const n = BigInt(netWorth) * BigInt(ppm);
+  const q = n / 1_000_000n;
+  return Number(n % 1_000_000n >= 500_000n ? q + 1n : q);
+}
+
+describe("SHAKEDOWN properties", () => {
+  it("assesses exactly netWorth × ppm / 1 000 000 in integer cents, never more than net worth", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: -1_000_000_000_000, max: 1_000_000_000_000 }), fc.integer({ min: 0, max: 1_000_000 }), (nw, ppm) => {
+        const a = shakedownAssessment(cents(nw), ppm);
+        expect(Number.isSafeInteger(a)).toBe(true);
+        expect(a).toBe(exactShare(nw, ppm));
+        expect(a).toBeGreaterThanOrEqual(0);
+        if (nw > 0) expect(a).toBeLessThanOrEqual(nw);
+      }),
+      { numRuns: 2_000 },
+    );
+  });
+
+  it("books min(cash, assessment) as one balanced transaction on any tick and share, deterministically", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 1_000_000 }),
+        // Before the first midnight, so nothing else moves money on the tick.
+        fc.integer({ min: 1, max: 1_439 }),
+        fc.constantFrom<ScenarioShakedown["reason"]>("RIVAL", "POLICE"),
+        (ppm, at, reason) => {
+          const scenario = scenarioWith(shakedown(ppm, { tick: tick(at), reason }));
+          const run = () => {
+            const sim = newGame({ scenario });
+            sim.advance(at - 1);
+            sim.takeEvents();
+            const before = sim.state;
+            sim.advance(1);
+            return { sim, before, events: sim.takeEvents() };
+          };
+          const { sim, before, events } = run();
+          const booked = events.filter((e): e is EventOfType<"LOSS_BOOKED"> => e.type === "LOSS_BOOKED");
+          expect(booked).toHaveLength(1);
+          const e = booked[0]!;
+          const nw = balanceSheet(before).netWorth;
+          const cash = cashBalance(before);
+          const assessed = exactShare(nw, ppm);
+          expect(e).toMatchObject({ tick: at, reason, assessed, amount: Math.min(cash, assessed), netWorthBefore: nw });
+          const tx = txOf(sim.state, e.transactionId);
+          expect(tx.entries).toEqual(
+            e.amount === 0
+              ? []
+              : [
+                  { account: "LOSSES", side: "DEBIT", amount: e.amount },
+                  { account: "CASH", side: "CREDIT", amount: e.amount },
+                ],
+          );
+          // Exactly one transaction was added, and nothing else moved: cash and net worth fall by the amount.
+          expect(sim.state.ledger.transactions.length).toBe(before.ledger.transactions.length + 1);
+          expect(cashBalance(sim.state)).toBe(cash - e.amount);
+          expect(cashBalance(sim.state)).toBeGreaterThanOrEqual(0);
+          expect(balanceSheet(sim.state).netWorth).toBe(nw - e.amount);
+          expect(checkInvariants(sim.state, tx)).toEqual([]);
+          // Same inputs, same state.
+          expect(run().sim.stateHash()).toBe(sim.stateHash());
+        },
+      ),
+      { numRuns: 40 },
+    );
   });
 });

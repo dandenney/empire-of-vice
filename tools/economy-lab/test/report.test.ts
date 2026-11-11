@@ -8,6 +8,7 @@ import {
   formatBalanceReport,
   hasModerateSetback,
   setbackVerdict,
+  scheduledSetbackVerdict,
   integrityFailed,
   parseBatchFile,
   parseReportArgs,
@@ -20,6 +21,7 @@ import {
 } from "../src/report.ts";
 import { findings, summarize } from "../src/smoke-report.ts";
 import { runSmokeSeed } from "../src/smoke-run.ts";
+import { SETBACK_SHAKEDOWN } from "../src/setback-scenario.ts";
 import { countsAsWin, isLateWin, TARGETS, TICKS_PER_REAL_MINUTE, victoryOf } from "../src/targets.ts";
 
 const ALL_TARGETS: readonly TargetId[] = [
@@ -43,6 +45,8 @@ beforeAll(() => {
 
 const withRuns = (f: BatchFile, map: (r: BatchRunResult, i: number) => BatchRunResult): BatchFile => ({ ...f, runs: f.runs.map(map) });
 const verdict = (f: BatchFile, id: TargetId): string => evaluateTargets(f).find((t) => t.id === id)!.verdict;
+/** The file with its First Shipment runs' setbacks as the setback scenario's shakedowns, which the recovery target judges (#129). */
+const scheduled = (f: BatchFile): BatchFile => ({ ...f, setback: { ...f.setback, runs: f.runs.map((r) => ({ ...r, shakedown: r.setback })) } });
 
 function memoryIo(files: Record<string, string>): ReportIo & { written: Map<string, string>; errors: string[]; lines: string[] } {
   const written = new Map<string, string>();
@@ -216,11 +220,13 @@ describe("balance report", () => {
       runs: Array.from({ length: TARGETS.setbackMinJudgedRuns * file.strategies.length }, (_, i) => ({ ...file.runs[i % file.runs.length]!, seed: i + 1 })),
     };
     for (const s of file.strategies) expect(many.runs.filter((r) => r.strategy === s)).toHaveLength(TARGETS.setbackMinJudgedRuns);
-    expect(verdict(withRuns(many, setback(TARGETS.setbackRecoveryWindowTicks)), "setback-recovery")).toBe("MET");
-    expect(verdict(withRuns(many, setback(TARGETS.setbackRecoveryWindowTicks + 1)), "setback-recovery")).toBe("MISSED");
-    expect(verdict(withRuns(many, setback(null)), "setback-recovery")).toBe("MISSED");
+    expect(verdict(scheduled(withRuns(many, setback(TARGETS.setbackRecoveryWindowTicks))), "setback-recovery")).toBe("MET");
+    expect(verdict(scheduled(withRuns(many, setback(TARGETS.setbackRecoveryWindowTicks + 1))), "setback-recovery")).toBe("MISSED");
+    expect(verdict(scheduled(withRuns(many, setback(null))), "setback-recovery")).toBe("MISSED");
     // A recovery inside the window doesn't count if the run went bankrupt.
-    expect(verdict(withRuns(many, (r) => ({ ...setback(100)(r), outcome: "LOST" })), "setback-recovery")).toBe("MISSED");
+    expect(verdict(scheduled(withRuns(many, (r) => ({ ...setback(100)(r), outcome: "LOST" }))), "setback-recovery")).toBe("MISSED");
+    // The target reads the setback scenario only: the same setbacks on the First Shipment runs judge nothing there.
+    expect(verdict({ ...withRuns(many, setback(100)), setback: { ...file.setback, runs: [] } }, "setback-recovery")).toBe("INSUFFICIENT EVIDENCE");
     // A window that outlasts the run without a recovery isn't judged.
     expect(setbackVerdict(withRuns(many, (r) => ({ ...setback(null)(r), endTick: 1_000 + TARGETS.setbackRecoveryWindowTicks - 1 }))).judged).toBe(0);
   });
@@ -267,12 +273,48 @@ describe("balance report", () => {
     expect(sv.per.filter((p) => p.strategy !== short).every((p) => p.verdict === "MET")).toBe(true);
     expect(sv.verdict).toBe("INSUFFICIENT EVIDENCE");
     // No setback anywhere: nothing to judge.
-    expect(verdict(withRuns(many, (r) => ({ ...r, setback: null })), "setback-recovery")).toBe("INSUFFICIENT EVIDENCE");
-    // The report says so, and proposes the scheduled scenario rather than tuning.
-    const report = formatBalanceReport(oneShort);
-    const t = evaluateTargets(oneShort).find((x) => x.id === "setback-recovery")!;
+    expect(verdict(scheduled(withRuns(many, (r) => ({ ...r, setback: null }))), "setback-recovery")).toBe("INSUFFICIENT EVIDENCE");
+    // The report says so, and proposes more evidence rather than tuning.
+    const report = formatBalanceReport(scheduled(oneShort));
+    const t = evaluateTargets(scheduled(oneShort)).find((x) => x.id === "setback-recovery")!;
     expect(report).toContain(`| ${t.target} | ${t.goal} | ${t.measured} | **INSUFFICIENT EVIDENCE** |`);
     expect(report.slice(report.indexOf("## Tuning proposals"))).toContain(`- **${t.target}** (INSUFFICIENT EVIDENCE;`);
+    expect(report).toContain("a measurement gap, not a tuning one");
+  });
+
+  it("judges the setback scenario for every strategy (#129)", () => {
+    // The real batch: every strategy ran the setback scenario on every seed, and met the shakedown.
+    expect(file.setback.shakedown).toEqual(SETBACK_SHAKEDOWN);
+    expect(file.setback.runs.map((r) => [r.strategy, r.seed])).toEqual(file.runs.map((r) => [r.strategy, r.seed]));
+    for (const r of file.setback.runs) {
+      expect(r.shakedown).toMatchObject({ kind: "SHAKEDOWN", tick: SETBACK_SHAKEDOWN.tick });
+      expect(hasModerateSetback({ ...r, setback: r.shakedown })).toBe(true);
+    }
+    for (const r of file.runs) expect(r.shakedown).toBeNull();
+    // Every strategy has judged runs (16 days is past the recovery window), and its own verdict.
+    const sv = scheduledSetbackVerdict(file);
+    expect(sv.per.map((p) => p.strategy)).toEqual(file.strategies);
+    for (const p of sv.per) expect(p.judged).toBe(2);
+    expect(sv.judged).toBe(file.setback.runs.length);
+    // Too few seeds for a verdict, but the evidence is there for each strategy.
+    expect(sv.verdict).toBe("INSUFFICIENT EVIDENCE");
+    const report = formatBalanceReport(file);
+    const section = report.slice(report.indexOf("### Scheduled setback scenario"), report.indexOf("### Incidental setbacks"));
+    expect(section).toContain(`schedules one RIVAL \`SHAKEDOWN\` at ${SETBACK_SHAKEDOWN.tick}`);
+    for (const s of file.strategies) expect(section).toMatch(new RegExp(`\\| ${s} \\| 2 \\| 0 \\| 2 \\| 0 \\| 2 \\|`));
+    expect(report).not.toContain("Not run yet");
+    // Enough judged runs, all recovered: MET from the setback scenario alone, whatever the First Shipment runs booked.
+    const recoveredRun = (i: number): BatchRunResult => ({
+      ...file.setback.runs[i % file.setback.runs.length]!,
+      seed: i + 1,
+      outcome: "WON",
+      shakedown: { kind: "SHAKEDOWN", tick: SETBACK_SHAKEDOWN.tick, loss: 16_000 as never, netWorthBefore: 100_000 as never, recoveredAt: SETBACK_SHAKEDOWN.tick + 1 },
+    });
+    const n = TARGETS.setbackMinJudgedRuns * file.strategies.length;
+    const many: BatchFile = { ...file, setback: { ...file.setback, runs: Array.from({ length: n }, (_, i) => recoveredRun(i)) } };
+    expect(verdict(many, "setback-recovery")).toBe("MET");
+    // An integrity failure in a setback run fails the report.
+    expect(integrityFailed({ ...file, setback: { ...file.setback, runs: file.setback.runs.map((r, i) => (i === 0 ? { ...r, replayDiverged: true } : r)) } })).toBe(true);
   });
 
   it("judges the first upgrade per strategy as well as pooled", () => {
