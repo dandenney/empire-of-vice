@@ -352,6 +352,13 @@ export const gameEventSchema = z.discriminatedUnion("type", [
     completedContractId: idSchema("Contract"),
   }),
   ev("GAME_LOST", { reason: z.literal("INSOLVENT") }),
+  ev("LOSS_BOOKED", {
+    reason: closureReason,
+    assessed: moneySchema,
+    amount: moneySchema,
+    netWorthBefore: moneySchema,
+    transactionId: idSchema("Transaction"),
+  }),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -625,6 +632,12 @@ export const gameStateSchema = z.strictObject({
         materialId: idSchema("Material"),
       }),
       z.strictObject({ ...scheduledBase, kind: z.literal("CONTRACT_OFFER"), buyerId: idSchema("Buyer") }),
+      z.strictObject({
+        ...scheduledBase,
+        kind: z.literal("SHAKEDOWN"),
+        reason: closureReason,
+        netWorthSharePpm: z.number().int().min(1).max(1_000_000),
+      }),
     ]),
   ),
   eventJournal: z.array(gameEventSchema),

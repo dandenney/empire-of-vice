@@ -8,6 +8,7 @@ import type { TransactionCoordinator } from "@eov/contracts";
 import type { GameData } from "@eov/game-data";
 import { registerRepeat } from "../commands/repeat.ts";
 import { registerContracts } from "../contracts/index.ts";
+import { registerShakedown } from "../events/shakedown.ts";
 import { createCoordinator } from "../economy/coordinator/coordinator.ts";
 import { registerMarket } from "../economy/market/market.ts";
 import { registerInventory } from "../inventory/release.ts";
@@ -34,6 +35,7 @@ export const SYSTEMS: readonly SystemEntry[] = [
   { name: "contracts (T02e)", register: registerContracts },
   { name: "repeat orders (T05c)", register: registerRepeat },
   { name: "progression (T05e)", register: registerProgression },
+  { name: "shakedown (T07f)", register: registerShakedown },
 ];
 
 /** A registry with every system in SYSTEMS, sharing one coordinator. */

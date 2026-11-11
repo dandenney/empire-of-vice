@@ -31,7 +31,7 @@ import { advanceTo } from "../sprint-zero/helpers.ts";
 const CLOSES_AT = 12_000;
 const REOPENS_AT = 13_440;
 
-const closure = FIRST_SHIPMENT_SCENARIO.scheduledEvents[0]!;
+const closure = FIRST_SHIPMENT_SCENARIO.scheduledEvents[0] as ScenarioRouteClosure;
 
 function withClosure(patch: Partial<ScenarioRouteClosure>): ScenarioDefinition {
   return { ...FIRST_SHIPMENT_SCENARIO, scheduledEvents: [{ ...closure, ...patch }] };

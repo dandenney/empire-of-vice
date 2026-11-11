@@ -6,7 +6,7 @@
 // The victory thresholds the game does read (net worth, reputation, completed
 // contracts) come from game-data (`progression.victory`), through `victoryOf`.
 
-import { TICKS_PER_HOUR } from "@eov/contracts";
+import { TICKS_PER_DAY, TICKS_PER_HOUR } from "@eov/contracts";
 import { GAME_DATA, REAL_MS_PER_GAME_HOUR_AT_1X, type GameData } from "@eov/game-data";
 
 /** Ticks per real minute at 1× (GDD §5: 720), derived from the pacing data. */
@@ -28,7 +28,7 @@ export const TARGETS = {
    * batch may run longer (its day cap), but a later victory is a late win, not a
    * win, in every win and success rate the lab reports.
    */
-  winCutoffTicks: 30 * TICKS_PER_REAL_MINUTE,
+  winCutoffTicks: 15 * TICKS_PER_DAY,
   /** Competent strategy success: 60–85% of runs win (by `winCutoffTicks`). */
   competentSuccessMinPercent: 60,
   competentSuccessMaxPercent: 85,

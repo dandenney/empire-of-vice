@@ -3,9 +3,10 @@ import { BASIC_MOONSHINE_RECIPE, COUNTY_ROAD, FIRST_SHIPMENT_SCENARIO, GAME_DATA
 import type { KernelSimulation } from "@eov/simulation";
 import { describe, expect, it } from "vitest";
 import { isModerateLoss, replayStateHash, runBatchSeed, RunObserver, type BatchRunResult } from "../src/batch-run.ts";
-import { batchMain, batchTasks, formatBatchFile, parseBatchArgs, runBatch, runBatchParallel, BatchArgsError, DEFAULT_BATCH_OUT, type BatchIo } from "../src/batch.ts";
+import { batchMain, batchTasks, formatBatchFile, parseBatchArgs, runBatch, runBatchParallel, runBatchTask, BatchArgsError, DEFAULT_BATCH_OUT, type BatchIo } from "../src/batch.ts";
 import { HEADLESS_STRATEGY_NAMES } from "../src/headless-strategy.ts";
 import { StrategyRng } from "../src/prng.ts";
+import { SETBACK_SCENARIO, SETBACK_SHAKEDOWN } from "../src/setback-scenario.ts";
 import { TICKS_PER_REAL_MINUTE } from "../src/smoke-run.ts";
 import { TARGETS } from "../src/targets.ts";
 
@@ -202,9 +203,14 @@ describe("batch CLI", () => {
     const io = memoryIo();
     expect(await batchMain(["--seeds", "2", "--days", "4", "--out", "a.json", "--jobs", "2"], io)).toBe(0);
     expect([...io.files.values()]).toEqual([one]);
-    const parsed = JSON.parse(one) as { runs: BatchRunResult[]; summary: { strategy: string }[] };
-    expect(parsed.runs.map((r) => [r.strategy, r.seed])).toEqual(batchTasks(args).map((t) => [t.strategy, t.seed]));
+    const parsed = JSON.parse(one) as { runs: BatchRunResult[]; summary: { strategy: string }[]; setback: { runs: BatchRunResult[]; summary: { strategy: string }[] } };
+    const tasks = batchTasks(args);
+    expect(tasks.map((t) => t.scenario)).toEqual([...Array<string>(8).fill("first-shipment"), ...Array<string>(8).fill("setback")]);
+    const of = (scenario: string) => tasks.filter((t) => t.scenario === scenario).map((t) => [t.strategy, t.seed]);
+    expect(parsed.runs.map((r) => [r.strategy, r.seed])).toEqual(of("first-shipment"));
+    expect(parsed.setback.runs.map((r) => [r.strategy, r.seed])).toEqual(of("setback"));
     expect(parsed.summary.map((s) => s.strategy)).toEqual([...HEADLESS_STRATEGY_NAMES]);
+    expect(parsed.setback.summary.map((s) => s.strategy)).toEqual([...HEADLESS_STRATEGY_NAMES]);
   });
 
   it("runs one strategy when asked", () => {
@@ -223,7 +229,8 @@ describe("batch CLI", () => {
     expect(file.runs[0]!.invariantViolationCount).toBeGreaterThan(0);
     expect(file.runs[0]!.invariantViolations[0]!.code).toBe("NEGATIVE_CASH");
     expect(file.summary[0]!.runsWithInvariantViolations).toBe(1);
-    expect(io.errors.join("\n")).toContain("1 run(s) broke an invariant");
+    // The setback scenario's run is checked too.
+    expect(io.errors.join("\n")).toContain("2 run(s) broke an invariant");
   });
 
   it("exits non-zero when a replay diverges", async () => {
@@ -234,7 +241,7 @@ describe("batch CLI", () => {
     expect(code).toBe(1);
     const file = JSON.parse(io.files.values().next().value!) as { runs: BatchRunResult[] };
     expect(file.runs[0]!.replayDiverged).toBe(true);
-    expect(io.errors.join("\n")).toContain("1 replay(s) diverged");
+    expect(io.errors.join("\n")).toContain("2 replay(s) diverged");
   });
 
   it("exits 0 for a clean batch and 2 for bad arguments", async () => {
@@ -318,5 +325,66 @@ describe("run observer (#127)", () => {
     expect(sb.recoveredAt).toBe(back ? back.tick : null);
     expect(sb.recoveredAt).not.toBeNull();
     expect(sb.recoveredAt!).toBeGreaterThanOrEqual(sb.tick);
+  });
+});
+
+const lossBooked = (t: number, amount: number, netWorthBefore: number, assessed = amount): GameEvent =>
+  ({ type: "LOSS_BOOKED", tick: t, reason: "RIVAL", assessed, amount, netWorthBefore, transactionId: "transaction:1" }) as unknown as GameEvent;
+
+describe("scheduled setbacks (#129)", () => {
+  it("the observer takes a shakedown's net worth before it from the event, not the last stop", () => {
+    const o = new RunObserver({}, 100_000 as Money);
+    o.atStop(10, 100_000 as Money);
+    // Net worth rose to 200 000 between stops; at the last stop's 100 000 a 20 000 loss would be 20%, but it's 10% of the event's.
+    o.observe([lossBooked(20, 20_000, 200_000)]);
+    expect([o.setbackCount, o.moderateSetbackCount]).toEqual([1, 0]);
+    expect(o.setback()).toBeNull();
+    // The shakedown is recorded whatever its size.
+    expect(o.shakedown()).toEqual({ kind: "SHAKEDOWN", tick: 20, loss: 20_000, netWorthBefore: 200_000, recoveredAt: null });
+    o.atStop(30, 199_999 as Money);
+    o.atStop(40, 200_000 as Money);
+    expect(o.shakedown()!.recoveredAt).toBe(40);
+    // A moderate one is also the run's setback; a second shakedown doesn't replace the first.
+    const m = new RunObserver({}, 100_000 as Money);
+    m.observe([lossBooked(20, 40_000, 200_000), lossBooked(50, 1, 10)]);
+    expect(m.setback()).toEqual({ kind: "SHAKEDOWN", tick: 20, loss: 40_000, netWorthBefore: 200_000, recoveredAt: null });
+    expect(m.shakedown()!.tick).toBe(20);
+    expect(m.setbackCount).toBe(2);
+  });
+
+  it("the setback scenario is the First Shipment plus one moderate SHAKEDOWN on a fixed day", () => {
+    expect(SETBACK_SCENARIO.scheduledEvents).toEqual([...FIRST_SHIPMENT_SCENARIO.scheduledEvents, SETBACK_SHAKEDOWN]);
+    expect(SETBACK_SHAKEDOWN.kind).toBe("SHAKEDOWN");
+    expect(SETBACK_SHAKEDOWN.netWorthSharePpm).toBeGreaterThanOrEqual(150_000);
+    expect(SETBACK_SHAKEDOWN.netWorthSharePpm * 100).toBeGreaterThan(TARGETS.moderateSetbackMinPercent * 1_000_000);
+    // Early enough that its recovery window closes by the win cutoff.
+    expect(SETBACK_SHAKEDOWN.tick + TARGETS.setbackRecoveryWindowTicks).toBeLessThanOrEqual(TARGETS.winCutoffTicks);
+    expect(FIRST_SHIPMENT_SCENARIO.scheduledEvents.some((e) => e.kind === "SHAKEDOWN")).toBe(false);
+  });
+
+  it("every strategy meets the shakedown, books min(cash, share of net worth) on its tick, and stops there", () => {
+    const days = Math.ceil((SETBACK_SHAKEDOWN.tick + TARGETS.setbackRecoveryWindowTicks) / TICKS_PER_DAY);
+    for (const strategy of HEADLESS_STRATEGY_NAMES) {
+      const stops: { tick: number; cash: number; netWorth: number }[] = [];
+      const r = runBatchTask(
+        { scenario: "setback", strategy, seed: 1 },
+        { days, onStop: (s) => void stops.push({ tick: s.clock.tick, cash: s.finance.cash, netWorth: s.finance.netWorth }) },
+      );
+      expect(r.invariantViolationCount).toBe(0);
+      expect(r.replayDiverged).toBe(false);
+      const sd = r.shakedown!;
+      expect(sd).not.toBeNull();
+      expect(sd.kind).toBe("SHAKEDOWN");
+      expect(sd.tick).toBe(SETBACK_SHAKEDOWN.tick);
+      const assessed = Math.round((sd.netWorthBefore * SETBACK_SHAKEDOWN.netWorthSharePpm) / 1_000_000);
+      // The stop before it; nothing else happens on the shakedown tick in seed 1 before it, so cash there is what was capped against.
+      const before = stops.filter((s) => s.tick < sd.tick).at(-1)!;
+      expect(sd.loss).toBe(Math.min(assessed, before.cash));
+      // The run stopped on the shakedown's tick, after it.
+      const at = stops.find((s) => s.tick === sd.tick)!;
+      expect(at.netWorth).toBe(sd.netWorthBefore - sd.loss);
+      // The same seed on the First Shipment has no shakedown.
+      expect(runBatchTask({ scenario: "first-shipment", strategy, seed: 1 }, { days: 1 }).shakedown).toBeNull();
+    }
   });
 });

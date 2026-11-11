@@ -4,7 +4,7 @@
 // self-hosted fonts. Screenshot baselines are linux-only (CI); the assertion
 // is skipped elsewhere.
 
-import { FIRST_SHIPMENT_SCENARIO } from "@eov/game-data";
+import { FIRST_SHIPMENT_SCENARIO, type ScenarioRouteClosure } from "@eov/game-data";
 import { expect, test, type Page } from "@playwright/test";
 import { SHELL_COPY } from "../../src/components/copy.ts";
 import { ACTIVITY_COPY } from "../../src/panels/activity/copy.ts";
@@ -130,7 +130,7 @@ test("ledger figures: typewriter tabular figures, losses signed and in the loss 
 });
 
 test("a notify event shows a toast, announced politely and dismissable, with the #99 wording", async ({ page }) => {
-  const closure = FIRST_SHIPMENT_SCENARIO.scheduledEvents.find((e) => e.kind === "ROUTE_CLOSURE" && e.reason === "RIVAL" && e.routeId === "county-road")!;
+  const closure = FIRST_SHIPMENT_SCENARIO.scheduledEvents.find((e): e is ScenarioRouteClosure => e.kind === "ROUTE_CLOSURE" && e.reason === "RIVAL" && e.routeId === "county-road")!;
   expect(closure).toBeDefined();
   await newGame(page);
 

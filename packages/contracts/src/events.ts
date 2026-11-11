@@ -386,6 +386,27 @@ export type VictoryAchievedEvent = GameEventOf<
 export type GameLostEvent = GameEventOf<"GAME_LOST", { readonly reason: "INSOLVENT" }>;
 
 // ---------------------------------------------------------------------------
+// Scheduled setbacks (issue #129)
+// ---------------------------------------------------------------------------
+
+/**
+ * A scheduled SHAKEDOWN booked its loss (Dr LOSSES / Cr CASH). `assessed` is the
+ * event's share of net worth; `amount`, what was booked, is `assessed` capped at
+ * cash, so the loss never makes cash negative. Zero when there was nothing to take.
+ */
+export type LossBookedEvent = GameEventOf<
+  "LOSS_BOOKED",
+  {
+    readonly reason: "RIVAL" | "POLICE";
+    readonly assessed: Money;
+    readonly amount: Money;
+    /** Net worth on the event's tick, just before the loss. */
+    readonly netWorthBefore: Money;
+    readonly transactionId: TransactionId;
+  }
+>;
+
+// ---------------------------------------------------------------------------
 // The union
 // ---------------------------------------------------------------------------
 
@@ -421,7 +442,8 @@ export type GameEvent =
   | TierReachedEvent
   | UnlockGrantedEvent
   | VictoryAchievedEvent
-  | GameLostEvent;
+  | GameLostEvent
+  | LossBookedEvent;
 
 export type GameEventType = GameEvent["type"];
 
@@ -468,6 +490,8 @@ export const EVENT_IMPORTANCE: Readonly<Record<GameEventType, "notify" | "log">>
   UNLOCK_GRANTED: "notify",
   VICTORY_ACHIEVED: "notify",
   GAME_LOST: "notify",
+  // No player-facing copy in M001 (issue #129: only the lab's setback scenario schedules one).
+  LOSS_BOOKED: "log",
 };
 
 export const GAME_EVENT_TYPES = Object.keys(EVENT_IMPORTANCE) as readonly GameEventType[];
