@@ -32,6 +32,9 @@ export const TOAST_COPY = {
     body: "The County Road is clear again. Dwyer's boys have moved on.",
   } satisfies ToastText,
 
+  // Approved on #99: the EQUIPMENT_SOLD notification (body). The title is a placeholder.
+  equipmentSold: (equipmentName: string, amount: string): ToastText => ({ title: "Equipment sold", body: `Sold ${equipmentName} for ${amount}.` }),
+
   // Everything below is PLACEHOLDER copy (story decision).
   commandRejected: (command: string, reason: string): ToastText => ({ title: "Order refused", body: `${command}: ${reason}` }),
   productionCompleted: (quantity: number, product: string, quality: string, facility: string): ToastText => ({

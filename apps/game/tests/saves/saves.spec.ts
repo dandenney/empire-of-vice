@@ -7,6 +7,7 @@ import { SAVE_SCHEMA_VERSION } from "@eov/contracts";
 import { SAVE_DATABASE } from "@eov/persistence/indexed-db";
 import { expect, test, type Page } from "@playwright/test";
 import { LOAD_ERROR_COPY, SAVES_COPY } from "../../src/app/saves/copy.ts";
+import { playToLoss } from "../end-screen/campaign.ts";
 
 // Fixed wall clock, zone, and locale, so "Saved …" times are the same on every run.
 const NOW = new Date("2026-11-08T17:30:00.000Z");
@@ -297,4 +298,24 @@ test("with no game running, a bad save still can't half-load", async ({ page }) 
   await screen.getByTestId("load-error-back").click();
   expect(await page.evaluate(() => window.__eov?.snapshot ?? null)).toBeNull();
   await expect(page.getByTestId("new-game")).toBeEnabled();
+});
+
+test("Start again after a loss starts a fresh slot: the next Save leaves the previous game's save alone", async ({ page }) => {
+  await newGame(page);
+  await advance(page, 120);
+  await press(page, "save");
+  expect(await storedSlots(page)).toEqual(["slot-1"]);
+  const before = await readRaw(page, "slot-1");
+
+  // Lose the game this slot belongs to, then start again from the end screen.
+  await playToLoss(page);
+  await expect(page.getByTestId("end-screen-loss")).toBeVisible();
+  await page.getByTestId("end-start-again").click();
+  await expect(page.getByTestId("end-screen-loss")).toBeHidden();
+  expect(await tickOf(page)).toBe(0);
+
+  // Save writes the new game to a new slot; the old save is untouched.
+  await press(page, "save");
+  expect(await storedSlots(page)).toEqual(["slot-1", "slot-2"]);
+  expect(await readRaw(page, "slot-1")).toBe(before);
 });

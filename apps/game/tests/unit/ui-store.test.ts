@@ -69,7 +69,7 @@ describe("ui store", () => {
 
 describe("panel registry", () => {
   it("lists every panel, with unique ids", () => {
-    expect(PANELS.map((p) => p.id)).toEqual(["dashboard", "production", "finance", "market", "contracts", "facility"]);
+    expect(PANELS.map((p) => p.id)).toEqual(["dashboard", "production", "finance", "market", "contracts", "facility", "progression", "activity"]);
     for (const p of PANELS) {
       expect(p.title.length).toBeGreaterThan(0);
       expect(typeof p.component).toBe("function");

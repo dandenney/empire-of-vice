@@ -80,6 +80,24 @@ export const FacilityIcon = () => (
   </Icon>
 );
 
+/** Standing: three rising steps, a pennant on the top one. */
+export const ProgressionIcon = () => (
+  <Icon>
+    <path d="M2.5 16.5h15" />
+    <path d="M3.5 16.5v-3.5h4v-3.5h4V6h4v10.5" />
+    <path d="M13.5 6V2.5l3 1.25-3 1.25" />
+  </Icon>
+);
+
+/** Activity: a ticker tape, lines of news running off a spool. */
+export const ActivityIcon = () => (
+  <Icon>
+    <circle cx="5" cy="5.5" r="2" />
+    <path d="M7 5.5h9.5v11H5V7.5" />
+    <path d="M8 9.5h6M8 12h6M8 14.5h3.5" />
+  </Icon>
+);
+
 /** Fallback for a panel without its own icon. */
 export const PanelIcon = () => (
   <Icon>
@@ -133,4 +151,6 @@ export const PANEL_ICONS: Readonly<Record<string, () => ReactNode>> = {
   market: MarketIcon,
   contracts: ContractsIcon,
   facility: FacilityIcon,
+  progression: ProgressionIcon,
+  activity: ActivityIcon,
 };

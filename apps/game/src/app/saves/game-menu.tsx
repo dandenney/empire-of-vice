@@ -9,14 +9,15 @@
 //   - Saves…: the saves dialog (save to a new named slot, load, delete).
 // A failed load opens the load-error screen; nothing is loaded.
 //
-// The current slot and the save list are UI state; game state stays in the
-// worker. The list is re-read from storage on opening the dialog and after
+// The save list is UI state; the current slot is shared session state in the
+// app context, so the end screen's Start again clears it too. Game state stays
+// in the worker. The list is re-read from storage on opening the dialog and after
 // every change.
 
 import type { SaveSummary } from "@eov/persistence";
 import { useCallback, useEffect, useState } from "react";
 import { formatGameDate } from "../../components/format.ts";
-import { useGateway, useGatewayView } from "../../state/app-context.tsx";
+import { useCurrentSlot, useGatewayView, useStartNewGame } from "../../state/app-context.tsx";
 import { SAVES_COPY } from "./copy.ts";
 import { LoadErrorScreen, type FailedLoad } from "./load-error.tsx";
 import { continueTarget, type SavedTo, type SaveLibrary } from "./save-library.ts";
@@ -35,10 +36,10 @@ export function GameMenu({
   readonly setBusy: (busy: boolean) => void;
   readonly say: (message: string) => void;
 }) {
-  const gateway = useGateway();
+  const startNewGame = useStartNewGame();
   const { snapshot } = useGatewayView();
   const [saves, setSaves] = useState<readonly SaveSummary[]>([]);
-  const [currentSlot, setCurrentSlot] = useState<string | null>(null);
+  const [currentSlot, setCurrentSlot] = useCurrentSlot();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [failed, setFailed] = useState<FailedLoad | null>(null);
 
@@ -108,8 +109,7 @@ export function GameMenu({
         data-testid="new-game"
         disabled={busy}
         onClick={run(async () => {
-          await gateway.newGame();
-          setCurrentSlot(null);
+          await startNewGame();
           return SAVES_COPY.newGameStarted;
         })}
       >
@@ -131,7 +131,6 @@ export function GameMenu({
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
         saves={saves}
-        currentSlot={currentSlot}
         defaultLabel={defaultLabel}
         busy={busy}
         onSave={(label) => void save(() => library.saveNew(label))()}

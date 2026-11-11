@@ -1,5 +1,6 @@
 // The toast host (issue #61): one toast per `notify` event that
-// GatewayClient.onEvents delivers, in a corner over the map.
+// GatewayClient.onEvents delivers (and per EQUIPMENT_SOLD, a log event the #99
+// sign-off gives a notification, #136), in a corner over the map.
 //
 // It keeps only a bounded queue of toast view models (display text and a
 // tone, built when the event arrives) and their dismiss timers: no copy of
@@ -34,8 +35,8 @@ export function ToastHost() {
 
   useEffect(
     () =>
-      gateway.onEvents((events, importance) => {
-        if (importance !== "notify") return;
+      // Log batches too, for the few log events that get a toast (EQUIPMENT_SOLD).
+      gateway.onEvents((events) => {
         const incoming = toastsFor(events, gateway.view.snapshot);
         if (incoming.length > 0) setToasts((q) => enqueue(q, incoming));
       }),
