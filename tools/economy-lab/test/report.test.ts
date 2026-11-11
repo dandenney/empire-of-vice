@@ -35,13 +35,13 @@ const ALL_TARGETS: readonly TargetId[] = [
   "replay",
 ];
 
-/** A real batch long enough for the contract strategies to win: 2 seeds × 4 strategies × 16 days. */
+/** A real batch long enough for the contract strategies to win: 2 seeds × 4 strategies × 16 days, on both scenarios (#129). */
 let file: BatchFile;
 let text: string;
 beforeAll(() => {
   file = runBatch({ seeds: 2, days: 16, strategy: null });
   text = formatBatchFile(file);
-});
+}, 60_000);
 
 const withRuns = (f: BatchFile, map: (r: BatchRunResult, i: number) => BatchRunResult): BatchFile => ({ ...f, runs: f.runs.map(map) });
 const verdict = (f: BatchFile, id: TargetId): string => evaluateTargets(f).find((t) => t.id === id)!.verdict;
