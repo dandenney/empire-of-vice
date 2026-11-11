@@ -15,3 +15,4 @@ export * from "./smoke-run.ts";
 export { parseSmokeArgs, runSmoke, SmokeArgsError, type SmokeArgs, type SmokeResult } from "./smoke.ts";
 export * from "./targets.ts";
 export * from "./report.ts";
+export * from "./setback-scenario.ts";

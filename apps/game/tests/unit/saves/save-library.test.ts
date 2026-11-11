@@ -40,6 +40,12 @@ class FakeGateway implements SaveGateway {
 /** Memory storage whose writes can be made to fail, as a full disk or an aborted transaction would. */
 class FlakyStorage extends MemoryStorageAdapter {
   failWrites = false;
+  /** Slots read, in order, to check what a quick save looks at. */
+  reads: string[] = [];
+  override async read(slot: string): Promise<string | null> {
+    this.reads.push(slot);
+    return super.read(slot);
+  }
   override async write(slot: string, contents: string): Promise<void> {
     if (this.failWrites) throw new Error("QuotaExceededError");
     await super.write(slot, contents);
@@ -79,6 +85,36 @@ describe("SaveLibrary", () => {
     // A default-named slot keeps its default name too: it isn't renamed to the new game date.
     await library.quickSave(null, DEFAULT);
     expect(await library.quickSave("slot-2", "1920-01-19 06:40")).toEqual({ slot: "slot-2", label: DEFAULT });
+  });
+
+  it("quick save over a slot with an empty name names it with the default", async () => {
+    const { library } = setup();
+    await library.saveNew("");
+    expect(await labels(library)).toEqual([["slot-1", "", "2026-11-08T12:00:01.000Z"]]);
+    expect(await library.quickSave("slot-1", DEFAULT)).toEqual({ slot: "slot-1", label: DEFAULT });
+    expect(await labels(library)).toEqual([["slot-1", DEFAULT, "2026-11-08T12:00:02.000Z"]]);
+  });
+
+  it("quick save reads only the current slot, not every save", async () => {
+    const { library, storage } = setup();
+    await library.saveNew("Morning");
+    await library.saveNew("Noon");
+    await library.saveNew("Evening");
+    storage.reads = [];
+    expect(await library.quickSave("slot-2", DEFAULT)).toEqual({ slot: "slot-2", label: "Noon" });
+    expect(storage.reads).toEqual(["slot-2"]);
+  });
+
+  it("quick save over a damaged save keeps the name it still has, else the default", async () => {
+    const { library, storage } = setup();
+    await storage.write("slot-1", JSON.stringify({ meta: { label: "Broken but named" } }));
+    expect(await library.quickSave("slot-1", DEFAULT)).toEqual({ slot: "slot-1", label: "Broken but named" });
+    await storage.write("slot-2", "{ not json");
+    expect(await library.quickSave("slot-2", DEFAULT)).toEqual({ slot: "slot-2", label: DEFAULT });
+    expect((await library.list()).map((s) => [s.slot, s.ok, s.meta.label])).toEqual([
+      ["slot-2", true, DEFAULT],
+      ["slot-1", true, "Broken but named"],
+    ]);
   });
 
   it("quick save to a slot that has gone (deleted elsewhere) makes a new one with the default name", async () => {

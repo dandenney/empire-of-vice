@@ -82,7 +82,7 @@ describe("First Shipment scenario", () => {
     for (const v of s.vehicleIds) expect(has(d.vehicles, v)).toBe(true);
     for (const sup of s.supplierIds) expect(has(d.suppliers, sup)).toBe(true);
     for (const b of s.buyerIds) expect(has(d.buyers, b)).toBe(true);
-    for (const e of s.scheduledEvents) expect(has(d.routes, e.routeId)).toBe(true);
+    for (const e of s.scheduledEvents) if (e.kind === "ROUTE_CLOSURE") expect(has(d.routes, e.routeId)).toBe(true);
     expect(has(d.families, s.family.id)).toBe(true);
     expect(has(d.progression.tiers, s.family.tierId)).toBe(true);
   });
@@ -120,7 +120,7 @@ describe("First Shipment scenario", () => {
     expect(() => parseScenario(withEvent({ ...closure, tick: "12000" }))).toThrow(ScenarioError);
     expect(() => parseScenario(withEvent({ ...closure, routeId: "Not A Route" }))).toThrow(TypeError);
     // Ranges against tick 1 and a 1-tick duration, and route existence, are checked at load (simulation's createInitialState).
-    expect(parseScenario(withEvent({ ...closure, durationTicks: 0 })).scheduledEvents[0]!.durationTicks).toBe(0);
+    expect(parseScenario(withEvent({ ...closure, durationTicks: 0 })).scheduledEvents[0]).toMatchObject({ durationTicks: 0 });
   });
 });
 
@@ -208,8 +208,8 @@ describe("the warehouse (T03b, #76)", () => {
 });
 
 describe("GAME_DATA_VERSION", () => {
-  it("is bumped for T05i and recorded in GAME_DATA", () => {
-    expect(GAME_DATA_VERSION).toBe("0.6.1-t05i-facility-kind");
+  it("is bumped for T07f and recorded in GAME_DATA", () => {
+    expect(GAME_DATA_VERSION).toBe("0.6.2-t07f-shakedown");
     expect(GAME_DATA.version).toBe(GAME_DATA_VERSION);
   });
 });

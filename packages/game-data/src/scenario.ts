@@ -29,9 +29,9 @@ import {
 } from "@eov/contracts";
 
 /**
- * A world event the scenario schedules at tick 0. Only route closures, each with
- * a duration, so M001 has no open-ended closures (ADR 0020 decision 12; an
- * open-ended closure is ended by any reopening of its route, ADR 0019).
+ * A route closure the scenario schedules at tick 0, always with a duration, so
+ * M001 has no open-ended closures (ADR 0020 decision 12; an open-ended closure is
+ * ended by any reopening of its route, ADR 0019).
  */
 export interface ScenarioRouteClosure {
   readonly kind: "ROUTE_CLOSURE";
@@ -41,9 +41,24 @@ export interface ScenarioRouteClosure {
   readonly durationTicks: number;
 }
 
-export type ScenarioScheduledEvent = ScenarioRouteClosure;
+/**
+ * A scheduled setback (issue #129): at `tick`, a loss of `netWorthSharePpm` parts
+ * per million of net worth, capped at cash. The First Shipment doesn't schedule
+ * one; the economy lab's setback scenario does. The range (1..1 000 000) is
+ * checked at load.
+ */
+export interface ScenarioShakedown {
+  readonly kind: "SHAKEDOWN";
+  readonly tick: Tick;
+  readonly reason: Extract<ScheduledWorldEvent, { kind: "SHAKEDOWN" }>["reason"];
+  readonly netWorthSharePpm: number;
+}
+
+/** A world event the scenario schedules at tick 0: a route closure or a shakedown. */
+export type ScenarioScheduledEvent = ScenarioRouteClosure | ScenarioShakedown;
 
 const CLOSURE_REASONS: readonly ScenarioRouteClosure["reason"][] = ["RIVAL", "POLICE"];
+const SCHEDULED_KINDS: readonly ScenarioScheduledEvent["kind"][] = ["ROUTE_CLOSURE", "SHAKEDOWN"];
 
 /** A Gregorian calendar day. Structurally the simulation's `CalendarDay`. */
 export interface ScenarioStartDate {
@@ -124,12 +139,21 @@ function ids<K extends Parameters<typeof asId>[0]>(kind: K, value: unknown, path
 function scheduledEvent(value: unknown, path: string): ScenarioScheduledEvent {
   const e = obj(value, path);
   const kind = str(e["kind"], `${path}.kind`);
-  if (kind !== "ROUTE_CLOSURE") throw new ScenarioError(`${path}.kind: expected ROUTE_CLOSURE, got ${kind}`);
+  if (!SCHEDULED_KINDS.some((k) => k === kind)) throw new ScenarioError(`${path}.kind: expected one of ${SCHEDULED_KINDS.join(", ")}, got ${kind}`);
   const reason = str(e["reason"], `${path}.reason`);
   const known = CLOSURE_REASONS.find((r) => r === reason);
   if (known === undefined) throw new ScenarioError(`${path}.reason: expected one of ${CLOSURE_REASONS.join(", ")}`);
+  if (kind === "SHAKEDOWN") {
+    return {
+      kind: "SHAKEDOWN",
+      tick: tick(int(e["tick"], `${path}.tick`, 0)),
+      reason: known,
+      // The range (1..1 000 000 ppm) is checked at load, like the other ranges.
+      netWorthSharePpm: int(e["netWorthSharePpm"], `${path}.netWorthSharePpm`, Number.MIN_SAFE_INTEGER),
+    };
+  }
   return {
-    kind,
+    kind: "ROUTE_CLOSURE",
     tick: tick(int(e["tick"], `${path}.tick`, 0)),
     routeId: asId("Route", str(e["routeId"], `${path}.routeId`)),
     reason: known,
