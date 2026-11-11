@@ -35,6 +35,17 @@ export type NotifyEventType = Extract<
 >;
 
 /**
+ * Notify events that get no toast: the end screen announces the outcome (#136),
+ * and #99 asks for it not to be announced twice (#147).
+ */
+export type EndScreenEventType = Extract<NotifyEventType, "VICTORY_ACHIEVED" | "GAME_LOST">;
+
+export const END_SCREEN_EVENT_TYPES: readonly EndScreenEventType[] = ["VICTORY_ACHIEVED", "GAME_LOST"];
+
+/** The notify events that get a toast. */
+export type ToastedNotifyEventType = Exclude<NotifyEventType, EndScreenEventType>;
+
+/**
  * Log events that still get a toast. EQUIPMENT_SOLD is `log` in EVENT_IMPORTANCE,
  * so it reaches the UI with the next snapshot rather than at once, but the #99
  * sign-off gives it a notification (#136).
@@ -42,7 +53,7 @@ export type NotifyEventType = Extract<
 export type LoggedToastEventType = Extract<GameEventType, "EQUIPMENT_SOLD">;
 
 /** Every event type that gets a toast. */
-export type ToastEventType = NotifyEventType | LoggedToastEventType;
+export type ToastEventType = ToastedNotifyEventType | LoggedToastEventType;
 
 /** How a toast is accented. Colour is never the only signal: the title says what happened. */
 export type ToastTone = "good" | "bad" | "neutral";
@@ -117,8 +128,11 @@ type Mapper<T extends ToastEventType> = (event: EventOfType<T>, ctx: Context) =>
 
 const isRivalRoadblock = (e: EventOfType<"ROUTE_CLOSED">) => e.routeId === RIVAL_ROAD && e.reason === "RIVAL";
 
-/** One mapper per notify event type. A Record, so a new notify event without a toast won't compile. */
-const MAPPERS: { readonly [T in NotifyEventType]: Mapper<T> } = {
+/**
+ * One mapper per notify event type, except the end screen's. A Record, so a new
+ * notify event without a toast won't compile.
+ */
+const MAPPERS: { readonly [T in ToastedNotifyEventType]: Mapper<T> } = {
   COMMAND_REJECTED: (e) => ({ tone: "bad", text: TOAST_COPY.commandRejected(COMMAND_COPY[e.commandType], describeReason(e.reason)) }),
   PRODUCTION_COMPLETED: (e, { names }) => ({
     tone: "good",
@@ -150,8 +164,6 @@ const MAPPERS: { readonly [T in NotifyEventType]: Mapper<T> } = {
   CONTRACT_COMPLETED: (e, { names }) => ({ tone: "good", text: TOAST_COPY.contractCompleted(names.contractBuyer(e.contractId)) }),
   TIER_REACHED: (e, { names }) => ({ tone: "good", text: TOAST_COPY.tierReached(names.tier(e.tierId)) }),
   UNLOCK_GRANTED: () => ({ tone: "good", text: TOAST_COPY.unlockGranted }),
-  VICTORY_ACHIEVED: () => ({ tone: "good", text: TOAST_COPY.victoryAchieved }),
-  GAME_LOST: () => ({ tone: "bad", text: TOAST_COPY.gameLost }),
 };
 
 /** The log events that get a toast anyway (see LoggedToastEventType). */
@@ -159,9 +171,9 @@ const LOGGED_MAPPERS: { readonly [T in LoggedToastEventType]: Mapper<T> } = {
   EQUIPMENT_SOLD: (e, { names }) => ({ tone: "neutral", text: TOAST_COPY.equipmentSold(names.equipment(e.facilityId, e.equipmentId), formatMoney(e.proceeds)) }),
 };
 
-export const NOTIFY_EVENT_TYPES = Object.keys(MAPPERS) as readonly NotifyEventType[];
+export const TOASTED_NOTIFY_EVENT_TYPES = Object.keys(MAPPERS) as readonly ToastedNotifyEventType[];
 
-export function isNotifyEvent(event: GameEvent): event is EventOfType<NotifyEventType> {
+function isToastedNotifyEvent(event: GameEvent): event is EventOfType<ToastedNotifyEventType> {
   return EVENT_IMPORTANCE[event.type] === "notify" && event.type in MAPPERS;
 }
 
@@ -170,12 +182,12 @@ function isLoggedToastEvent(event: GameEvent): event is EventOfType<LoggedToastE
 }
 
 function mapperFor(event: EventOfType<ToastEventType>): Mapper<ToastEventType> {
-  return (isNotifyEvent(event) ? MAPPERS[event.type] : LOGGED_MAPPERS[event.type as LoggedToastEventType]) as Mapper<ToastEventType>;
+  return (isToastedNotifyEvent(event) ? MAPPERS[event.type] : LOGGED_MAPPERS[event.type as LoggedToastEventType]) as Mapper<ToastEventType>;
 }
 
 /**
  * The toasts for one delivered batch of events, in order. Log events get none,
- * except the LoggedToastEventType ones.
+ * except the LoggedToastEventType ones, and the end screen's outcome events get none.
  * `snapshot` is the latest one the UI has; it's read for names, never kept.
  */
 export function toastsFor(events: readonly GameEvent[], snapshot: GameSnapshot | null): ToastView[] {
@@ -195,7 +207,7 @@ export function toastsFor(events: readonly GameEvent[], snapshot: GameSnapshot |
     },
   };
   return events
-    .filter((e): e is EventOfType<ToastEventType> => isNotifyEvent(e) || isLoggedToastEvent(e))
+    .filter((e): e is EventOfType<ToastEventType> => isToastedNotifyEvent(e) || isLoggedToastEvent(e))
     .map((event) => {
       const { text, tone } = mapperFor(event)(event as never, ctx);
       return { id: event.id, eventType: event.type, tone, title: text.title, body: text.body };
