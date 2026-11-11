@@ -1,11 +1,11 @@
 // Route state only for routes whose two ends the scenario occupies (T03b, #76 option 1).
 
 import { tick } from "@eov/contracts";
-import { DEPOT_ROAD, DEPOT_ROAD_RETURN, FIRST_SHIPMENT_SCENARIO, GAME_DATA, RIVERSIDE_WAREHOUSE, type ScenarioDefinition } from "@eov/game-data";
+import { DEPOT_ROAD, DEPOT_ROAD_RETURN, FIRST_SHIPMENT_SCENARIO, GAME_DATA, RIVERSIDE_WAREHOUSE, type ScenarioDefinition, type ScenarioRouteClosure } from "@eov/game-data";
 import { describe, expect, it } from "vitest";
 import { createInitialState, ScenarioSetupError } from "../../src/index.ts";
 
-const closure = FIRST_SHIPMENT_SCENARIO.scheduledEvents[0]!;
+const closure = FIRST_SHIPMENT_SCENARIO.scheduledEvents[0] as ScenarioRouteClosure;
 
 const ownsWarehouse: ScenarioDefinition = {
   ...FIRST_SHIPMENT_SCENARIO,

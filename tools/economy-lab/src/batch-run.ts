@@ -15,6 +15,9 @@
 // settlement. T07e (issue #127) judges only moderate setbacks (a loss of at least
 // `TARGETS.moderateSetbackMinPercent` of net worth) and moves the event
 // classifiers into `RunObserver` so they can be tested on crafted events.
+// T07f (issue #129) counts a scheduled SHAKEDOWN's LOSS_BOOKED as a loss event,
+// with net worth before it taken on the event's own tick, records it apart as
+// the run's `shakedown`, and stops at its tick so a strategy can react.
 //
 // At the end the run's command log is replayed on a fresh game (ADR 0004's replay
 // procedure) and the state hash compared.
@@ -84,8 +87,8 @@ export interface ProductSales {
   readonly costOfGoodsSold: Money;
 }
 
-/** What can set a run back: an event that books a loss. */
-export type SetbackKind = "SEIZURE" | "FAILED_RUN" | "PENALTY";
+/** What can set a run back: an event that books a loss. SHAKEDOWN is the setback scenario's scheduled loss (issue #129). */
+export type SetbackKind = "SEIZURE" | "FAILED_RUN" | "PENALTY" | "SHAKEDOWN";
 
 /**
  * The run's first moderate setback (issue #127): the first event that booked a
@@ -99,7 +102,7 @@ export interface Setback {
   readonly tick: number;
   /** The loss the event booked, in cents. */
   readonly loss: Money;
-  /** Net worth at the last stop before the event. */
+  /** Net worth just before the event: at the last stop before it, or for a SHAKEDOWN on the event's own tick (LOSS_BOOKED). */
   readonly netWorthBefore: Money;
   /** The first stop at which net worth was back to at least `netWorthBefore`, or null. */
   readonly recoveredAt: number | null;
@@ -147,7 +150,13 @@ export interface BatchRunResult {
   readonly spotByDay: Readonly<Record<string, readonly Money[]>>;
   /** The first moderate setback, or null. */
   readonly setback: Setback | null;
-  /** Loss events over the whole run (seizures, failed runs, penalties), of any size. */
+  /**
+   * The scenario's first scheduled SHAKEDOWN (issue #129) as it was booked, of
+   * any size (capped at cash, it can fall under the moderate threshold), with its
+   * recovery. Null when the scenario schedules none or the game ended before it.
+   */
+  readonly shakedown: Setback | null;
+  /** Loss events over the whole run (seizures, failed runs, penalties, scheduled shakedowns), of any size. */
   readonly setbackCount: number;
   /** The loss events among them that were moderate. */
   readonly moderateSetbackCount: number;
@@ -234,6 +243,8 @@ export function isModerateLoss(loss: number, netWorthBefore: number, minPercent:
   return loss * 100 >= minPercent * netWorthBefore;
 }
 
+type MutableSetback = { kind: SetbackKind; tick: number; loss: number; netWorthBefore: Money; recoveredAt: number | null };
+
 type MutableSales = { completed: number; belowCost: number; breakEven: number; units: number; revenue: number; costOfGoodsSold: number };
 
 /**
@@ -264,7 +275,8 @@ export class RunObserver {
   readonly applyRejections: Partial<Record<RejectionCode, number>> = {};
   private readonly sales = new Map<string, MutableSales>();
   private readonly settledAt = new Set<number>();
-  private first: { kind: SetbackKind; tick: number; loss: number; netWorthBefore: Money; recoveredAt: number | null } | null = null;
+  private first: MutableSetback | null = null;
+  private firstShakedown: MutableSetback | null = null;
   private lastNetWorth: Money;
   private readonly tierReached: Record<string, Milestone | null>;
   private readonly setbackMinPercent: number;
@@ -280,12 +292,12 @@ export class RunObserver {
     this.setbackMinPercent = setbackMinPercent;
   }
 
-  /** A loss booked at `tick`. Net worth before it is the last stop's. */
-  private lose(kind: SetbackKind, tick: number, loss: number): void {
+  /** A loss booked at `tick`. Net worth before it is the last stop's, unless the event reports its own. */
+  private lose(kind: SetbackKind, tick: number, loss: number, netWorthBefore: Money = this.lastNetWorth): void {
     this.setbackCount++;
-    if (!isModerateLoss(loss, this.lastNetWorth, this.setbackMinPercent)) return;
+    if (!isModerateLoss(loss, netWorthBefore, this.setbackMinPercent)) return;
     this.moderateSetbackCount++;
-    this.first ??= { kind, tick, loss, netWorthBefore: this.lastNetWorth, recoveredAt: null };
+    this.first ??= { kind, tick, loss, netWorthBefore, recoveredAt: null };
   }
 
   observe(events: readonly GameEvent[]): void {
@@ -331,6 +343,11 @@ export class RunObserver {
           this.seizures += e.bookValue;
           this.lose("SEIZURE", e.tick, e.bookValue);
           break;
+        case "LOSS_BOOKED":
+          // A scheduled SHAKEDOWN (issue #129): net worth before it is the event's, on its own tick.
+          this.firstShakedown ??= { kind: "SHAKEDOWN", tick: e.tick, loss: e.amount, netWorthBefore: e.netWorthBefore, recoveredAt: null };
+          this.lose("SHAKEDOWN", e.tick, e.amount, e.netWorthBefore);
+          break;
         case "INSTALLMENT_SETTLED":
           this.installments[e.outcome]++;
           this.penalties += e.penalty;
@@ -367,13 +384,17 @@ export class RunObserver {
 
   /** Net worth at a stop, after its events: marks the setback recovered once net worth is back to its pre-setback level. */
   atStop(tick: number, netWorth: Money): void {
-    const first = this.first;
-    if (first !== null && first.recoveredAt === null && netWorth >= first.netWorthBefore) first.recoveredAt = tick;
+    for (const s of [this.first, this.firstShakedown]) if (s !== null && s.recoveredAt === null && netWorth >= s.netWorthBefore) s.recoveredAt = tick;
     this.lastNetWorth = netWorth;
   }
 
   setback(): Setback | null {
     return this.first === null ? null : { ...this.first, loss: this.first.loss as Money };
+  }
+
+  /** The first scheduled SHAKEDOWN, of any size, or null. */
+  shakedown(): Setback | null {
+    return this.firstShakedown === null ? null : { ...this.firstShakedown, loss: this.firstShakedown.loss as Money };
   }
 
   /** Completed sales by "productId/quality", keys sorted. */
@@ -397,6 +418,8 @@ export function runBatchSeed(strategy: HeadlessStrategyName, seed: number, optio
   const invariants = options.checks?.invariants ?? checkInvariants;
   const replay = options.checks?.replay ?? replayStateHash;
   const end = days * TICKS_PER_DAY;
+  // Scheduled shakedowns are stops too, so a strategy can react to the loss (issue #129).
+  const scheduledStops = scenario.scheduledEvents.flatMap((e) => (e.kind === "SHAKEDOWN" ? [e.tick as number] : []));
 
   const first = sim.snapshot();
   const bot = createHeadlessStrategy(strategy, first, seed, data);
@@ -454,7 +477,7 @@ export function runBatchSeed(strategy: HeadlessStrategyName, seed: number, optio
     if (s.outcome.status !== "PLAYING" || s.clock.tick >= end) break;
     bot.act(gateway);
     s = stop();
-    sim.advance(nextStop(s, end, bot.wakeTicks(s)) - s.clock.tick);
+    sim.advance(nextStop(s, end, [...bot.wakeTicks(s), ...scheduledStops]) - s.clock.tick);
     s = stop();
   }
 
@@ -498,6 +521,7 @@ export function runBatchSeed(strategy: HeadlessStrategyName, seed: number, optio
     netWorthByDay,
     spotByDay,
     setback: tracker.setback(),
+    shakedown: tracker.shakedown(),
     setbackCount: tracker.setbackCount,
     moderateSetbackCount: tracker.moderateSetbackCount,
     disruptions: { routeClosures: tracker.routeClosures, shortages: tracker.shortages },

@@ -11,6 +11,7 @@ import {
   addMoney,
   compareIds,
   idempotencyKey,
+  RATIO_SCALE,
   tick,
   ZERO_MONEY,
   DYNAMIC_ID_KINDS,
@@ -58,8 +59,15 @@ function find<T extends { readonly id: string }>(list: readonly T[], id: string,
 function validateScenario(scenario: ScenarioDefinition, data: GameData): readonly UnlockId[] {
   for (const [i, event] of scenario.scheduledEvents.entries()) {
     const where = `Scenario scheduledEvents[${i}] (${event.kind})`;
-    if (!data.routes.some((r) => r.id === event.routeId)) throw new ScenarioSetupError(`${where} names unknown route ${event.routeId}`);
     if (event.tick < 1) throw new ScenarioSetupError(`${where} is at tick ${event.tick}; scheduled events start at tick 1`);
+    if (event.kind === "SHAKEDOWN") {
+      // A share of net worth: more than all of it means nothing (issue #129).
+      if (!Number.isSafeInteger(event.netWorthSharePpm) || event.netWorthSharePpm < 1 || event.netWorthSharePpm > RATIO_SCALE) {
+        throw new ScenarioSetupError(`${where} has netWorthSharePpm ${event.netWorthSharePpm}; it must be 1..${RATIO_SCALE}`);
+      }
+      continue;
+    }
+    if (!data.routes.some((r) => r.id === event.routeId)) throw new ScenarioSetupError(`${where} names unknown route ${event.routeId}`);
     if (!Number.isSafeInteger(event.durationTicks) || event.durationTicks < 1) {
       throw new ScenarioSetupError(`${where} has duration ${event.durationTicks}; it must be at least 1 tick`);
     }
@@ -91,7 +99,7 @@ function occupiedRoutes(scenario: ScenarioDefinition, data: GameData): GameData[
   for (const id of scenario.buyerIds) occupied.add(find(data.buyers, id, "buyer").locationId);
   const routes = data.routes.filter((r) => occupied.has(r.fromLocationId) && occupied.has(r.toLocationId));
   scenario.scheduledEvents.forEach((event, i) => {
-    if (!routes.some((r) => r.id === event.routeId)) {
+    if (event.kind === "ROUTE_CLOSURE" && !routes.some((r) => r.id === event.routeId)) {
       throw new ScenarioSetupError(`Scenario scheduledEvents[${i}] (${event.kind}) names route ${event.routeId}, which has an end the scenario doesn't occupy`);
     }
   });
@@ -155,7 +163,13 @@ export function createInitialState(
   };
   // The scenario's world events, in file order (ADR 0020 decision 12).
   const blank = scenario.scheduledEvents.reduce<GameState>(
-    (s, e) => scheduleWorldEvent(s, { kind: e.kind, tick: e.tick, routeId: e.routeId, reason: e.reason, durationTicks: e.durationTicks }),
+    (s, e) =>
+      scheduleWorldEvent(
+        s,
+        e.kind === "SHAKEDOWN"
+          ? { kind: e.kind, tick: e.tick, reason: e.reason, netWorthSharePpm: e.netWorthSharePpm }
+          : { kind: e.kind, tick: e.tick, routeId: e.routeId, reason: e.reason, durationTicks: e.durationTicks },
+      ),
     empty,
   );
 

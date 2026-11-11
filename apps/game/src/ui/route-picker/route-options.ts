@@ -12,8 +12,8 @@
 
 import { TICKS_PER_HOUR, type LocationId, type RouteId, type RouteSnapshot } from "@eov/contracts";
 import { ROUTES } from "@eov/game-data";
-// The contracts panel's "day 3, 18:00", reused so closures and deadlines read alike (#133).
-import { formatDayTime } from "../../panels/contracts/contracts-view.ts";
+// The shared "day 3, 18:00", so closures and deadlines read alike (#133, #142).
+import { formatDayTime } from "../format/time-format.ts";
 import { ROUTE_PICKER_COPY as C } from "./copy.ts";
 
 export type RouteSafety = "SAFE" | "RISKY";

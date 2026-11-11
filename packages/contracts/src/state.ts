@@ -332,4 +332,11 @@ export type ScheduledWorldEvent = { readonly tick: Tick; readonly sequence: numb
   | { readonly kind: "SHORTAGE_START"; readonly supplierId: SupplierId; readonly materialId: MaterialId; readonly supplyRatio: Ratio; readonly durationTicks: number }
   | { readonly kind: "SHORTAGE_END"; readonly supplierId: SupplierId; readonly materialId: MaterialId }
   | { readonly kind: "CONTRACT_OFFER"; readonly buyerId: BuyerId }
+  /**
+   * A scheduled setback (issue #129): books a loss of `netWorthSharePpm` parts per
+   * million of net worth at its tick, capped at cash, as one balanced transaction
+   * (Dr LOSSES / Cr CASH). Emits LOSS_BOOKED. Used by the economy lab's setback
+   * scenario; the First Shipment doesn't schedule one.
+   */
+  | { readonly kind: "SHAKEDOWN"; readonly reason: "RIVAL" | "POLICE"; readonly netWorthSharePpm: number }
 );

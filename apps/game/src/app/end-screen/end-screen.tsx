@@ -11,7 +11,7 @@
 // game state (CLAUDE.md rule 7).
 
 import { useEffect, useRef, useState } from "react";
-import { formatDayTime } from "../../panels/contracts/contracts-view.ts";
+import { formatDayTime } from "../../ui/format/time-format.ts";
 import { useGateway, useGatewayView, useStartNewGame } from "../../state/app-context.tsx";
 import { MoneyFigure } from "../../ui/ledger.tsx";
 import { END_SCREEN_COPY as C } from "./copy.ts";

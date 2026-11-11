@@ -54,13 +54,18 @@ export class SaveLibrary {
    * that slot's name (only its contents and saved-at time change), so a
    * player's name is never replaced by the game date. With none, or if the
    * slot has gone (deleted in another tab), saves to a new slot named
-   * `defaultLabel`. No confirmation: this is the quick save.
+   * `defaultLabel`. A slot with an empty name gets `defaultLabel` too. No
+   * confirmation: this is the quick save.
+   *
+   * Only the current slot is read, and only for its name: it's about to be
+   * overwritten, so its save isn't checked. A damaged save keeps whatever name
+   * can still be read, as the saves list shows it.
    */
   async quickSave(slot: string | null, defaultLabel: string): Promise<SavedTo> {
     if (slot === null) return this.saveNew(defaultLabel);
-    const existing = (await this.list()).find((s) => s.slot === slot);
-    if (existing === undefined) return this.saveNew(defaultLabel);
-    const label = existing.meta.label || defaultLabel;
+    const text = await this.#storage.read(slot);
+    if (text === null) return this.saveNew(defaultLabel);
+    const label = readableLabel(text) || defaultLabel;
     await this.#write(slot, label);
     return { slot, label };
   }
@@ -103,6 +108,19 @@ export class SaveLibrary {
   remove(slot: string): Promise<void> {
     return this.#storage.remove(slot);
   }
+}
+
+/** A save's `meta.label` if its text has one (else ""), without checking the rest of the save. */
+function readableLabel(text: string): string {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return "";
+  }
+  const meta = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>)["meta"] : undefined;
+  const label = typeof meta === "object" && meta !== null ? (meta as Record<string, unknown>)["label"] : undefined;
+  return typeof label === "string" ? label : "";
 }
 
 /** The save `Continue` loads: the newest one that loads, else the newest (to show why it won't), else none. */
