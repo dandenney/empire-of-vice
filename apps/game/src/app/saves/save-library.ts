@@ -1,4 +1,4 @@
-// The save/load UI's access to saves (T06a, #135): list, save, load, delete.
+// The save/load UI's access to saves (T06a, #135; T06f, #152): list, save, load, delete.
 //
 // Saving and loading go through the gateway (GatewayClient.save / .load): the
 // worker serializes and resumes, persistence wraps, checks, and stores. Before
@@ -27,6 +27,12 @@ export type LoadAttempt =
 
 export type SaveGateway = Pick<GatewayClient, "save" | "load">;
 
+/** Where a save went, and the name it has there. */
+export interface SavedTo {
+  readonly slot: string;
+  readonly label: string;
+}
+
 export class SaveLibrary {
   readonly #storage: StorageAdapter;
   readonly #gateway: SaveGateway;
@@ -43,11 +49,41 @@ export class SaveLibrary {
     return listSaves(this.#storage, this.#build);
   }
 
-  /** Saves the running game to `slot`, or to a new slot when `slot` is null. Returns the slot used. */
-  async save(label: string, slot: string | null): Promise<string> {
-    const target = slot ?? nextSlotId(await this.#storage.list());
-    await this.#gateway.save(target, label);
-    return target;
+  /**
+   * The top bar's Save (#145). With a current slot, overwrites it and keeps
+   * that slot's name (only its contents and saved-at time change), so a
+   * player's name is never replaced by the game date. With none, or if the
+   * slot has gone (deleted in another tab), saves to a new slot named
+   * `defaultLabel`. No confirmation: this is the quick save.
+   */
+  async quickSave(slot: string | null, defaultLabel: string): Promise<SavedTo> {
+    if (slot === null) return this.saveNew(defaultLabel);
+    const existing = (await this.list()).find((s) => s.slot === slot);
+    if (existing === undefined) return this.saveNew(defaultLabel);
+    const label = existing.meta.label || defaultLabel;
+    await this.#write(slot, label);
+    return { slot, label };
+  }
+
+  /**
+   * Saves the running game to a new slot named `label`, always: the label is
+   * used as given, and may repeat another slot's (slot ids stay unique).
+   */
+  async saveNew(label: string): Promise<SavedTo> {
+    const slot = nextSlotId(await this.#storage.list());
+    await this.#write(slot, label);
+    return { slot, label };
+  }
+
+  /**
+   * One save, written in a single storage write: the save text is built
+   * before storage is touched, and the adapter replaces a slot's contents in
+   * one step (one IndexedDB put, in its own transaction). So a save that
+   * fails, whether serializing or writing, leaves the slot's previous save as
+   * it was.
+   */
+  #write(slot: string, label: string): Promise<void> {
+    return this.#gateway.save(slot, label);
   }
 
   async load(slot: string): Promise<LoadAttempt> {
