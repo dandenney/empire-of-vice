@@ -7,7 +7,8 @@
 // (the outcome is sticky and the game still runs, ADR 0020 decision 8). On a
 // loss, "Start again" starts a new game through the same action as the game
 // menu's New game, which also clears the current save slot. It holds only
-// which outcome was dismissed: UI state, not game state (CLAUDE.md rule 7).
+// which outcome of which game (GatewayView.game) was dismissed: UI state, not
+// game state (CLAUDE.md rule 7).
 
 import { useEffect, useRef, useState } from "react";
 import { formatDayTime } from "../../ui/format/time-format.ts";
@@ -56,13 +57,16 @@ function Facts({ view }: { readonly view: EndScreenView }) {
 export function EndScreen() {
   const gateway = useGateway();
   const startNewGame = useStartNewGame();
-  const { snapshot } = useGatewayView();
+  const { snapshot, game } = useGatewayView();
   const view = endScreenFor(snapshot);
+  // A dismissal belongs to one outcome of one game: a new game or any load (even
+  // of the same slot, or of a save that ended at the same tick) forgets it (#147).
+  const dismissalKey = view === null ? null : `${game}:${view.key}`;
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
-  const open = view !== null && dismissed !== view.key;
+  const open = dismissalKey !== null && dismissed !== dismissalKey;
 
   // The outcome events bring the screen back, even over an earlier dismissal.
   useEffect(
@@ -82,7 +86,7 @@ export function EndScreen() {
 
   if (!view) return null;
   const text = view.kind === "victory" ? C.victory : C.loss;
-  const dismiss = () => setDismissed(view.key);
+  const dismiss = () => setDismissed(dismissalKey);
   const startAgain = async () => {
     setStarting(true);
     setError(null);
