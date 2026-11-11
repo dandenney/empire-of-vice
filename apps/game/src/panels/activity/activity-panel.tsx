@@ -6,7 +6,7 @@
 
 import { COMMON_COPY } from "../../components/copy.ts";
 import { LedgerTable, MoneyFigure } from "../../ui/ledger.tsx";
-import { formatDayTime } from "../contracts/contracts-view.ts";
+import { formatDayTime } from "../../ui/format/time-format.ts";
 import type { PanelProps } from "../registry.ts";
 import { activityRows, type ActivityRow } from "./activity-view.ts";
 import { ACTIVITY_COPY as C } from "./copy.ts";
