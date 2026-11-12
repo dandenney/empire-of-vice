@@ -14,7 +14,7 @@ ADR 0021 (decision 9) requires the dynamic half of the non-leak property for `Pl
 4. Tier gating relies on ADR 0021 decision 4.
 5. The dynamic non-leak property needs the order/outcome split.
 
-ADR 0023 (D3, written in parallel) owns the founder's state, what "present" means, travel, time costs, place hours and rest. This ADR cites those and doesn't define them.
+ADR 0023 (D3) owns the founder's state (`GameState.founder`, with whereabouts `PRESENT` / `TRAVELLING` / `ON_DELIVERY` / `RESTING`), what "present" means, travel, how a command takes time (the founder is `busy` until the activity's duration has passed), place hours, the founder as the starting driver, and rest. This ADR cites those and doesn't define them. It names the rejection reasons ADR 0023 left to it.
 
 ## Decision
 
@@ -23,7 +23,7 @@ ADR 0023 (D3, written in parallel) owns the founder's state, what "present" mean
 For each command, the gates are checked in this order, and the first failure is the rejection:
 
 1. **Shape and scheduling** (as today: `INVALID_QUANTITY`, `SCHEDULED_IN_PAST`, `UNKNOWN_ENTITY` for IDs that don't exist in game-data or the founder's own agreements).
-2. **Presence:** does the issuer have to be physically at a place for this? (Decision 3 table.)
+2. **Presence:** does the issuer have to be physically at a place for this, and are they free to act there? (Decision 3 table. This gate also covers ADR 0023's busy and opening-hours rules.)
 3. **Communication:** if the issuer isn't the one who carries it out, can the instruction reach whoever does? (Decision 4.)
 4. **Authority:** may this issuer make this decision? (Decision 5.)
 5. **Validity against what the issuer can see:** stock, prices, capacity, funds. (Decision 2.)
@@ -44,22 +44,30 @@ Each gate's rejection reason is new or existing, and each depends only on data t
 
 ### 3. Presence: what each command needs
 
-"Present at P" is ADR 0023's definition (not travelling, at place P). Under M002, every existing command is **presence-gated** for the founder. An employee acting within authority is present where they work (decision 5).
+"Present at P" is ADR 0023's definition: whereabouts `PRESENT` at P (busy or not), plus the arrival tick of a delivery the founder rides. Under M002, every existing command is **presence-gated** for the founder. An employee acting within authority is present where they work (decision 5).
 
 | Command | Founder must be present at | Checks moved out of the immediate result (decision 2) | Outcome |
 |---|---|---|---|
-| `PURCHASE_MATERIALS` | The supplier | None: the supplier is the live view. Where the goods go and storage space are ADR 0023's (carried goods) | Immediate, as in M001 |
+| `PURCHASE_MATERIALS` | The supplier, open (ADR 0023 hours) | None: the supplier is the live view, and M001 doesn't check storage for materials. The goods go straight into the named facility's raw stock, as in M001, delivered by the supplier. The founder carries only the purse (ADR 0023). The purchase is the founder's own transaction, so it's known. The facility's `FACILITY_STOCK` record updates on the next visit | Immediate, as in M001 |
 | `START_PRODUCTION` | The facility | None | Job completes or fails later (ADR 0017), plus decision 7's cost move |
-| `DISPATCH_DELIVERY` | The facility where the truck is, as its driver (ADR 0023: the founder rides with the truck), unless a hired driver takes it (ADR 0025) | `QUOTE_CHANGED`, `BUYER_WILL_TAKE_LESS` and `PRODUCT_NOT_WANTED` against a buyer elsewhere; `ROUTE_CLOSED` for a route outside the live view | Arrival at the buyer (decision 6) |
-| `ACCEPT_CONTRACT` | The buyer (or a phone call with them: ADR 0024) | None: acceptance reserves stock where it finds it but is never rejected for stock (ADR 0018 decision 4), and the reservations show only in `FACILITY_STOCK`, which isn't observed remotely | Remote reservations, unseen until visited |
+| `DISPATCH_DELIVERY` | The facility where the truck is parked, not busy, as its driver (`driverCharacterId`, ADR 0023 decision 5). The founder then rides the whole round trip. A hired Driver can drive instead (ADR 0025) | `QUOTE_CHANGED`, `BUYER_WILL_TAKE_LESS` and `PRODUCT_NOT_WANTED` against a buyer elsewhere; `ROUTE_CLOSED` for a route outside the live view | Arrival at the buyer (decision 6) |
+| `ACCEPT_CONTRACT` | The buyer, open (or a phone call with them: ADR 0024) | None: acceptance reserves stock where it finds it but is never rejected for stock (ADR 0018 decision 4), and the reservations show only in `FACILITY_STOCK`, which isn't observed remotely | Remote reservations, unseen until visited |
 | `PURCHASE_EQUIPMENT`, `SELL_EQUIPMENT` | The facility | None. Tier gating reads the world, which agrees with known `STANDING` whenever the founder is present (ADR 0021 decision 4) | Immediate |
 | `SET_WORKFORCE` | The facility | None | Immediate |
 | `RELEASE_RESERVATION` | The facility holding the reservation | None | Immediate |
 | `REPEAT_OPERATION` | Whatever the repeated command needs | As for that command | As for that command |
-| `AGREE_DEAL` (new, decision 6) | The buyer (or a phone call: ADR 0024) | None | A held deal |
+| `AGREE_DEAL` (new, decision 6) | The buyer, open (or a phone call: ADR 0024) | None | A held deal |
 | Founder travel and rest (ADR 0023) | Defined there | — | — |
 
-**`NOT_PRESENT { requiredLocationId, issuerLocationId | null }`** is the new rejection when presence fails. It reveals nothing: the founder always knows where they are.
+The presence gate's rejections all reveal nothing, because the founder's whereabouts, the hours and their own trucks' parking are always known (ADR 0021 decision 3, ADR 0023):
+
+- **`NOT_PRESENT { requiredLocationId, issuerLocationId | null }`**: not at the place (travelling, riding or resting count as not present).
+- **`FOUNDER_BUSY { until }`**: a timed activity is still running (ADR 0023 decision 4). Instant actions at the same place are still allowed.
+- **`PLACE_CLOSED { locationId, opensAt }`**: an activity with the party (buying, negotiating, accepting) must start during their hours (ADR 0023). Working at your own facility isn't hours-gated.
+- **`VEHICLE_NOT_AT { vehicleId, locationId }`**: the truck isn't parked at the cargo's facility (ADR 0023 decision 5).
+- **`NO_DRIVER { vehicleId }`**: the named driver can't drive (not the founder present there, and not a hired Driver stationed there).
+
+Tiredness never causes a rejection (ADR 0023: it only stretches durations).
 
 **A presence check moves a world check into the live view; it doesn't remove it.** `INSUFFICIENT_STOCK`, `STORAGE_CAPACITY_EXCEEDED`, `SUPPLIER_STOCK_LOW` and the rest keep their meaning. They're now always evaluated against a place the founder can see.
 
@@ -97,7 +105,8 @@ ADR 0005 struck a sale's deal at dispatch: quantity and price fixed, buyer deman
   - **On spec (no deal):** nothing is checked against the buyer at dispatch. On arrival the buyer takes `min(cargo, demandRemaining, floor(budgetRemaining / quote))` at **that day's quote**: the ECO-001 liquidity formula, applied when the truck gets there. The rest of the cargo comes home on the return leg (ADR 0019's return path). It emits **`SPEC_SALE_SETTLED { deliveryId, buyerId, offered, accepted, unitPrice }`** and, if `accepted` is 0, `DEAL_FELL_THROUGH { reason: "NOT_WANTED" }`.
 - **Which comes first in play.** Early on the founder drives every load, so on spec is the natural first path: drive to Kessler's, he takes what he wants at today's price. A held deal is how a phone (or a stop at the buyer) removes that risk later. That's GDD §16's "the order of the day matters".
 - **`CONTRACT_INSTALLMENT` and `TRANSFER` dispatches are unchanged.** They act on agreements and owned places.
-- **Route condition at dispatch.** `ROUTE_CLOSED` is rejected immediately only if the route is in the live view (ADR 0021 `LIVE_VIEW_ROUTES`; by default every route out of the founder's place) or is known closed. Otherwise the truck sets out, and a closure is found as an outcome: **`ROUTE_FOUND_CLOSED { deliveryId, routeId }`** turns the truck back on the return leg, and the trip reveals the route's condition (ADR 0021 decision 5, travel). With the default table this can't happen for the founder's own departures, but game-data may narrow the table.
+- **Route condition at dispatch.** `ROUTE_CLOSED` is rejected immediately only if the route is in the live view (ADR 0021 `LIVE_VIEW_ROUTES`; by default every route out of the founder's place) or is known closed. Otherwise the truck sets out, and a closure is found as an outcome: **`ROUTE_FOUND_CLOSED { deliveryId, routeId }`** turns the truck back on the return leg, and the trip reveals the route's condition (ADR 0021 decision 5, travel). This matches ADR 0023's rule for the founder's own travel (a vehicle halts at a closure the founder can see). With the default table it can't happen for a departure the founder drives, but it can for a hired Driver's runs (ADR 0025), or if game-data narrows the table.
+- **Arrivals at any hour.** Deliveries arrive whenever the road gets them there (ADR 0023). On-spec and deal settlement happen on arrival whatever the hour. A founder riding the truck is present for it, so the result is known.
 
 ### 7. Production's conversion cost is paid when the job starts
 
@@ -119,7 +128,7 @@ Today a job pays its conversion cost (`laborPerCase` + `overheadPerCase`, ADR 00
 
 ### 9. Rejection reasons: what's new and what changes
 
-- **New:** `NOT_PRESENT`, `NO_WAY_TO_REACH`, `OUTSIDE_AUTHORITY`, `CARGO_DOES_NOT_MATCH_DEAL`, `DEAL_UNAVAILABLE { dealId }` (expired or used).
+- **New:** `NOT_PRESENT`, `FOUNDER_BUSY`, `PLACE_CLOSED`, `VEHICLE_NOT_AT`, `NO_DRIVER` (decision 3); `NO_WAY_TO_REACH`, `OUTSIDE_AUTHORITY`; `CARGO_DOES_NOT_MATCH_DEAL`, `DEAL_UNAVAILABLE { dealId }` (expired or used). This is the list ADR 0023's contract task takes its reasons from.
 - **Moved to `AGREE_DEAL` only:** `QUOTE_CHANGED`, `BUYER_WILL_TAKE_LESS`, `PRODUCT_NOT_WANTED`.
 - **Now limited to the live view or known state:** `ROUTE_CLOSED` (decision 6).
 - **Unchanged, now always about a place the founder can see:** every stock, capacity, funds and equipment reason.
@@ -135,7 +144,7 @@ A test enumerates every `RejectionCode` and, for each command that can produce i
 
   The contract task and SK1 own the re-locks. The M001 scenario stays playable through ADR 0021's migration and ADR 0023's founder placement. Its locked tests are re-locked under the M002 rules rather than kept for both.
 - The ECO-001 liquidity formula moves from dispatch to arrival for on-spec runs, so a run can bring cargo home. That's ADR 0019's return path, already built for failed deals.
-- **The economy lab bots** must issue the founder's travel (ADR 0023) and deal commands to play. T-LAB (#184) owns that. Until then, the lab keeps running the M001 scenario in a compatibility mode that treats the founder as present everywhere. That mode exists only in the lab harness, never in the game.
+- **The economy lab bots** must issue the founder's travel (ADR 0023) and deal commands to play. T-LAB (#184) owns that. Until then, the lab runs the M001 scenario with ADR 0023's scenario flag turning the founder rules off. With the flag off, the presence gate passes everywhere, and validation reads the world as in M001. The M002 scenario turns the flag on, so this mode never reaches the game.
 - **Phones (ADR 0024) plug in at two points:** `AGREE_DEAL` and `ACCEPT_CONTRACT` by call, and the communication gate. **Employees (ADR 0025)** plug in at the issuer field and the authority gate.
 - A founder who arrives with cargo nobody wanted learns it on the spot: that's the risk GDD §16 asks for, and a held deal is the way to buy it down.
 
