@@ -266,7 +266,7 @@ The property: from any reachable state, if from tick `now` the player issues onl
 - **With `founderRules: false`**, the founder state still exists (the save shape is the same), but it never gates anything and **never changes**:
   - ADR 0022's presence gate passes everywhere, deliveries need no driver, and no command takes the founder's time.
   - A dispatch with `driver: FOUNDER` doesn't put the founder aboard.
-  - `TRAVEL`, `REST` and `WAKE` are rejected (`LOCKED`, the existing reason for unavailable features).
+  - `TRAVEL`, `REST` and `WAKE` apply as no-ops: they're accepted, change no state, and post no transaction. `LOCKED` doesn't fit, because it carries an `unlockId`, and a no-op needs no new reason.
   - The founder phase does nothing.
 
   So a migrated or lab M001 run plays exactly as today. Its state differs only by the new fields. Because of those fields, the Sprint Zero and fixture state hashes still move, and the contract task regenerates them (alongside ADR 0022's per-trip RNG change, which SK1 owns). That's ADR 0022's lab mode, and it never reaches the M002 game.
