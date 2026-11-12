@@ -271,7 +271,7 @@ The producer coverage test (ADR 0021 decision 11, K1 #188) includes these rows.
   - `ProductionJobState.conversionPrepaid: Money | null`;
   - `VehicleState.tripCount`;
   - the `Deal` counter.
-- `events.ts`: `DEAL_AGREED`, `DEAL_EXPIRED`, `SPEC_SALE_SETTLED`, `ROUTE_FOUND_CLOSED`, plus the `DEAL_FELL_THROUGH` reasons `NOT_WANTED` and `CONTRACT_CLOSED`.
+- `events.ts`: `DEAL_AGREED`, `DEAL_EXPIRED`, `SPEC_SALE_SETTLED`, `ROUTE_FOUND_CLOSED`, plus the `DEAL_FELL_THROUGH` reasons `NOT_WANTED`, `CONTRACT_CLOSED` and `ROUTE_CLOSED`. Terminal deal states are carried by these events only, since `heldDeals` prunes them.
 - `ledger.ts`: the account `PRODUCTION_IN_PROGRESS` (asset), and the kind `PRODUCTION_START`, with cash-flow default `WAGES`.
 - `snapshot.ts`: `BalanceSheet.assets.productionInProgress`.
 - The `IssuerView` interface (simulation-internal, but named here so the review can check it).
