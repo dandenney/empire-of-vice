@@ -141,7 +141,7 @@ A source never reveals more than the table allows, and the channel copies the wo
 
 **Classifying transactions.** Whether a ledger transaction is known is decided **per transaction**, not per `TransactionKind`. A kind doesn't determine whether a transaction moves cash: wages accrue without a cash line when cash is 0, for example.
 
-1. **Known at once:** posted at game creation, or caused by the founder's own command, or posted at the founder's place while they're present.
+1. **Known at once:** posted at game creation, or caused by the founder's own command, or posted at the founder's place while they're present. This last test applies only to transactions concerning a place. Ones with no place (the day's summed wage and overhead charges, say) go on to rules 2 and 3.
 2. **Otherwise, if it has a CASH entry, it's a cash posting:** known, and a channel for its cause (the table below).
 3. **Otherwise, if it has entries,** it goes into `pendingBooks` (decision 7).
 4. **Transactions with no entries never appear in the player's books.** They aren't money lines (the finance ledger already skips `PROGRESSION`). What they report (offers, route closures, shortages, delays, the market cycle) reaches the player only through records, news and activity.
@@ -152,12 +152,14 @@ A source never reveals more than the table allows, and the channel copies the wo
 |---|---|---|
 | Installment penalty paid at the deadline (ADR 0018 decision 7) | `INSTALLMENT_SETTLEMENT` | `CONTRACT_PROGRESS` for that contract |
 | Penalty paydown at midnight (ADR 0018 decision 8) | `DAILY_SETTLEMENT` | Nothing new. The accrued penalty is already known, because the installment's settlement revealed `CONTRACT_PROGRESS` (above) |
-| Payroll and overhead at midnight (ADR 0017 decision 9) | `DAILY_SETTLEMENT` | Nothing new. Wages and overhead are agreed amounts. If production state changes them, `FACILITY_OPERATIONS` for that facility |
+| Payroll paydown at midnight (`DAILY_SETTLEMENT:PAYROLL`, ADR 0017 decision 9) | `DAILY_SETTLEMENT` | Nothing new: it pays down agreed wages already known |
 | Truck home: transport cost (ADR 0019 decision 2) | `VEHICLE_RETURN` | `VEHICLE_WHEREABOUTS` for that truck, plus news of a failed deal if cargo came home (decision 7). The whole transaction is known, including any cargo booked back into stock, but not the rest of the home facility's `FACILITY_STOCK` |
 | Sale proceeds on arrival | `SALE` | `CONTRACT_PROGRESS` if it was an installment, `VEHICLE_WHEREABOUTS`, and the sale itself as activity. In M002 the founder is usually on the truck, so they're present anyway |
 | A shakedown (T07f) | `LOSS` | The shakedown, as news |
+| A production job completing or failing, conversion cost paid from cash (`settleJob` → `conversionPosting`, ADR 0017) | `PRODUCTION`, `PRODUCTION_WRITE_OFF` | `FACILITY_OPERATIONS` and `FACILITY_STOCK` of that facility |
+| Wages and overhead charged at midnight (`DAILY_SETTLEMENT:WAGES` / `:OVERHEAD`) | `DAILY_SETTLEMENT` | Nothing new: agreed amounts, summed over facilities. Known at once even with no cash leg (decision 7) |
 
-A new producer of away-from-founder cash postings has to add its row to this table. The coverage test runs over the transaction **producers** (identified by idempotency-key family, such as `DAILY_SETTLEMENT:PAYROLL`), not over `TransactionKind`. It fails for any producer that can post without a founder command and has no row here or in decision 7's table.
+A new producer of away-from-founder cash postings has to add its row to this table. The coverage test runs over the transaction **producers** (identified by idempotency-key family, such as `DAILY_SETTLEMENT:PAYROLL`), not over `TransactionKind`. A producer needs a row **in each table it can post to**: one that can post with or without a cash leg (production, installment settlement, `VEHICLE_RETURN`) needs a row in both, and the test fails for any missing one.
 
 ### 7. Catching up, news, and the books
 
@@ -185,11 +187,11 @@ interface KnowledgeState {
 
 | Producer (idempotency-key family) | Concerns |
 |---|---|
-| A production job completing or failing (`PRODUCTION`, `PRODUCTION_WRITE_OFF`) | `FACILITY_STOCK` of that facility |
+| A production job completing or failing with no cash leg (cash 0 at settlement) | `FACILITY_STOCK` of that facility |
 | An installment settling with no cash leg (penalty accrued while cash is 0) | `CONTRACT_PROGRESS` of that contract |
-| Wages or overhead accrued with no cash leg (`DAILY_SETTLEMENT:PAYROLL` / `OVERHEAD` at cash 0) | `FACILITY_OPERATIONS` of that facility |
 | A truck home with no cash leg (`VEHICLE_RETURN` at cash 0) | `VEHICLE_WHEREABOUTS` of that truck |
-| Cargo lost or moved on a road (`CARGO_LOSS`, `TRANSFER`) | News at the delivery's origin facility |
+| Cargo lost on a road (`CARGO_LOSS`) | News at the delivery's origin facility |
+| Cargo moved between owned places (`TRANSFER`) | `FACILITY_STOCK` of the destination facility, where the cases land |
 | Any other producer that can post entries without a founder command | Must be added here; the producer coverage test applies |
 
 Rows with no entries never reach the books (decision 6 rule 4), so offers, closures, shortages, delays, reservations with no entries and `PROGRESSION` rows don't need rows here.
@@ -266,7 +268,9 @@ Founder fields (ADR 0023), order and outcome shapes (ADR 0022), and phone and re
 
 - The M001 UI panels can't render a `PlayerSnapshot` without changes. Until K2 (#177) moves them over, the walking skeleton (SK2) uses new scene and ledger views, and the old panels stay on the world snapshot in the dev-only debug view. The non-leak property only applies once the UI reads `PlayerSnapshot` alone, which is K2's acceptance criterion.
 - The economy lab keeps working against the world snapshot until T-LAB (#184) moves its bots to `playerSnapshot()`. After that, bot results measure play under fog.
+- **Production pays its conversion cost in cash when a job settles (ADR 0017), so under this ADR a finished or failed batch is known at once, from anywhere** (decision 6). That contradicts GDD §17, which lists production progress as something to observe ("Since Monday: 20 cases finished"). **ADR 0022 must fix it**, by charging the conversion cost when the job starts (the founder is present to start it) or by accruing it to a payable settled in person. Once it does, production completion becomes a non-cash posting and falls under decision 7's production row. Until then, SK1 follows this ADR as written.
 - Cash postings as a channel mean a missed installment that costs a penalty is known at its deadline. That's the honest result of "the purse is always known". If playtests want contract fog to last longer, ADR 0022/0025 can move away-from-founder postings to payables, as decision 3 allows.
 - Every new subject kind or source later (place discovery, rival intel, informants, unreliable reports) extends the tables in decisions 4, 6 and 7, instead of adding a parallel system. Unreliable reports will need records whose value differs from the world; the `source` field is where trust attaches.
 - Building the live view costs one projection of one place per player snapshot, plus persisting it once per tick. That's cheap at M002's sizes. If it shows up in profiles, persisting can skip ticks where that place's state didn't change. The result is the same.
 - The world snapshot's `blockedBy` and the player snapshot's `blockedBy` can disagree, and that's intended. ADR 0022 decides how commands deal with it.
+- The `routes` RNG stream is shared, so a hidden truck's draws can change the outcome of a trip the founder is on. The dynamic property allows that (the founder learns the outcome through a channel), but it's a hidden coupling. K2 or ADR 0022 may give each trip its own stream.
