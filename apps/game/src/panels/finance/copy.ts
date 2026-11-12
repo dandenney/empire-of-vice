@@ -72,6 +72,7 @@ export const CASH_FLOW_COPY: Readonly<Record<CashFlowCategory, string>> = {
   OVERHEAD: "Overhead",
   TRANSPORT: "Transport",
   PENALTIES: "Penalties",
+  LOSSES: "Losses",
 };
 
 export const TRANSACTION_KIND_COPY: Readonly<Record<TransactionKind, string>> = {
@@ -89,6 +90,7 @@ export const TRANSACTION_KIND_COPY: Readonly<Record<TransactionKind, string>> = 
   RESERVATION: "Reservation",
   ASSET_SALE: "Asset sale",
   VEHICLE_RETURN: "Truck returned",
+  LOSS: "Loss",
   // Internal label the type needs; the transactions table skips PROGRESSION rows,
   // so no screen shows it (ADR 0020 decision 14).
   PROGRESSION: "Progression",

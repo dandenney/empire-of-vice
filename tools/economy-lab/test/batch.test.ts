@@ -306,16 +306,16 @@ describe("run observer (#127)", () => {
   });
 
   it("runBatchSeed computes recoveredAt as the first stop back at the pre-setback net worth", () => {
-    // Market Opportunist seed 4 loses one small cargo to a seizure on the risky route (as of game-data at #127).
+    // Market Opportunist seed 10 loses one small cargo to a seizure on the risky route (as of game-data at #159; it was seed 4 at #127).
     const stops: { tick: number; netWorth: number }[] = [];
     const record = (s: GameSnapshot): void => void stops.push({ tick: s.clock.tick, netWorth: s.finance.netWorth });
     // At the default threshold the seizure is too small to judge.
-    const plain = runBatchSeed("market-opportunist", 4);
+    const plain = runBatchSeed("market-opportunist", 10);
     expect(plain.setbackCount).toBeGreaterThan(0);
     expect(plain.moderateSetbackCount).toBe(0);
     expect(plain.setback).toBeNull();
     // With the threshold at 0 every loss is judged; check the recorded values against the stops.
-    const r = runBatchSeed("market-opportunist", 4, { setbackMinPercent: 0, onStop: record });
+    const r = runBatchSeed("market-opportunist", 10, { setbackMinPercent: 0, onStop: record });
     const sb = r.setback!;
     expect(sb).not.toBeNull();
     const i = stops.findIndex((s) => s.tick >= sb.tick);
@@ -350,6 +350,19 @@ describe("scheduled setbacks (#129)", () => {
     expect(m.setback()).toEqual({ kind: "SHAKEDOWN", tick: 20, loss: 40_000, netWorthBefore: 200_000, recoveredAt: null });
     expect(m.shakedown()!.tick).toBe(20);
     expect(m.setbackCount).toBe(2);
+  });
+
+  it("a shakedown that took nothing is recorded but isn't a loss event, even at net worth ≤ 0 (#156 review, N1)", () => {
+    const o = new RunObserver({}, -5_000 as Money);
+    o.observe([lossBooked(20, 0, -5_000, 0)]);
+    expect([o.setbackCount, o.moderateSetbackCount]).toEqual([0, 0]);
+    expect(o.setback()).toBeNull();
+    expect(o.shakedown()).toEqual({ kind: "SHAKEDOWN", tick: 20, loss: 0, netWorthBefore: -5_000, recoveredAt: null });
+    // Capped at no cash on a positive net worth: the same.
+    const c = new RunObserver({}, 100_000 as Money);
+    c.observe([lossBooked(20, 0, 100_000, 16_000)]);
+    expect([c.setbackCount, c.moderateSetbackCount]).toEqual([0, 0]);
+    expect(c.shakedown()!.loss).toBe(0);
   });
 
   it("the setback scenario is the First Shipment plus one moderate SHAKEDOWN on a fixed day", () => {

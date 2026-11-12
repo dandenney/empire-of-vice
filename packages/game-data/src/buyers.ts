@@ -59,7 +59,7 @@ export const BUYERS: readonly BuyerDefinition[] = [
     flavor: "Sawdust floors, a piano missing keys, and a proprietor who counts his cash twice before spending it.",
     locationId: CROSSROADS, // PLACEHOLDER (story)
     minimumReputation: 0, // PLACEHOLDER (tuning; T07a validates)
-    dailyBudget: cents(15_000), // PLACEHOLDER (tuning; T07a validates)
+    dailyBudget: cents(16_000), // PLACEHOLDER (tuning; T07h raised it from $150 so a five-case basic deal still fits at the higher basic price; T07a validates)
     // wants[0] stays basic moonshine: the T02b locked test reads it.
     wants: [
       { productId: MOONSHINE, minimumQuality: "basic", priceRatio: ratio(1_000_000), dailyDemand: 12 }, // PLACEHOLDER (tuning; T07a validates)
@@ -85,7 +85,7 @@ export const BUYERS: readonly BuyerDefinition[] = [
     minimumReputation: 20, // PLACEHOLDER (T05g tuned; T07 tunes next)
     dailyBudget: cents(60_000), // PLACEHOLDER (T05g tuned; T07 tunes next)
     wants: [
-      { productId: MOONSHINE, minimumQuality: "standard", priceRatio: ratio(1_225_000), dailyDemand: 10 }, // PLACEHOLDER (T07d tuned ratio: the best standard quote)
+      { productId: MOONSHINE, minimumQuality: "standard", priceRatio: ratio(1_260_000), dailyDemand: 10 }, // PLACEHOLDER (T07d tuned ratio: the best standard quote; T07h raised it from 1.225 to keep quality-specialist level with the others)
     ],
   },
 ];

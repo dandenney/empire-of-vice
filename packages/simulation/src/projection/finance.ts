@@ -68,6 +68,7 @@ const CASH_FLOW_ORDER: readonly CashFlowCategory[] = [
   "OVERHEAD",
   "TRANSPORT",
   "PENALTIES",
+  "LOSSES",
 ];
 
 /** ADR 0015: the cash flow category of each non-cash account that has one. */
@@ -106,6 +107,8 @@ const CASH_FLOW_CATEGORY: Readonly<Record<TransactionKind, CashFlowCategory | nu
   ASSET_SALE: "ASSET_SALES",
   // A truck getting home pays its trip's transport cost (ADR 0019 decision 2).
   VEHICLE_RETURN: "TRANSPORT",
+  // A shakedown's cash (Dr LOSSES / Cr CASH; LOSSES has no account category), issue #159.
+  LOSS: "LOSSES",
   // Reputation, tier, unlock, and outcome rows never have entries (ADR 0020 decision 14).
   PROGRESSION: null,
 };

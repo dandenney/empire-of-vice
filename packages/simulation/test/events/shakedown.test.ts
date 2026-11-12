@@ -1,6 +1,6 @@
 // The SHAKEDOWN scheduled world event (T07f, issue #129).
 
-import { cents, gameStateSchema, tick, type EventOfType, type GameState, type LedgerTransaction } from "@eov/contracts";
+import { cents, gameStateSchema, tick, TICKS_PER_DAY, type EventOfType, type GameState, type LedgerTransaction } from "@eov/contracts";
 import { FIRST_SHIPMENT_SCENARIO, GAME_DATA, type ScenarioDefinition, type ScenarioShakedown } from "@eov/game-data";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
@@ -32,8 +32,10 @@ const shakedown = (netWorthSharePpm: number, patch: Partial<ScenarioShakedown> =
   ...patch,
 });
 
+/** The First Shipment with its building pinned at $800, so the sheet these tests assume doesn't move with tuning (#159 set it to $100). */
 const scenarioWith = (...events: ScenarioShakedown[]): ScenarioDefinition => ({
   ...FIRST_SHIPMENT_SCENARIO,
+  openingBalance: { ...FIRST_SHIPMENT_SCENARIO.openingBalance, buildings: cents(80_000) },
   scheduledEvents: [...FIRST_SHIPMENT_SCENARIO.scheduledEvents, ...events],
 });
 
@@ -67,7 +69,7 @@ describe("SHAKEDOWN", () => {
     // $2,500 × 15% = $375.
     expect(e).toMatchObject({ tick: AT, causedBy: null, reason: "RIVAL", assessed: cents(37_500), amount: cents(37_500), netWorthBefore: OPENING_NET_WORTH });
     const tx = txOf(sim.state, e!.transactionId);
-    expect(tx).toMatchObject({ tick: AT, kind: "DAILY_SETTLEMENT", idempotencyKey: `DAILY_SETTLEMENT:SHAKEDOWN:RIVAL:${AT}:2`, eventIds: [e!.id] });
+    expect(tx).toMatchObject({ tick: AT, kind: "LOSS", idempotencyKey: `LOSS:SHAKEDOWN:RIVAL:${AT}:2`, eventIds: [e!.id] });
     expect(tx.entries).toEqual([
       { account: "LOSSES", side: "DEBIT", amount: cents(37_500) },
       { account: "CASH", side: "CREDIT", amount: cents(37_500) },
@@ -76,6 +78,16 @@ describe("SHAKEDOWN", () => {
     expect(balanceSheet(sim.state).netWorth).toBe(balanceSheet(before).netWorth - 37_500);
     expect(checkInvariants(sim.state, tx)).toEqual([]);
     expect(sim.state.scheduledEvents.some((x) => x.kind === "SHAKEDOWN")).toBe(false);
+  });
+
+  it("files the cash it takes on the LOSSES cash flow line, as the income statement does (#159)", () => {
+    const { sim } = runTo(scenarioWith(shakedown(150_000)));
+    const today = sim.snapshot().finance.today;
+    const line = (category: string) => today.cashFlow.lines.find((l) => l.category === category)?.amount;
+    expect(line("LOSSES")).toBe(-37_500);
+    expect(line("WAGES")).toBe(0);
+    expect(today.cashFlow.netChange).toBe(-37_500);
+    expect(today.profit.expenses.find((e) => e.category === "LOSSES")?.amount).toBe(37_500);
   });
 
   it("rounds once, half away from zero, in integer cents", () => {
@@ -186,15 +198,20 @@ describe("SHAKEDOWN properties", () => {
     );
   });
 
-  it("books min(cash, assessment) as one balanced transaction on any tick and share, deterministically", () => {
+  it("books min(cash, assessment) as one balanced transaction on any tick, share and balance sheet, deterministically", () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 1, max: 1_000_000 }),
-        // Before the first midnight, so nothing else moves money on the tick.
-        fc.integer({ min: 1, max: 1_439 }),
+        // Any tick over the first five days but a midnight, so nothing else moves money on the tick. Midnights
+        // before it pay wages and overhead (accruing what cash can't cover), so cash and net worth vary (#159, N2).
+        fc.integer({ min: 1, max: 5 * TICKS_PER_DAY - 1 }).filter((t) => t % TICKS_PER_DAY !== 0),
         fc.constantFrom<ScenarioShakedown["reason"]>("RIVAL", "POLICE"),
-        (ppm, at, reason) => {
-          const scenario = scenarioWith(shakedown(ppm, { tick: tick(at), reason }));
+        // The opening balance sheet: from no cash at all to well past the First Shipment's.
+        fc.integer({ min: 0, max: 5_000_000 }),
+        fc.integer({ min: 0, max: 500_000 }),
+        (ppm, at, reason, cash0, buildings) => {
+          const base = scenarioWith(shakedown(ppm, { tick: tick(at), reason }));
+          const scenario: ScenarioDefinition = { ...base, openingBalance: { cash: cents(cash0), buildings: cents(buildings) } };
           const run = () => {
             const sim = newGame({ scenario });
             sim.advance(at - 1);
@@ -205,6 +222,12 @@ describe("SHAKEDOWN properties", () => {
           };
           const { sim, before, events } = run();
           const booked = events.filter((e): e is EventOfType<"LOSS_BOOKED"> => e.type === "LOSS_BOOKED");
+          if (before.outcome.status !== "PLAYING") {
+            // The game ended first (insolvent at a midnight): a no-op, with no transaction.
+            expect(booked).toEqual([]);
+            expect(sim.state.ledger.transactions.length).toBe(before.ledger.transactions.length);
+            return;
+          }
           expect(booked).toHaveLength(1);
           const e = booked[0]!;
           const nw = balanceSheet(before).netWorth;
@@ -226,11 +249,13 @@ describe("SHAKEDOWN properties", () => {
           expect(cashBalance(sim.state)).toBeGreaterThanOrEqual(0);
           expect(balanceSheet(sim.state).netWorth).toBe(nw - e.amount);
           expect(checkInvariants(sim.state, tx)).toEqual([]);
+          // Its cash is on the LOSSES cash flow line (#159); nothing else posts to LOSSES here.
+          expect(sim.snapshot().finance.today.cashFlow.lines.find((l) => l.category === "LOSSES")?.amount).toBe(e.amount === 0 ? 0 : -e.amount);
           // Same inputs, same state.
           expect(run().sim.stateHash()).toBe(sim.stateHash());
         },
       ),
-      { numRuns: 40 },
+      { numRuns: 60 },
     );
   });
 });

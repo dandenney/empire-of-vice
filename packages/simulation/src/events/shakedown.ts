@@ -5,12 +5,10 @@
 // balanced transaction (Dr LOSSES / Cr CASH) and emits LOSS_BOOKED. The share is
 // integer ppm math on integer cents, rounded once (half away from zero, ADR 0002).
 //
-// The transaction is a DAILY_SETTLEMENT keyed `DAILY_SETTLEMENT:SHAKEDOWN:…`, the
-// kind every other world event handler commits under. A dedicated kind would be a
-// TransactionKind contract change, and the game's finance panel labels every kind
-// (player-facing copy), so it's left out of #129. One consequence: LOSSES has no
-// cash flow category (ADR 0015), so the cash falls back to DAILY_SETTLEMENT's
-// default line, WAGES. The income statement shows it under LOSSES.
+// The transaction is a LOSS keyed `LOSS:SHAKEDOWN:…`. T07f posted it as a
+// DAILY_SETTLEMENT, which put the cash on the WAGES cash flow line; #159 gives it
+// its own kind, whose cash flow default is LOSSES (ADR 0015), so the cash flow
+// statement and the income statement both show it under LOSSES.
 //
 // Capping at cash (orchestrator decision on #129) keeps it one atomic transaction
 // with no new liability: cash never goes negative (FIN-001). Net worth at or below
@@ -34,8 +32,8 @@ export function registerShakedown(registry: SystemRegistry, _data: GameData, coo
   registry.onWorldEvent("SHAKEDOWN", (state: GameState, event, ctx) => {
     if (state.outcome.status !== "PLAYING") return state;
     const tx = coordinator.begin(state, {
-      kind: "DAILY_SETTLEMENT",
-      idempotencyKey: idempotencyKey("DAILY_SETTLEMENT", "SHAKEDOWN", event.reason, ctx.tick, event.sequence),
+      kind: "LOSS",
+      idempotencyKey: idempotencyKey("LOSS", "SHAKEDOWN", event.reason, ctx.tick, event.sequence),
       tick: ctx.tick,
       causedBy: null,
     });

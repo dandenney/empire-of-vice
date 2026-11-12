@@ -29,7 +29,7 @@ export const PRODUCTS: readonly ProductDefinition[] = [
   {
     id: MOONSHINE,
     name: "Moonshine",
-    basePrice: { basic: cents(2_710), standard: cents(3_600), premium: cents(7_200) }, // PLACEHOLDER (T07d tuned basic and standard: four viable strategies)
+    basePrice: { basic: cents(3_120), standard: cents(3_860), premium: cents(7_200) }, // PLACEHOLDER (T07d tuned basic and standard: four viable strategies; T07h raised both to make up the $700 taken off the building and keep victory near 28.5 min)
   },
   {
     id: WHISKEY,

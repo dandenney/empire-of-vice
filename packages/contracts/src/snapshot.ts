@@ -176,7 +176,8 @@ export type CashFlowCategory =
   | "WAGES"
   | "OVERHEAD"
   | "TRANSPORT"
-  | "PENALTIES";
+  | "PENALTIES"
+  | "LOSSES";
 
 export interface CashFlowStatement {
   readonly openingCash: Money;

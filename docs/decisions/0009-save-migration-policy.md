@@ -10,7 +10,8 @@ GDD §14.10 leaves save versioning and compatibility open. Architecture §8 call
 
 ### Chained migrations from version 1
 
-- `SAVE_SCHEMA_VERSION` starts at **1** and increases by one for **any** change to `SaveGame` or `GameState`, including additions.
+- `SAVE_SCHEMA_VERSION` starts at **1** and increases by one for any change to `SaveGame` or `GameState` that an existing save might not pass or might be read differently under: removing or renaming a field, an ID or a union member, adding a required field, narrowing a type or a bound, or changing what a value means.
+- A purely additive change that every existing save already satisfies doesn't bump it. Examples are a new member of an event, scheduled-event or enum union, and a new optional field. ADR 0020 and T07f's `SHAKEDOWN` and `LOSS_BOOKED` follow this. The test is whether every committed fixture save still validates against the new schema, unchanged. If any wouldn't, it's a bump with a migration. (Reconciled with practice in #159, from the #156 review note N4. The original text bumped for additions too.)
 - Every bump ships a `SaveMigration` from `n` to `n + 1`. Migrations work on raw JSON (`Record<string, unknown>`), because the old TypeScript types no longer exist.
 - On load, persistence (T06) applies the migrations in order from the save's version up to the current one, then **validates the result against the current Zod schema** before handing it to the simulation.
 - Migrations are pure and deterministic, and they never read game-data, so a migrated save loads the same way every time.

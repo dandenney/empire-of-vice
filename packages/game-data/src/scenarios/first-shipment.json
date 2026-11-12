@@ -1,10 +1,10 @@
 {
   "id": "first-shipment",
   "name": "The First Shipment",
-  "notes": "M001 scenario (GDD §4; ADR 0020 decisions 1, 2, 12). Every number here is a PLACEHOLDER: T05g may tune the building value and the rival closure window; the cash, seed, and start date are GDD §4's and stay fixed.",
+  "notes": "M001 scenario (GDD §4; ADR 0020 decisions 1, 2, 12). Every number here is a PLACEHOLDER: T05g may tune the building value and the rival closure window (T07h cut the building from $800 to $100, so a loss taken as a share of net worth is smaller next to what the family earns); the cash, seed, and start date are GDD §4's and stay fixed.",
   "seed": 1920,
   "startDate": { "year": 1920, "month": 1, "day": 17 },
-  "openingBalance": { "cash": 100000, "buildings": 80000 },
+  "openingBalance": { "cash": 100000, "buildings": 10000 },
   "family": {
     "id": "kerrigan",
     "reputation": 0,
