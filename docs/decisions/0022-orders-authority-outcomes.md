@@ -24,7 +24,7 @@ ADR 0023 (D3) owns the founder's state (`GameState.founder`, with whereabouts `P
 
 For each command, the gates are checked in this order, and the first failure is the rejection:
 
-1. **Shape, scheduling and identity:** `INVALID_QUANTITY`, `SCHEDULED_IN_PAST`, and resolving every ID the command names **through the issuer's view** (decision 2).
+1. **Shape, scheduling and identity:** `INVALID_QUANTITY`, `SCHEDULED_IN_PAST`, and resolving every ID the command names **through the issuer's view** (decision 2). At this gate, IDs resolve against the founder's agreements and **known records**. Checks that need the live view (an offer still on the table, a reservation still active) run in gate 5, after the hours gate. So a closed buyer gives `PLACE_CLOSED`, not `OFFER_UNAVAILABLE`.
 2. **Presence:** does the issuer have to be physically at a place for this, and are they free to act there? (Decision 3. This gate also covers ADR 0023's busy and opening-hours rules.)
 3. **Communication:** if the issuer isn't the one who carries it out, can the instruction reach whoever does? (Decision 4.)
 4. **Authority:** may this issuer make this decision? (Decision 5.)
@@ -138,15 +138,23 @@ interface HeldDealState {
 }
 ```
 
-`GameState.heldDeals: readonly HeldDealState[]` is sorted with `compareIds`, and `counters.nextId` gains `Deal` (prefix `deal`). Deals are agreements, so they're always known.
+`GameState.heldDeals: readonly HeldDealState[]` is sorted with `compareIds`, and `counters.nextId` gains `Deal` (prefix `deal`). It holds only `HELD` and `DISPATCHED` deals. A deal is removed when it reaches a terminal state (`SETTLED`, `EXPIRED`, `FELL_THROUGH`), and that state is reported by its event, the way `ReservationState` keeps active reservations only.
+
+**What's known about a deal.** A `HELD` deal is an agreement the founder made, so it's always known, and so is its expiry by time (`DEAL_EXPIRED`). **Once dispatched, a deal is resolved only by its delivery**, as in M001. What happens to it after dispatch (settled, fell through, or turned back) reaches the founder only through that delivery's channels: being aboard, the cash posting on arrival or return, or news (ADR 0021). A dispatched deal never expires by time.
 
 - **In person:** validated against the live view with ADR 0005's checks (`QUOTE_CHANGED`, `BUYER_WILL_TAKE_LESS`, `PRODUCT_NOT_WANTED`, and `quoteDeal`'s `REPUTATION_TOO_LOW` and `UNKNOWN_ENTITY`). It commits demand **and budget**.
 - **By phone (ADR 0024):** the call reveals `BUYER_WANTS` but not `BUYER_BUDGET` (ADR 0021). So it's capped by **demand only** (`BUYER_WILL_TAKE_LESS.acceptable = demandRemaining`), and commits demand only (`budgetCommitted: false`). The budget is settled on arrival: the buyer pays for what the budget allows at the deal price, and the rest of the deal's cargo comes home (as on spec, below).
-- **Buyer commitments are re-keyed to the deal.** `BuyerState.commitments[]` moves from `deliveryId` to `dealId`, and stores the matched want quality, so `settleDeal` and `releaseDeal` no longer read delivery cargo. A held deal that crosses midnight keeps its commitment (outstanding commitments already survive `refreshBuyers`). **`DEAL_EXPIRED`** releases it under the existing daily caps. It's emitted at `expiresAt` for a deal still `HELD` or `DISPATCHED` whose truck hasn't arrived.
+- **Buyer commitments are re-keyed to the deal.** `BuyerState.commitments[]` moves from `deliveryId` to `dealId`, and stores the matched want quality, so `settleDeal` and `releaseDeal` no longer read delivery cargo. A held deal that crosses midnight keeps its commitment (outstanding commitments already survive `refreshBuyers`). **`DEAL_EXPIRED`** releases it under the existing daily caps. It's emitted at `expiresAt` **only for a deal still `HELD`** (decision 6, "What's known about a deal").
 
 **Dispatching a sale.** `DeliveryPurpose` `SALE` becomes `{ kind: "SALE"; buyerId: BuyerId; dealId: DealId | null }`. `agreedUnitPrice` moves onto the deal.
 
-- **With a deal:** the deal must be `HELD`, or the result is `DEAL_UNAVAILABLE`. Its `buyerId` must match, or the result is `CARGO_DOES_NOT_MATCH_DEAL`. The cargo must match its product, quality and quantity, or the result is `CARGO_DOES_NOT_MATCH_DEAL`. The deal becomes `DISPATCHED`. On arrival it settles at the deal price as in M001 (`SALE_COMPLETED`), and becomes `SETTLED`. A by-phone deal settles budget-limited, as above. If the truck arrives after `expiresAt`, the deal has fallen through (ADR 0019's `TOO_LATE`), and the cargo comes home.
+- **With a deal:**
+  - The deal must be `HELD`, or the result is `DEAL_UNAVAILABLE`. Its `buyerId` must match, and the cargo must match its product, quality and quantity; otherwise the result is `CARGO_DOES_NOT_MATCH_DEAL { dealId }`.
+  - The deal becomes `DISPATCHED`, and the delivery's `dealDeadline` is set as in M001 (ADR 0019 decision 4), **capped at the deal's `expiresAt`**: `min(expiresAt, scheduled arrival + dealGraceTicks)`. So a delayed sale still falls through exactly as in M001 (the logistics locked tests' `TOO_LATE` case is unchanged), and with founder rules off the deal path reproduces M001's economics.
+  - On time, it settles at the deal price as in M001 (`SALE_COMPLETED`) and becomes `SETTLED`.
+  - Late, it falls through (`TOO_LATE`), the commitment is released, and the cargo comes home.
+  - A by-phone deal settles budget-limited. The cases the budget doesn't cover come home on the `FAILED` path, their committed demand is released under the daily caps, and `SPEC_SALE_SETTLED` reports `offered` vs `accepted`.
+  - **On-spec dispatches have no deal deadline** (`dealDeadline: null`): whenever the truck arrives, the buyer takes what they want.
 - **On spec (`dealId: null`):** nothing is checked against the buyer at dispatch. On arrival, at any hour (ADR 0023), the buyer's take is computed from the world at that moment:
   - `accepted = 0` if the product, minimum quality or `minimumReputation` doesn't match the buyer's wants.
   - Otherwise, `accepted = min(cargo, demandRemaining, floor(budgetRemaining / quote))` at **that day's quote**: the ECO-001 liquidity formula, applied on arrival.
@@ -154,16 +162,19 @@ interface HeldDealState {
   - If `accepted > 0`: one `SALE` transaction for the accepted cases. COGS for that part is split with `allocateRemovalCost`. It emits `SALE_COMPLETED`, so progression's first qualifying delivery, victory, and the recovery policy work as before.
   - If a remainder is left: the delivery's `cargo` becomes the remainder, and its status is `FAILED`. So the existing `returnHome` path unloads it, and ADR 0020 decision 10's "no goods" test counts it as goods riding home, not gone.
   - If everything sold: status `DELIVERED`.
-  - It always emits **`SPEC_SALE_SETTLED { deliveryId, buyerId, offered, accepted, unitPrice }`**. If `accepted = 0`, it also emits `DEAL_FELL_THROUGH { reason: "NOT_WANTED" }`. **No reputation change** for a 0 take in M002 (`PRODUCT_REJECTED` stays unused; revisit after PT1).
+  - It always emits **`SPEC_SALE_SETTLED { deliveryId, buyerId, offered, accepted, unitPrice }`**. If `accepted = 0`, it also emits `DEAL_FELL_THROUGH { reason: "NOT_WANTED" }`, in a `DISPATCH` transaction keyed `DISPATCH:<deliveryId>:SPEC_SETTLED`, with no entries, the way `fallThrough` uses `DISPATCH:<id>:FELL_THROUGH`. **No reputation change** for a 0 take in M002 (`PRODUCT_REJECTED` stays unused; revisit after PT1).
 - **Contract installments** check `CONTRACT_NOT_ACTIVE` and the installment cap (ADR 0018 decision 5, checks 1 and 4) against **known `CONTRACT_PROGRESS`**, plus the founder's own known in-transit cases (the same rule as ADR 0021 decision 8's `inTransit`). They never read the world's progress. On arrival:
   - extra cases above the requirement are paid as ADR 0018 decision 6 already pays them;
   - if the contract has completed in the meantime, the cargo comes home through the `FAILED` path, with `DEAL_FELL_THROUGH { reason: "CONTRACT_CLOSED" }`.
 - **`TRANSFER` dispatches** are unchanged.
 - **Route condition at dispatch.** `ROUTE_CLOSED` is rejected immediately only if the route is in the live view (ADR 0021 `LIVE_VIEW_ROUTES`; by default every route out of the founder's place), or is known closed. Then `reopensAt` comes from the record, not the world. Otherwise the truck sets out, and a closure is found as an outcome:
   - **`ROUTE_FOUND_CLOSED { deliveryId, routeId }`** turns the truck back on the return leg, and the trip reveals the route's condition. That matches ADR 0023's halting rule for the founder's own travel.
-  - A road that closes **while the truck is being loaded** (between dispatch and ADR 0023's departure at `busy.until`) gives the same event at departure. The truck doesn't leave, the cargo is unloaded back into the facility, and the founder stays `PRESENT`.
-  - A **deal-backed** delivery turned back keeps its deal `HELD` until `expiresAt`, so the founder can try another road. An on-spec cargo just comes home.
-  - With the default table this can't happen on a run the founder drives. It can on a hired Driver's runs (ADR 0025), or if game-data narrows the table.
+  - A road that closes **while the truck is being loaded** (between dispatch and ADR 0023's departure at `busy.until`) gives the same event at departure. The truck doesn't leave, and the founder stays `PRESENT`.
+    - The cargo is unloaded back into the facility with `returnFromTransitEntries`, and cargo drawn from contract reservations comes back unreserved (ADR 0013 decision 6).
+    - A deal-backed delivery's deal returns to `HELD` here. The founder is present and sees it, so nothing leaks.
+    - This case **can** happen on a run the founder drives.
+  - A **deal-backed** delivery turned back by a closure found on the road resolves like a fall-through. The deal ends `FELL_THROUGH` (reason `ROUTE_CLOSED`), its commitment is released, and the founder learns it through the delivery's channels (N1: a dispatched deal never quietly returns to `HELD`). An on-spec cargo just comes home.
+  - With the default table, a closure **at dispatch time** can't go unseen on a run the founder drives. It can on a hired Driver's runs (ADR 0025), or if game-data narrows the table.
 - **Which comes first in play.** Early on the founder drives every load, so on spec is the natural first path: drive to Kessler's, and he takes what he wants at today's price. A held deal (agreed at a stop, or later by phone) removes that risk. That's GDD §16's "the order of the day matters".
 
 **Repeating a sale (amends ADR 0020 decision 11).** A repeated `SALE` dispatch always goes **on spec** (`dealId: null`), whatever its source. A deal is single-use, and on spec needs no quote, so repeating no longer reads a remote buyer's current price.
@@ -183,7 +194,7 @@ Today a job pays its conversion cost (`laborPerCase` + `overheadPerCase`, ADR 00
 - **Start:** one transaction, `PRODUCTION_START:<jobId>` (new kind `PRODUCTION_START`), replacing today's entry-less `RESERVATION:<jobId>` transaction. It carries the input reservations, as that one did, plus Dr `PRODUCTION_IN_PROGRESS` / Cr `CASH` for the conversion cost. A recipe with zero conversion cost posts the reservations with no entries (the coordinator rejects 0-amount entries).
 - **Completion:** Dr `FINISHED_GOODS`; Cr `RAW_MATERIALS` (the reserved inputs); Cr `PRODUCTION_IN_PROGRESS` (the prepaid amount).
 - **Failure:** Dr `LOSSES`; Cr `RAW_MATERIALS`; Cr `PRODUCTION_IN_PROGRESS`. That's ADR 0017's write-off, with the cash leg replaced.
-- **New asset account `PRODUCTION_IN_PROGRESS`.** Net worth doesn't change at start: it's a prepaid cost, not an expense. `BalanceSheet.assets` gains `productionInProgress`, and the player's known net worth (ADR 0021 decision 8) counts it, so starting a batch doesn't look like a drop.
+- **New asset account `PRODUCTION_IN_PROGRESS`.** Net worth doesn't change at start: it's a prepaid cost, not an expense. `BalanceSheet.assets` gains `productionInProgress`, and the player's known net worth (ADR 0021 decision 8) counts it **from the known books** (the start is known by rule 1; the completion is pending until learned). So starting a batch doesn't look like a drop, and known net worth stays consistent with stale `FACILITY_STOCK`.
 - **Cash flow (ADR 0015).** `PRODUCTION_START`'s kind default is **`WAGES`**, consistent with ADR 0015's rule that production's capitalized conversion cost files under `WAGES`.
 - **Each job stores what it prepaid:** `ProductionJobState.conversionPrepaid: Money | null`. Completion and failure credit exactly that amount, so a recipe-cost change mid-job leaves no residue. `null` means a job migrated from a pre-M002 save, which settles under the old pay-at-settlement rule. A new invariant: the `PRODUCTION_IN_PROGRESS` balance equals the sum of `conversionPrepaid` over running jobs.
 - Completion and failure now move no cash (except for migrated `null` jobs). They become non-cash postings under ADR 0021 decision 7's production row, learned on the next visit. ADR 0021 decision 6's production cash-posting row applies only to migrated jobs.
@@ -227,13 +238,17 @@ The producer coverage test (ADR 0021 decision 11, K1 #188) includes these rows.
 
 ## Consequences
 
-- **This changes M001 behaviour, and these `@locked` tests need re-locking** (factory.md §7.3, two-step):
-  - `fin-001.locked` (the `BalanceSheet.assets` shape and the production posting signatures)
-  - `prod-001.locked` (when conversion cost is paid)
-  - the ECO-001 deal tests (deal at dispatch becomes `AGREE_DEAL`)
-  - `repeat.locked` (decision 6, repeating a sale)
-  - `prog-001-outcome.locked` (recovery selling)
-  - the logistics locked tests (per-trip randomness)
+- **This changes M001 behaviour, and all ten `@locked` files under `packages/simulation/test` need re-locking** (factory.md §7.3, two-step). An agent re-locking under this ADR may touch only these files, and only for the listed reason:
+  - `economy/fin-001.locked.test.ts`: `BalanceSheet.assets.productionInProgress`; production posting signatures (decision 7)
+  - `inventory/fin-001.locked.test.ts`: `RELEASE_RESERVATION.facilityId` (decision 3)
+  - `production/prod-001.locked.test.ts`: conversion cost at start; `PRODUCTION_START:<jobId>` replaces `RESERVATION:<jobId>` (decision 7)
+  - `production/prod-001-labor.locked.test.ts`: `SALE` purpose shape (decision 6); conversion timing (decision 7)
+  - `economy/market/eco-001.locked.test.ts`: deal at dispatch becomes `AGREE_DEAL`; commitments keyed by deal (decision 6)
+  - `contracts/eco-001-contracts.locked.test.ts`: `SALE` purpose shape (decision 6)
+  - `logistics/logistics.locked.test.ts`: per-trip randomness (decision 8); `SALE` purpose shape; deadline capped by `expiresAt`, with `TOO_LATE` behaviour unchanged (decision 6)
+  - `commands/repeat.locked.test.ts`: a repeated sale goes on spec (decision 6)
+  - `progression/prog-001-outcome.locked.test.ts`: recovery selling (decision 6)
+  - `progression/prog-001-reputation.locked.test.ts`: `SALE` purpose shape (decision 6)
 
   The contract task and SK1 own the re-locks. M001's scenario stays playable through ADR 0021's migration and ADR 0023's founder placement, and its locked tests are re-locked under the M002 rules rather than kept for both.
 - **The lab bots and the sale form.** Removing `agreedUnitPrice` from `SALE` breaks the lab strategies (`tools/economy-lab/src/greedy-spot.ts`, `contract-taker.ts`, `sprint-zero.ts`, `headless-strategy.ts`) and `apps/game/src/panels/market/sale-form.tsx`, whatever the founder-rules flag says. **The contract task for this ADR moves them to `AGREE_DEAL` plus a deal dispatch** at the same quote. With the flag off, that reproduces M001's economics, so nightly results stay comparable. T-LAB (#184) later teaches the bots travel, on spec and fog.
@@ -262,10 +277,15 @@ The producer coverage test (ADR 0021 decision 11, K1 #188) includes these rows.
 - The `IssuerView` interface (simulation-internal, but named here so the review can check it).
 - `schemas.ts`: Zod for all of the above.
 - `save.ts`: a schema bump with a migration, reading only the save's own fields:
-  - **In-flight M001 `SALE` deliveries:** each buyer commitment becomes a held deal (amount, quantity, and quality from the cargo; `expiresAt` = the delivery's `dealDeadline`; status `DISPATCHED`; `budgetCommitted: true`). The delivery's purpose gets that `dealId`. This avoids counting the commitment twice.
-  - **Command envelopes** in `queuedCommands` and `commandLog` get `issuer: { kind: "FOUNDER" }`. `SALE` purposes in them get `dealId: null`. A migrated `commandLog` is kept for debugging only. Replay is supported only for logs recorded under the current schema (ADR 0004 replays from a start state under one ruleset).
+  - **In-flight M001 `SALE` deliveries:** each buyer commitment becomes a held deal, so the commitment isn't counted twice. The delivery's purpose gets that `dealId`, and its existing `dealDeadline` still governs arrival (decision 6), so a deal migrated past its expiry simply resolves on arrival. The deal's fields:
+    - `unitPrice`: the purpose's `agreedUnitPrice`
+    - `quantity` and `quality`: from the cargo; the want quality from `matchWant` over the save's own `buyer.wants`
+    - `agreedAt`: the outbound trip's `departedAt`
+    - `expiresAt`: `dealDeadline`
+    - status `DISPATCHED`, and `budgetCommitted: true`
+  - **Command envelopes** in `queuedCommands` and `commandLog` get `issuer: { kind: "FOUNDER" }`. `SALE` purposes in them get `dealId: null`. A **queued** M001 sale therefore goes on spec when it applies. That's accepted: it's rare, the founder set it up, and on spec can't lose the cargo. A migrated `commandLog` is kept for debugging only. Replay is supported only for logs recorded under the current schema (ADR 0004 replays from a start state under one ruleset).
   - **Running jobs** get `conversionPrepaid: null`.
-  - **Vehicles** get `tripCount: 0`.
+  - **Vehicles** get `tripCount: 0`. A trip already in progress keeps its existing draws. Dispatch increments `tripCount` before seeding, so the first M002 trip uses ordinal 1.
   - **`heldDeals`** holds only the migrated deals, and the `Deal` counter continues after them.
 - Game-data: `DEAL_HOLD_TICKS` (PLACEHOLDER 2 880 ticks, two game days, longer than any M001 round trip). The `AGREE_DEAL` activity duration is ADR 0023's table.
 - Callers: the lab strategies and the sale form, moved to `AGREE_DEAL` (Consequences).
