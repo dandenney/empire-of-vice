@@ -63,13 +63,13 @@ With ADR 0023's founder-rules flag off (the lab's M001 mode), `PlayerView` is bu
 
 ### 3. Presence: what each command needs
 
-"Present at P" is ADR 0023's definition: whereabouts `PRESENT` at P (busy or not), plus the arrival tick of a delivery the founder rides. Every command below is presence-gated for the founder. An employee acting within authority is present where they're stationed (decision 5).
+"Present at P" for commands is ADR 0023's definition: whereabouts `PRESENT` at P (busy or not). Riding a delivery to a buyer is observation only. The founder sees the settlement as it happens (ADR 0023's `ON_DELIVERY.atBuyer`), but can't issue commands there until they're `PRESENT`. Every command below is presence-gated for the founder. An employee acting within authority is present where they're stationed (decision 5).
 
 | Command | Founder must be present at | What moves out of the immediate result (decision 2) | Outcome |
 |---|---|---|---|
 | `PURCHASE_MATERIALS` | The supplier, open (ADR 0023 hours) | Nothing: the supplier is the live view, and M001 doesn't check material storage. The supplier delivers the goods into the named facility's raw stock, as in M001. The founder carries only the purse (ADR 0023). It's the founder's own transaction, so it's known. The facility's `FACILITY_STOCK` record updates on the next visit | Immediate |
 | `START_PRODUCTION` | The facility | Nothing | Job completes or fails later (ADR 0017), plus decision 7's prepaid cost |
-| `DISPATCH_DELIVERY` | The facility where the truck is parked, not busy, as its driver (`driverCharacterId`, ADR 0023 decision 5). The dispatch origin is that facility. A hired Driver can drive instead (ADR 0025) | Buyer checks for on-spec sales; contract progress checks (judged on knowledge, decision 6); route condition outside the live view | Arrival (decision 6) |
+| `DISPATCH_DELIVERY` | The facility where the truck is parked, not busy, as its driver (`driver: DriverRef`, ADR 0023 decision 5). The dispatch origin is that facility. A hired Driver can drive instead (ADR 0025) | Buyer checks for on-spec sales; contract progress checks (judged on knowledge, decision 6); route condition outside the live view | Arrival (decision 6) |
 | `ACCEPT_CONTRACT` | The buyer, open, or a call with them (ADR 0024). The offer must be in that view; otherwise `OFFER_UNAVAILABLE` | Nothing: acceptance reserves stock where it finds it but is never rejected for stock (ADR 0018 decision 4). By phone, `CONTRACT_OFFERS` and `STANDING` cover `OFFER_UNAVAILABLE`, `LOCKED` and `REPUTATION_TOO_LOW` | Remote reservations, unseen until visited |
 | `PURCHASE_EQUIPMENT`, `SELL_EQUIPMENT` | The facility | Nothing. Tier gating reads the world, which agrees with known `STANDING` whenever the founder is present (ADR 0021 decision 4) | Immediate |
 | `SET_WORKFORCE` | The facility | Nothing | Immediate |
@@ -83,13 +83,13 @@ The presence gate's rejections reveal nothing, because the founder's whereabouts
 - **`FOUNDER_BUSY { until }`**: a timed activity is still running (ADR 0023 decision 4). Instant actions at the same place are still allowed.
 - **`PLACE_CLOSED { locationId, opensAt }`**: an activity with a party (buying, negotiating, accepting) must start during their hours (ADR 0023). Working at your own facility isn't hours-gated.
 - **`VEHICLE_NOT_AT { vehicleId, locationId }`**: the truck isn't parked in the live view of the place the founder is dispatching from. `locationId` is **that place**, never the truck's. The same reason covers a truck on a trip and one parked elsewhere, so it reveals no `VEHICLE_WHEREABOUTS`. M001's `VEHICLE_UNAVAILABLE` remains only in flag-off mode, where the whole world is the live view.
-- **`NO_DRIVER { vehicleId }`**: the named driver can't drive (not the founder present there, and not a hired Driver stationed there).
+- **`NO_DRIVER { vehicleId }`**: the named driver can't drive (not the founder present there, and not a hired Driver stationed there), or a new dispatch has `driver: null` while founder rules are on. `null` is only for pre-M002 dispatches (ADR 0023).
 
 Tiredness never causes a rejection (ADR 0023: it only stretches durations).
 
 **A presence check moves a world check into the live view; it doesn't remove it.** `INSUFFICIENT_STOCK`, `STORAGE_CAPACITY_EXCEEDED`, `SUPPLIER_STOCK_LOW` and the rest keep their meaning, now always about a place the founder can see.
 
-**Time costs.** `AGREE_DEAL` in person is a timed activity: a `NEGOTIATE` row in ADR 0023's `ACTIVITY_DURATIONS` (game-data, PLACEHOLDER 30 game minutes). By phone, it takes the call's duration (ADR 0024).
+**Time costs.** `AGREE_DEAL` in person is a timed activity: ADR 0023's `ACTIVITY_DURATIONS` row `AGREE_DEAL` (game-data, PLACEHOLDER 30 game minutes). By phone, it takes the call's duration (ADR 0024).
 
 ### 4. Communication
 
@@ -161,6 +161,7 @@ interface HeldDealState {
 - **`TRANSFER` dispatches** are unchanged.
 - **Route condition at dispatch.** `ROUTE_CLOSED` is rejected immediately only if the route is in the live view (ADR 0021 `LIVE_VIEW_ROUTES`; by default every route out of the founder's place), or is known closed. Then `reopensAt` comes from the record, not the world. Otherwise the truck sets out, and a closure is found as an outcome:
   - **`ROUTE_FOUND_CLOSED { deliveryId, routeId }`** turns the truck back on the return leg, and the trip reveals the route's condition. That matches ADR 0023's halting rule for the founder's own travel.
+  - A road that closes **while the truck is being loaded** (between dispatch and ADR 0023's departure at `busy.until`) gives the same event at departure. The truck doesn't leave, the cargo is unloaded back into the facility, and the founder stays `PRESENT`.
   - A **deal-backed** delivery turned back keeps its deal `HELD` until `expiresAt`, so the founder can try another road. An on-spec cargo just comes home.
   - With the default table this can't happen on a run the founder drives. It can on a hired Driver's runs (ADR 0025), or if game-data narrows the table.
 - **Which comes first in play.** Early on the founder drives every load, so on spec is the natural first path: drive to Kessler's, and he takes what he wants at today's price. A held deal (agreed at a stop, or later by phone) removes that risk. That's GDD §16's "the order of the day matters".
@@ -200,7 +201,7 @@ Today a job pays its conversion cost (`laborPerCase` + `overheadPerCase`, ADR 00
 ### 9. Rejection reasons, and how outcomes reach the founder
 
 **Rejection reasons:**
-- **New:** `NOT_PRESENT`, `FOUNDER_BUSY`, `PLACE_CLOSED`, `VEHICLE_NOT_AT`, `NO_DRIVER` (decision 3); `NO_WAY_TO_REACH`, `OUTSIDE_AUTHORITY` (decisions 4–5); `CARGO_DOES_NOT_MATCH_DEAL`, `DEAL_UNAVAILABLE { dealId }` (decision 6). ADR 0023 names the reasons for `TRAVEL`, `REST` and `WAKE`.
+- **New:** `NOT_PRESENT`, `FOUNDER_BUSY`, `PLACE_CLOSED`, `VEHICLE_NOT_AT`, `NO_DRIVER` (decision 3); `NO_WAY_TO_REACH`, `OUTSIDE_AUTHORITY` (decisions 4–5); `CARGO_DOES_NOT_MATCH_DEAL`, `DEAL_UNAVAILABLE { dealId }` (decision 6). ADR 0023 (decision 3a) owns the reasons for `TRAVEL`, `REST` and `WAKE`. Codes both ADRs use (`NOT_PRESENT`, `FOUNDER_BUSY`, `PLACE_CLOSED`, `VEHICLE_NOT_AT`, `NO_DRIVER`) are added by whichever contract task lands first.
 - **Moved to `AGREE_DEAL` only:** `QUOTE_CHANGED`, `BUYER_WILL_TAKE_LESS`, `PRODUCT_NOT_WANTED`, plus `REPUTATION_TOO_LOW` and `UNKNOWN_ENTITY` for the buyer. Installment dispatch keeps `BUYER_WILL_TAKE_LESS`, judged on knowledge (decision 6).
 - **Now limited to the live view or known state:** `ROUTE_CLOSED`, `CONTRACT_NOT_ACTIVE`, `RESERVATION_NOT_ACTIVE`, `OFFER_UNAVAILABLE`.
 - **Flag-off only:** `VEHICLE_UNAVAILABLE`.
@@ -266,7 +267,7 @@ The producer coverage test (ADR 0021 decision 11, K1 #188) includes these rows.
   - **Running jobs** get `conversionPrepaid: null`.
   - **Vehicles** get `tripCount: 0`.
   - **`heldDeals`** holds only the migrated deals, and the `Deal` counter continues after them.
-- Game-data: `DEAL_HOLD_TICKS` (PLACEHOLDER 2 880 ticks, two game days, longer than any M001 round trip), and the `NEGOTIATE` activity duration (decision 3).
+- Game-data: `DEAL_HOLD_TICKS` (PLACEHOLDER 2 880 ticks, two game days, longer than any M001 round trip). The `AGREE_DEAL` activity duration is ADR 0023's table.
 - Callers: the lab strategies and the sale form, moved to `AGREE_DEAL` (Consequences).
 
 Founder fields and travel commands are ADR 0023's task. Standing-order shapes and the `EMPLOYEE` issuer are ADR 0025's.
