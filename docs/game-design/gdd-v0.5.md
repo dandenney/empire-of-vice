@@ -574,17 +574,19 @@ Part II puts the player inside the world. The simulation (SIM, PROD, ECO, FIN, P
 Every M002 feature is judged by one question: does it make the day's choice of what to do, and in what order, more interesting?
 
 **What creates the choice:**
-- **Being there costs time.** Travel and on-site actions take game time (PRES-001). Every trip means something else isn't happening.
+- **Being there costs time.** Travel and meaningful on-site activity take game time (PRES-001). Every trip means something else isn't happening.
 - **Knowledge goes stale.** You plan with partial, dated information (INFO-001). "Is the still about to run dry, or did I check recently enough?"
-- **The day has a shape.** Places keep hours. The feed store closes at evening; some buyers only meet after dark; the founder needs the night. Hours make the *order* matter, not just the choice of tasks. Hours are game-data per location.
+- **The day has a shape.** Places keep hours. The feed store closes at evening; some buyers only meet after dark; the founder needs sleep (PRES-001). Hours and rest make the *order* matter, not just the choice of tasks. Hours are game-data per location.
 - **Obligations pile up.** Contract installments, wages, and a buyer waiting on an answer all compete for the same day.
 
 **Rules:**
-1. **Pressure without unfairness.** There should always be competing demands, but never a day on which every available choice was doomed. This extends §9's recovery rule: no soft-locks, and no unwinnable days.
+1. **Pressure without unfairness.** There should always be competing demands, but never a day on which every available choice was doomed. This extends §9's recovery rule: no soft-locks, and no unwinnable days. In particular, **the first hire must be reachable**: from the starting position, with M002's travel, action times, hours, sleep, wages and contracts, a founder playing sensibly can earn or keep enough to hire someone. This is checked by an automated test and tuned for, not assumed from M001's balance.
 2. **The known to-do list is built from knowledge, not truth.** The game may keep a list of obligations and concerns ("Kessler installment due Thursday", "corn was low as of Monday"), but only from things the player knows. It must not leak world state (INFO-001).
 3. **Hiring adds choices, not just removes them.** When a hire frees up your time, there must be something worth spending it on that you couldn't do before: a far buyer, a better supplier, a second operation. Otherwise the game gets emptier as you grow instead of bigger.
 
-**Pacing (revises approved assumption #1 for M002):** 2 real minutes per game day was tuned for watching a dashboard. With travel and on-site actions taking time, a day needs room to plan. M002 starts at **1× = 1 game hour per 20 real seconds (8 real minutes per day)**, keeping pause, 2× and 4×. This is a tuning value, set in game-data and settled by playtest. The tick (1 game minute) and the deterministic rules in SIM-001 don't change.
+**Pacing (revises approved assumption #1 for M002):** 2 real minutes per game day was tuned for watching a dashboard. With travel and on-site activity taking time, a day needs room to plan. M002's **starting hypothesis** is **1× = 1 game hour per 20 real seconds: 8 real minutes per day at 1×, 4 at 2×, 2 at 4×**. Pause and speed controls stay. It's an experiment, not a target: playtests judge it together with travel times, place hours, sleep, idle time and contract deadlines. It lives in game-data. The tick (1 game minute) and the deterministic rules in SIM-001 don't change.
+
+**Knock-on effect:** M001's run of about 15 game days would take about **120 real minutes at 1×** under this pacing, against M001's 20–30 minute session target. M002's session length, victory conditions and contract timing may need revising, and PT1 and T-LAB own that question.
 
 ## 17. Information (INFO-001)
 
@@ -634,7 +636,7 @@ When the founder arrives somewhere, the scene shows the current state, and the g
 
 ### Non-leak rule
 
-The player's snapshot must not change because of a world change the founder had no channel to learn about. This gets a property test: two worlds that differ only in unobserved state produce identical player snapshots. Errors, toasts, prices on buttons and disabled states are all channels. None may reveal what the player doesn't know.
+The player's snapshot must not change because of a world change the founder had no channel to learn about. This gets a property test: two worlds that differ only in unobserved state produce identical player snapshots. Every surface the player sees is a channel: what actions are offered, disabled buttons, validation errors, action outcomes, toasts and activity messages, prices on buttons, and route indicators on the map. None may reveal what the player doesn't know.
 
 ## 18. Presence (PRES-001)
 
@@ -642,19 +644,35 @@ The player's snapshot must not change because of a world change the founder had 
 
 - **Map:** the founder travels along roads. Travel takes game time from route data (the M001 routes, extended to the founder). While traveling, the founder can't act anywhere. The map shows the founder, the truck, and known places. Not an RTS: you pick destinations, you don't steer.
 - **Scenes:** arriving opens a scene of the place: an illustration (placeholder art in M002), with layers driven by state, such as crates stacked by the still, the truck in the yard or not, the foreman at the still or nowhere to be seen. The scene shows what's true right now. Its actions are what can be done *there*: buy at the feed store, start a batch at the still, sell or negotiate at a buyer, use the phone where there is one. M001's management panels turn into these scene actions.
-- **Actions take time.** Buying, loading the truck, starting a batch, and negotiating each have a game-time cost (game-data). Together with travel, this is what makes the day's choices compete.
+- **Presence gates what the founder can do; time costs represent meaningful in-world activity, not interface clicks.** Negotiating at Kessler's, loading the truck, a day's buying at the feed store: these take game time (game-data). Opening a menu, reading the ledger, or collecting a payment already agreed don't. Once you've arrived somewhere, the actions there must not become repetitive micro-steps. The trip is the choice; the clicks after it should be quick.
 - **The founder starts as the driver.** At the start there's one truck and no driver. A delivery means the founder drives it, and is away from everything else for the trip. Arriving with the truck puts the founder face to face with the buyer, which is worth something (see *Being there should pay* below). Hiring a driver (PERS-001) breaks this link.
 - **Being there should pay.** In person you see everything, and some things only happen face to face: negotiating a better price, hearing about a new buyer, noticing the still needs a part. Visits must be worth it, not just a way to refresh numbers.
-- **Not in M002:** founder fatigue or sleep as a stat. Nights are shaped by business hours only. Revisit after playtests.
+- **The founder needs sleep.** The founder is a person, not a 24-hour loop. Rest is a required part of the day's time budget, and it competes with late deliveries, after-hours meetings and emergencies. For M002:
+  - **Simple:** a rest action or chosen rest block with a clear time cost, at a place where the founder can sleep (home, or a cot at the still; placeholder). No meter to babysit, no hourly bedtime clicks.
+  - **Late nights are allowed, with a tradeoff the player can understand**, such as less time or reduced effectiveness the next day. The exact hours, places and consequences are provisional and set by playtest. No severe penalties, random collapse, or detailed fatigue model without a later design decision.
+  - **The world keeps going.** While the founder sleeps, the simulation and delegated work continue. Sleep works with pause and the deterministic tick: it's time passing, not a special mode.
+  - **No traps.** The founder can always get to rest and recover. Sleep never makes progress impossible.
+  - The D3 ADR defines the first rest implementation and overnight pacing before any agent builds it. Sleep is a game rule, not flavour text.
 
-## 19. Orders and outcomes (ORD-001)
+## 19. Orders, authority and outcomes (ORD-001)
 
 Under M001, a command is checked against the true world and accepted or rejected immediately with a reason. With fog, an immediate "buyer only wants 10 more" leaks information. So commands split in two:
 
 1. **The order** is checked only against what the founder knows or can see right there: you can't load 30 cases onto a truck you're standing next to if only 20 are in the shed. The order is applied atomically or rejected with a typed reason (architecture rule 6 still holds).
 2. **The outcome** happens in the world later, when the truck arrives or the batch finishes. It's its own atomic transaction. It may differ from what the founder expected: Kessler takes 10 of the 30 and the truck brings 20 home. The founder learns the outcome through a channel.
 
-**Orders need a way to arrive.** An order to a person is given face to face, or by phone to someone who has one. Standing at the still, you can tell the foreman what to make. From across town with no phone at the still, you can't. Geography, communication and delegation are one system.
+**Four separate gates.** Whether something can happen depends on four questions, modelled separately:
+
+| Gate | Question | Example |
+|---|---|---|
+| **Knowledge** | What does the founder believe, from which source, and when? | "The still was low on corn, as of Monday (seen in person)" |
+| **Authority** | Who is allowed to make this decision: the founder, or an employee within a standing order? | The distiller may buy corn up to $25 a week, but not a new still |
+| **Communication** | Can the instruction reach the person who has to carry it out? | No phone at the still, so an order from town doesn't get there |
+| **Presence** | Does the action have to be done physically, at a place? | Negotiating a contract happens at the buyer's |
+
+They don't imply each other. Knowing the still needs corn doesn't get an order to anyone there. Standing at the still doesn't give a distiller authority you haven't given them. Geography, communication and delegation become one system because each gate is checked on its own.
+
+**Standing orders don't need a call per action.** Once an employee has authority through a standing order, they act on it without a fresh instruction each time. Communication gates *new* instructions, not every action within authority already given.
 
 Player commands and employee commands still go through the same validated gateway (§9). This needs an ADR and a contract change (orders, outcomes, knowledge events), reviewed under factory.md §5.
 
