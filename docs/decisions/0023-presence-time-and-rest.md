@@ -51,7 +51,7 @@ type DriverRef = { kind: "FOUNDER" } | { kind: "EMPLOYEE"; characterId: Characte
 
 - **Carried goods:** in M002 the founder carries only the purse. Goods move on vehicles, and a vehicle's cargo is always known while the founder is aboard it. Carrying goods on foot isn't needed for any M002 action, so it's left out. It can be added later as a field.
 - **All of `founder` is always known** (ADR 0021 decision 3). It goes into `PlayerSnapshot.founder` unchanged, plus derived display fields: the current leg's waypoints and progress for the map, and whether the founder is tired (decision 7).
-- **Vehicles gain `parkedAt: LocationId | null`** (`VehicleState`). The invariant: it's `null` exactly while the truck is on a delivery trip or carrying the founder on `TRAVEL`, and otherwise names where it stands. This matches ADR 0021's `VEHICLE_WHEREABOUTS`. A truck carrying the founder on `TRAVEL` counts as unavailable for dispatch (`VEHICLE_UNAVAILABLE`), the same as one on a trip.
+- **Vehicles gain `parkedAt: LocationId | null`** (`VehicleState`). The invariant: it's `null` exactly while the truck is on a delivery trip or carrying the founder on `TRAVEL`, and otherwise names where it stands. This matches ADR 0021's `VEHICLE_WHEREABOUTS`. With `founderRules` on, a truck that isn't parked in the live view of the place the founder acts from (on a trip, carrying the founder, or parked elsewhere) is rejected with `VEHICLE_NOT_AT { vehicleId, locationId }`, where `locationId` is the founder's place, never the truck's (ADR 0022). That way the reason doesn't reveal `VEHICLE_WHEREABOUTS` once a hired Driver runs the truck. `VEHICLE_UNAVAILABLE` remains only for `founderRules` off.
 - **Deliveries record their driver:** `DeliveryState.driver: DriverRef | null`. `null` means a pre-M002 delivery with no driver (decision 10).
 
 ### 2. What "present" means (for ADR 0021 and ADR 0022)
@@ -123,8 +123,7 @@ This record owns the rejection reasons for its three commands: `TRAVEL`, `REST` 
 | `TRAVEL` | `via` isn't a simple path from here to the destination | **`INVALID_PATH`** (new) |
 | `TRAVEL` (vehicle) | No path avoids routes known to be closed | **`NO_PATH { destinationLocationId }`** (new) |
 | `TRAVEL` (vehicle) | A route in `via` is known to be closed | `ROUTE_CLOSED` (existing; known) |
-| `TRAVEL` (vehicle) | The truck isn't parked at the founder's place | `VEHICLE_NOT_AT { vehicleId, locationId }` (ADR 0022) |
-| `TRAVEL` (vehicle) | The truck is on a trip or carrying the founder | `VEHICLE_UNAVAILABLE` (existing) |
+| `TRAVEL` (vehicle) | The truck isn't parked at the founder's place: on a trip, carrying the founder, or parked elsewhere | `VEHICLE_NOT_AT { vehicleId, locationId }` (ADR 0022), where `locationId` is the founder's place |
 | `REST` | The founder is travelling, riding or already resting | `FOUNDER_AWAY` |
 | `REST` | The founder is busy | `FOUNDER_BUSY` |
 | `REST` | `untilTick` isn't within [`now + MIN_REST_TICKS`, `now + MAX_REST_TICKS`] | **`INVALID_REST_LENGTH { min, max }`** (new) |
@@ -173,7 +172,7 @@ Travel, riding a delivery and rest take their own time (decisions 3, 5, 7) and a
 - **A delivery needs a driver aboard.** `DISPATCH_DELIVERY` gains `driver: DriverRef | null`. A newly dispatched delivery must name a driver, or ADR 0022 rejects it with `NO_DRIVER`. `null` exists only in migrated pre-M002 commands and deliveries (decision 10). In M002 the founder is the only driver until a Driver is hired (ADR 0025).
 - **When the founder drives,** they must be `PRESENT` and not busy at the facility where the truck is parked and the cargo is held. They load (`LOAD_TRUCK`, decision 4). At `busy.until` the founder phase persists the live view and sets `ON_DELIVERY`, and the truck sets out with `parkedAt: null`. The founder observes at the buyer on the arrival tick (decision 2), rides back on the return leg, and becomes `PRESENT` when the truck returns.
 - **The return leg ends where the delivery started:** the location of `fromFacilityId`, as `logistics.ts` already does by reversing the outbound route. On `VEHICLE_RETURNED`, the truck's `parkedAt` is set to that location, and so is the founder's `PRESENT`. A truck dispatched from the depot returns to the depot, not to its home facility.
-- **The truck must be parked at the cargo's facility** (`VEHICLE_NOT_AT` otherwise, ADR 0022).
+- **The truck must be parked at the cargo's facility, which is where the founder is acting** (`VEHICLE_NOT_AT { vehicleId, locationId: the founder's place }` otherwise, ADR 0022, whatever the truck is doing).
 - **Staying behind at the buyer** (letting the truck wait, or sending it on without the founder) is out of scope for M002. A truck can't move without a driver, and the founder rides the whole round trip.
 - **Stranded trucks:** a truck parked somewhere whose only road out is closed with `reopensAt: null` can't be driven away until the scenario reopens the road (ADR 0019 decision 5). R1 (#176) and ADR 0020's soft-lock analysis must account for that.
 
