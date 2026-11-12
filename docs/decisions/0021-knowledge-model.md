@@ -141,7 +141,7 @@ A source never reveals more than the table allows, and the channel copies the wo
 
 **Classifying transactions.** Whether a ledger transaction is known is decided **per transaction**, not per `TransactionKind`. A kind doesn't determine whether a transaction moves cash: wages accrue without a cash line when cash is 0, for example.
 
-1. **Known at once:** posted at game creation, or caused by the founder's own command, or posted at the founder's place while they're present. This last test applies only to transactions concerning a place. Ones with no place (the day's summed wage and overhead charges, say) go on to rules 2 and 3.
+1. **Known at once:** posted at game creation, or caused by the founder's own command, or posted at the founder's place while they're present. This last test applies only to transactions concerning a place. Also known at once, with or without a cash leg: **charges whose amount depends only on agreements the founder made** (decision 3). In M001 those are the midnight wage and overhead charges (`DAILY_SETTLEMENT:WAGES` / `:OVERHEAD`). Any other transaction with no place goes on to rules 2 and 3.
 2. **Otherwise, if it has a CASH entry, it's a cash posting:** known, and a channel for its cause (the table below).
 3. **Otherwise, if it has entries,** it goes into `pendingBooks` (decision 7).
 4. **Transactions with no entries never appear in the player's books.** They aren't money lines (the finance ledger already skips `PROGRESSION`). What they report (offers, route closures, shortages, delays, the market cycle) reaches the player only through records, news and activity.
@@ -151,13 +151,13 @@ A source never reveals more than the table allows, and the channel copies the wo
 | Posting | Kind | Reveals |
 |---|---|---|
 | Installment penalty paid at the deadline (ADR 0018 decision 7) | `INSTALLMENT_SETTLEMENT` | `CONTRACT_PROGRESS` for that contract |
-| Penalty paydown at midnight (ADR 0018 decision 8) | `DAILY_SETTLEMENT` | Nothing new. The accrued penalty is already known, because the installment's settlement revealed `CONTRACT_PROGRESS` (above) |
+| Penalty paydown at midnight (`DAILY_SETTLEMENT:PENALTIES`, ADR 0018 decision 8) | `DAILY_SETTLEMENT` | Nothing new. The accrued penalty is already known, because the installment's settlement revealed `CONTRACT_PROGRESS` (above) |
 | Payroll paydown at midnight (`DAILY_SETTLEMENT:PAYROLL`, ADR 0017 decision 9) | `DAILY_SETTLEMENT` | Nothing new: it pays down agreed wages already known |
 | Truck home: transport cost (ADR 0019 decision 2) | `VEHICLE_RETURN` | `VEHICLE_WHEREABOUTS` for that truck, plus news of a failed deal if cargo came home (decision 7). The whole transaction is known, including any cargo booked back into stock, but not the rest of the home facility's `FACILITY_STOCK` |
 | Sale proceeds on arrival | `SALE` | `CONTRACT_PROGRESS` if it was an installment, `VEHICLE_WHEREABOUTS`, and the sale itself as activity. In M002 the founder is usually on the truck, so they're present anyway |
 | A shakedown (T07f) | `LOSS` | The shakedown, as news |
-| A production job completing or failing, conversion cost paid from cash (`settleJob` → `conversionPosting`, ADR 0017) | `PRODUCTION`, `PRODUCTION_WRITE_OFF` | `FACILITY_OPERATIONS` and `FACILITY_STOCK` of that facility |
-| Wages and overhead charged at midnight (`DAILY_SETTLEMENT:WAGES` / `:OVERHEAD`) | `DAILY_SETTLEMENT` | Nothing new: agreed amounts, summed over facilities. Known at once even with no cash leg (decision 7) |
+| A production job completing or failing, conversion cost paid from cash (`settleJob` → `conversionPosting`, ADR 0017) | `PRODUCTION`, `PRODUCTION_WRITE_OFF` | `FACILITY_OPERATIONS` and `FACILITY_STOCK` of that facility. That's broader than `VEHICLE_RETURN`, and deliberately so: the posting is the batch itself. A recipe with no conversion cost posts no cash leg, so it falls under decision 7 |
+| Wages and overhead charged at midnight (`DAILY_SETTLEMENT:WAGES` / `:OVERHEAD`) | `DAILY_SETTLEMENT` | Nothing new: agreed amounts, summed over facilities. Known at once even with no cash leg (rule 1), so they need no decision 7 row |
 
 A new producer of away-from-founder cash postings has to add its row to this table. The coverage test runs over the transaction **producers** (identified by idempotency-key family, such as `DAILY_SETTLEMENT:PAYROLL`), not over `TransactionKind`. A producer needs a row **in each table it can post to**: one that can post with or without a cash leg (production, installment settlement, `VEHICLE_RETURN`) needs a row in both, and the test fails for any missing one.
 
