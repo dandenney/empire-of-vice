@@ -34,8 +34,8 @@ type FounderWhereabouts =
       legDepartedAt: Tick; legArrivesAt: Tick;
       destinationLocationId: LocationId }
   | { kind: "ON_DELIVERY"; deliveryId: DeliveryId; vehicleId: VehicleId;
-      /** Set on the tick the truck reaches the buyer; see decision 2. */
-      atBuyer: { locationId: LocationId; tick: Tick } | null }
+      /** Set on the tick the outbound leg resolves at its destination; see decision 2. */
+      atStop: { locationId: LocationId; tick: Tick } | null }
   | { kind: "RESTING"; locationId: LocationId; startedAt: Tick; until: Tick };
 
 type Transport = { kind: "FOOT" } | { kind: "VEHICLE"; vehicleId: VehicleId };
@@ -51,14 +51,14 @@ type DriverRef = { kind: "FOUNDER" } | { kind: "EMPLOYEE"; characterId: Characte
 
 - **Carried goods:** in M002 the founder carries only the purse. Goods move on vehicles, and a vehicle's cargo is always known while the founder is aboard it. Carrying goods on foot isn't needed for any M002 action, so it's left out. It can be added later as a field.
 - **All of `founder` is always known** (ADR 0021 decision 3). It goes into `PlayerSnapshot.founder` unchanged, plus derived display fields: the current leg's waypoints and progress for the map, and whether the founder is tired (decision 7).
-- **Vehicles gain `parkedAt: LocationId | null`** (`VehicleState`). The invariant: it's `null` exactly while the truck is on a delivery trip or carrying the founder on `TRAVEL`, and otherwise names where it stands. This matches ADR 0021's `VEHICLE_WHEREABOUTS`. With `founderRules` on, a truck that isn't parked in the live view of the place the founder acts from (on a trip, carrying the founder, or parked elsewhere) is rejected with `VEHICLE_NOT_AT { vehicleId, locationId }`, where `locationId` is the founder's place, never the truck's (ADR 0022). That way the reason doesn't reveal `VEHICLE_WHEREABOUTS` once a hired Driver runs the truck. `VEHICLE_UNAVAILABLE` remains only for `founderRules` off.
+- **Vehicles gain `parkedAt: LocationId | null`** (`VehicleState`). The invariant: it's `null` from the truck's departure until its return (or, on `TRAVEL`, from setting out until arrival or a halt), and otherwise names where it stands. A truck being loaded already has its `trip` (set at dispatch, with `departedAt` = the end of loading) but is still parked: `parkedAt` becomes `null` when the founder phase handles the departure (decision 2a). How a hired Driver is told "this truck is being loaded here" is ADR 0025's. This matches ADR 0021's `VEHICLE_WHEREABOUTS`. With `founderRules` on, a truck that isn't parked in the live view of the place the founder acts from (on a trip, carrying the founder, or parked elsewhere) is rejected with `VEHICLE_NOT_AT { vehicleId, locationId }`, where `locationId` is the founder's place, never the truck's (ADR 0022). That way the reason doesn't reveal `VEHICLE_WHEREABOUTS` once a hired Driver runs the truck. `VEHICLE_UNAVAILABLE` remains only for `founderRules` off.
 - **Deliveries record their driver:** `DeliveryState.driver: DriverRef | null`. `null` means a pre-M002 delivery with no driver (decision 10).
 
 ### 2. What "present" means (for ADR 0021 and ADR 0022)
 
 The founder is **present** at location L exactly when `whereabouts` is `PRESENT` at L, busy or not. Doing something at a place is still being there. **Commands that need presence (ADR 0022's gate table) use only this definition.** Anything else gets `NOT_PRESENT`.
 
-**Observation also counts a stop on a delivery.** While `whereabouts` is `ON_DELIVERY` and `atBuyer.tick === state.tick`, the founder **observes** at `atBuyer.locationId`: ADR 0021's live view, catch-up and tick-end persist treat them as present there. That's what "face to face with the buyer" means in M002: the founder sees the hand-over and everything at the buyer that the live view covers, so the delivery's result is known. Agreeing new business there is a command, and it needs `PRESENT`. In M002 the founder can't step off the truck (decision 5), so new deals at a buyer need a separate trip. This replaces "plus the arrival tick" in ADR 0022 §3 for commands. **ADR 0022 must align: its presence gate is `PRESENT` only.**
+**Observation also counts a stop on a delivery.** While `whereabouts` is `ON_DELIVERY` and `atStop.tick === state.tick`, the founder **observes** at `atStop.locationId`, which is the buyer for a sale or installment and the destination facility for a `TRANSFER`: ADR 0021's live view, catch-up and tick-end persist treat them as present there. That's what "face to face with the buyer" means in M002: the founder sees the hand-over and everything at the buyer that the live view covers, so the delivery's result is known. Agreeing new business there is a command, and it needs `PRESENT`. In M002 the founder can't step off the truck (decision 5), so new deals at a buyer need a separate trip. This replaces "plus the arrival tick" in ADR 0022 §3 for commands. **ADR 0022 must align: its presence gate is `PRESENT` only.**
 
 The founder isn't present anywhere while `TRAVELLING`, `ON_DELIVERY` (apart from that observation tick), or `RESTING`. A sleeping founder doesn't watch the still: waking counts as an arrival, so ADR 0021's catch-up runs and shows what changed overnight. Travelling still refreshes the current route's `ROUTE_CONDITION` (ADR 0021 decision 5).
 
@@ -69,14 +69,32 @@ The founder isn't present anywhere while `TRAVELLING`, `ON_DELIVERY` (apart from
 
 ### 2a. The founder phase in the tick order
 
-Founder transitions run in a new **founder phase**, after the vehicles phase and before the deadlines phase. SIM-001's order becomes: commands, production, vehicles, **founder**, deadlines, midnight, then ADR 0021's persist step, then emit and publish. Running after the vehicles phase means arrivals and returns that happened this tick are visible to the founder phase. In order, for the current tick:
+Founder transitions run in a new **founder phase**. The kernel's full order (`#processTick`, `registry.ts` `PHASES`) becomes:
 
-1. **Busy ends:** if `busy.until ≤ tick`, clear it. If the activity was `LOAD_TRUCK`, persist the live view and become `ON_DELIVERY` (decision 5).
+1. due commands, in `(scheduledTick, sequence)` order
+2. `production`
+3. `vehicles`
+4. world events (`#resolveWorldEvents`: route closures and reopenings, shakedowns)
+5. `resolution`
+6. **`founder`** (new)
+7. `deadlines`
+8. `midnight` (on midnight ticks)
+9. ADR 0021's persist step, then commit, emit and publish.
+
+The founder phase runs after the vehicles phase, so this tick's arrivals and returns are visible to it. It also runs after world events, so leg starts and departures see this tick's closures, the same way dispatch validation does on the next tick. `founder` becomes a new entry in the kernel's `PHASES` (decision 11).
+
+**When a busy activity ends.** A command applied at tick `t` (`state.tick + 1` for an eager command, ADR 0004) checks the busy gate as `busy !== null && busy.until > t`. A command on tick `busy.until` is accepted, even though the founder phase that clears `busy` runs later in that tick. `now + duration` in decision 4 uses the same `t`, so while paused it counts from `state.tick + 1`.
+
+In order, the founder phase does this for the current tick:
+
+1. **Busy ends:** if `busy.until ≤ tick`, clear it. If the activity was `LOAD_TRUCK`, it's the truck's departure:
+   - If the trip's first route is open, persist the live view, become `ON_DELIVERY`, and set the truck's `parkedAt` to `null` (decision 5).
+   - If it's closed (including a closure from this tick's world events), the truck doesn't set out. That's ADR 0022's `ROUTE_FOUND_CLOSED` at departure: the cargo is unloaded back into the facility, the founder stays `PRESENT`, and the route's `ROUTE_CONDITION` record is written directly, as `IN_PERSON`, because the founder is standing there.
 2. **Travel legs:** if `legArrivesAt ≤ tick`, either start the next leg or arrive (decision 3). A vehicle leg that's closed halts the trip (decision 3).
-3. **Delivery stops:** if this founder's truck reached the buyer this tick, set `atBuyer`. If it returned home this tick (`VEHICLE_RETURNED`), become `PRESENT` at the return location (decision 5).
+3. **Delivery stops:** if the outbound leg of this founder's delivery resolved at its destination this tick and the cargo wasn't seized, set `atStop`. That covers a sale, an installment or a `TRANSFER`. If the truck returned this tick (`VEHICLE_RETURNED`), become `PRESENT` at the return location (decision 5).
 4. **Waking:** if `RESTING` and `until ≤ tick`, become `PRESENT` at the same place (decision 7).
 
-Every arrival in steps 2–4 (destination, halt, return home, waking, the stop at a buyer) runs ADR 0021's **arrival catch-up** in this phase. The deadlines and midnight phases may change things later in the same tick, and the tick-end persist records the final values.
+Every arrival in steps 2–4 (destination, halt, return, waking, a delivery stop) runs ADR 0021's **arrival catch-up** in this phase. An early `WAKE` runs the catch-up inside its own transaction instead (decision 7). The deadlines and midnight phases may change things later in the same tick, and the tick-end persist records the final values.
 
 ### 3. Travel
 
@@ -129,6 +147,16 @@ This record owns the rejection reasons for its three commands: `TRAVEL`, `REST` 
 | `REST` | `untilTick` isn't within [`now + MIN_REST_TICKS`, `now + MAX_REST_TICKS`] | **`INVALID_REST_LENGTH { min, max }`** (new) |
 | `WAKE` | The founder isn't resting | **`NOT_RESTING`** (new) |
 
+**Check order.** When more than one row applies, the first one in ADR 0022 §1's gate order wins:
+
+1. shape and identity (`UNKNOWN_ENTITY`, including an unknown `transport.vehicleId`, `INVALID_REST_LENGTH`)
+2. presence and busy (`FOUNDER_AWAY`, `FOUNDER_BUSY`, `NOT_RESTING`)
+3. validity against what the founder can see (`ALREADY_THERE`, `INVALID_PATH`, `VEHICLE_NOT_AT`, `ROUTE_CLOSED`, `NO_PATH`).
+
+Within a step, table order wins.
+
+**Units.** `INVALID_REST_LENGTH { min, max }` holds **absolute ticks**: the earliest and latest valid `untilTick` for the apply tick.
+
 On foot there's always a path, because the graph is connected and walkers ignore closures. The mismatched-mode case can't happen: `Transport` is a discriminated union.
 
 ### 4. How a command takes time
@@ -143,7 +171,7 @@ GDD §18: presence gates what the founder can do, and time costs represent meani
   - Effects with no physical follow-on (a purchase, a signed contract, an agreed deal) are complete at once.
 - **While busy**, the founder can't start another timed activity, travel, or rest (`FOUNDER_BUSY`). Instant commands at the same place are still allowed. Being busy is always known, so this leaks nothing.
 - **Tired founders work slower:** while tired (decision 7), each `ACTIVITY_DURATIONS` value is multiplied by `TIRED_DURATION_PPM`, rounded up. Travel, riding and rest durations aren't affected.
-- **A route closing while the truck is being loaded:** the departure at `busy.until` is the start of the trip's first leg. If the route is closed then, the truck doesn't set out. That's ADR 0022's `ROUTE_FOUND_CLOSED` outcome, applied at departure: the cargo stays put and the founder stays `PRESENT`. ADR 0019's "trips in flight are unaffected" applies from `departedAt` on. **ADR 0022 must align:** its `ROUTE_FOUND_CLOSED` also covers this departure case.
+- **A route closing while the truck is being loaded:** the departure at `busy.until` is the start of the trip's first leg, handled in the founder phase (decision 2a step 1). If the route is closed then, the truck doesn't set out. That's ADR 0022's `ROUTE_FOUND_CLOSED` outcome, applied at departure: the cargo is unloaded back into the facility, the founder stays `PRESENT`, and the route's condition is recorded. ADR 0019's "trips in flight are unaffected" applies from `departedAt` on.
 - **Snapshot progress:** a job or trip whose `startedAt` or `departedAt` is still in the future must show 0 progress, not a negative value. That's for SK1's projection.
 
 Options considered: applying the effect only when the activity ends (rejected: it would split every command into a reservation and a later completion, the work ADR 0022 is already doing for outcomes, and the effect would be invisible while paused); applying everything now and blocking the founder (chosen: it matches ADR 0004's eager apply, it's atomic, and the time cost is real, because the founder can't be anywhere else meanwhile).
@@ -171,7 +199,13 @@ Travel, riding a delivery and rest take their own time (decisions 3, 5, 7) and a
 
 - **A delivery needs a driver aboard.** `DISPATCH_DELIVERY` gains `driver: DriverRef | null`. A newly dispatched delivery must name a driver, or ADR 0022 rejects it with `NO_DRIVER`. `null` exists only in migrated pre-M002 commands and deliveries (decision 10). In M002 the founder is the only driver until a Driver is hired (ADR 0025).
 - **When the founder drives,** they must be `PRESENT` and not busy at the facility where the truck is parked and the cargo is held. They load (`LOAD_TRUCK`, decision 4). At `busy.until` the founder phase persists the live view and sets `ON_DELIVERY`, and the truck sets out with `parkedAt: null`. The founder observes at the buyer on the arrival tick (decision 2), rides back on the return leg, and becomes `PRESENT` when the truck returns.
-- **The return leg ends where the delivery started:** the location of `fromFacilityId`, as `logistics.ts` already does by reversing the outbound route. On `VEHICLE_RETURNED`, the truck's `parkedAt` is set to that location, and so is the founder's `PRESENT`. A truck dispatched from the depot returns to the depot, not to its home facility.
+- **The dispatch origin is where the truck is, not its home.** Today `logistics.ts` takes the origin, the stock and the route from the vehicle's home facility (`planDispatch`), and `returnHome` books returned cargo into the home facility and reports `VEHICLE_RETURNED.locationId` as home. Those only agree in M001, because every dispatch starts from home. **SK1 changes this with `founderRules` on:**
+  - The origin is the facility at the founder's place (later, a hired Driver's station, ADR 0025), recorded in `DeliveryState.fromFacilityId`.
+  - Route resolution and the stock check use that facility.
+  - The return leg reverses the outbound route back to it. On return, cargo is unloaded into `fromFacilityId`, `VEHICLE_RETURNED.locationId` is that facility's location, and the truck's `parkedAt` and the founder's `PRESENT` are set there.
+  - A truck dispatched from the depot returns to the depot.
+
+  With `founderRules` off, the origin stays the home facility, so M001 is unchanged.
 - **The truck must be parked at the cargo's facility, which is where the founder is acting** (`VEHICLE_NOT_AT { vehicleId, locationId: the founder's place }` otherwise, ADR 0022, whatever the truck is doing).
 - **Staying behind at the buyer** (letting the truck wait, or sending it on without the founder) is out of scope for M002. A truck can't move without a driver, and the founder rides the whole round trip.
 - **Stranded trucks:** a truck parked somewhere whose only road out is closed with `reopensAt: null` can't be driven away until the scenario reopens the road (ADR 0019 decision 5). R1 (#176) and ADR 0020's soft-lock analysis must account for that.
@@ -193,10 +227,10 @@ GDD §18: rest is a required part of the day's time budget, with a clear time co
 
 - **Commands:** `REST { untilTick }` and `WAKE`.
   - `REST` starts `RESTING` at the founder's current place until `untilTick`, which must be between `now + MIN_REST_TICKS` and `now + MAX_REST_TICKS` (game-data, PLACEHOLDER 2 h and 14 h). It persists the live view first (decision 2).
-  - The UI offers **"rest until morning"** as one click. It sends `untilTick = clamp(next WAKE_HOUR, now + MIN_REST_TICKS, now + MAX_REST_TICKS)`, where `WAKE_HOUR` is game-data (PLACEHOLDER 06:00) and "next" is the first one after `now + MIN_REST_TICKS`. So at 04:30 it's 06:00 the next day if that's within the maximum, otherwise the maximum. There are no hourly bedtime clicks.
-  - `WAKE` ends a rest early. It's instant.
+  - The UI offers **"rest until morning"** as one click. It sends `untilTick = clamp(next WAKE_HOUR, now + MIN_REST_TICKS, now + MAX_REST_TICKS)`, where `WAKE_HOUR` is game-data (PLACEHOLDER 06:00) and "next" is the first one after `now + MIN_REST_TICKS`. So at 04:30 it's 06:00 the next day if that's within the maximum, otherwise the maximum. The UI computes it from a snapshot that may be up to one scheduler batch behind the apply tick (`MAX_TICKS_PER_STEP` = 60, ADR 0014). So it uses a margin of that size on both ends, clamping into [`now + MIN_REST_TICKS + 60`, `now + MAX_REST_TICKS − 60`], and the one-click form can't get `INVALID_REST_LENGTH`. While paused, the snapshot is exact. There are no hourly bedtime clicks.
+  - `WAKE` ends a rest early. It's instant. In its own transaction the founder becomes `PRESENT`, the arrival catch-up runs, and recovery counts `rested = apply tick − startedAt`.
   - When the rest ends, the founder wakes and becomes `PRESENT` at the same place, and the catch-up runs (decision 2a).
-- **Where:** anywhere the founder is present. **Rest places** (`REST_PLACES`, game-data: the cot at Hollow Creek, PLACEHOLDER; a home is story) give a full rest in `FULL_REST_TICKS` (PLACEHOLDER 8 h). Anywhere else is sleeping rough (the truck cab, a back room), which needs `ROUGH_REST_TICKS` (PLACEHOLDER 12 h) for a full rest. Resting is never refused because of where the founder is.
+- **Where:** anywhere the founder is present. **Rest places** (`REST_PLACES`, game-data: the cot at Hollow Creek, PLACEHOLDER; a home is story) give a full rest in `FULL_REST_TICKS` (PLACEHOLDER 8 h). Anywhere else is sleeping rough (the truck cab, a back room), which needs `ROUGH_REST_TICKS` (PLACEHOLDER 12 h) for a full rest. Resting is never refused because of where the founder is. GDD §18 speaks of resting "at a place where the founder can sleep". This record deliberately reads that as "anywhere, with rest places better", for the no-trap rule (decision 8).
 - **Tiredness is one rule, not a meter.** The founder is **tired** when `now − awakeSince > TIRED_AFTER_TICKS` (PLACEHOLDER 18 h). While tired, `ACTIVITY_DURATIONS` values are multiplied by `TIRED_DURATION_PPM` (PLACEHOLDER 1 500 000: 50% longer). That's the whole penalty. There's no collapse, no randomness, no lost money, nothing is refused, and travel, riding and rest are unaffected. Late nights are allowed and cost time the next day, which is the tradeoff GDD §18 asks for.
 - **Recovery:**
   - A rest of at least the full length for that place sets `awakeSince` to the wake tick.
@@ -209,7 +243,7 @@ GDD §18: rest is a required part of the day's time budget, with a clear time co
 
 From any state, the founder can rest within a bounded number of ticks, and no state blocks progress because of rest. Proof sketch for the locked property test (SK1):
 
-1. **`REST` is refused only while the founder is `TRAVELLING`, `ON_DELIVERY`, `RESTING` or busy** (`FOUNDER_AWAY`, `FOUNDER_BUSY`), or for an out-of-range `untilTick`, which the one-click form never sends. It's never refused for location, hours, cash or tiredness.
+1. **`REST` is refused only while the founder is `TRAVELLING`, `ON_DELIVERY`, `RESTING` or busy** (`FOUNDER_AWAY`, `FOUNDER_BUSY`), or for an out-of-range `untilTick`, which the one-click form never sends. It's never refused for location, hours, cash or tiredness. Counting starts from the tick the player stops issuing other founder commands. Commands already queued for later ticks apply before a fresh command on their tick (ADR 0004), and there's no way to cancel them, so they extend the wait. The bound below accounts for that.
 2. **Each of those states ends in bounded time:**
    - busy ends at `busy.until` (at most the longest `ACTIVITY_DURATIONS` value × the tired factor)
    - a rest ends at its `until` (at most `MAX_REST_TICKS`)
@@ -218,7 +252,9 @@ From any state, the founder can rest within a bounded number of ticks, and no st
 3. **Walking is never blocked:** closures stop vehicles only, and the route graph is connected (validated). The founder can always walk to a rest place, and resting where they stand is allowed anyway.
 4. **Tiredness only lengthens activity durations, by a bounded factor.** It never makes a command invalid: no command requires being rested, and no rejection reason mentions tiredness.
 
-The bound for the test is `B = max(`longest `ACTIVITY_DURATIONS` × `TIRED_DURATION_PPM`, `MAX_REST_TICKS`, the longest delivery round trip + `delayTicks` + the longest `LOAD_TRUCK` duration, the longest simple path's duration on foot (× `FOOT_TRAVEL_PPM`) and by vehicle`)`, all computed from game-data. The property: for random valid states and command sequences, `REST` (the one-click form) is accepted within at most `B` ticks, and the set of commands a rested founder could dispatch is the same as a tired one's, apart from durations.
+The bound for the test is `B = max(`longest `ACTIVITY_DURATIONS` × `TIRED_DURATION_PPM`, `MAX_REST_TICKS`, the longest delivery round trip + `delayTicks` + the longest `LOAD_TRUCK` duration × `TIRED_DURATION_PPM`, the longest simple path's duration on foot (× `FOOT_TRAVEL_PPM`) and by vehicle`)`, all computed from game-data.
+
+The property: from any reachable state, if from tick `now` the player issues only the one-click `REST` each tick, it's accepted by tick `now + max(0, Q − now) + B`, where `Q` is the latest `scheduledTick` among queued founder commands (or `now` if there are none). Also, the set of commands a rested founder could dispatch is the same as a tired one's, apart from durations.
 
 ### 9. Pacing
 
@@ -227,7 +263,13 @@ The bound for the test is `B = max(`longest `ACTIVITY_DURATIONS` × `TIRED_DURAT
   - **The M002 scenario uses 20 000 and `founderRules: true`.** That's 3 ticks per real second at 1×, 8 real minutes per game day, 4 at 2× and 2 at 4×.
   - `REAL_MS_PER_GAME_HOUR_AT_1X` in `packages/game-data/src/pacing.ts` becomes the default the M001 scenario uses (5 000, unchanged). The worker's scheduler reads the loaded scenario's value instead of the constant (ADR 0014 decision 9).
   - The tick (1 game minute), the accumulator, its integer arithmetic and the batch bounds don't change.
-- **With `founderRules: false`**, the founder state still exists (the save shape is the same), but it never gates anything. ADR 0022's presence gate passes everywhere, deliveries need no driver, and no command takes the founder's time. That's ADR 0022's lab mode, and it never reaches the M002 game.
+- **With `founderRules: false`**, the founder state still exists (the save shape is the same), but it never gates anything and **never changes**:
+  - ADR 0022's presence gate passes everywhere, deliveries need no driver, and no command takes the founder's time.
+  - A dispatch with `driver: FOUNDER` doesn't put the founder aboard.
+  - `TRAVEL`, `REST` and `WAKE` are rejected (`LOCKED`, the existing reason for unavailable features).
+  - The founder phase does nothing.
+
+  So a migrated or lab M001 run plays exactly as today. Its state differs only by the new fields. Because of those fields, the Sprint Zero and fixture state hashes still move, and the contract task regenerates them (alongside ADR 0022's per-trip RNG change, which SK1 owns). That's ADR 0022's lab mode, and it never reaches the M002 game.
 - **Overnight pacing.** At 8 minutes per game day, a night would be about 2.7 real minutes of watching the founder sleep. Instead, **while the founder is `RESTING` and the game is running**, the worker's scheduler runs at `REST_SPEED_MULTIPLIER` × 1× (game-data, PLACEHOLDER 16), whatever speed the player chose, so 8 hours of sleep take 10 real seconds.
   - It's not a player `Speed`: the scheduler's `Speed` stays `0 | 1 | 2 | 4`. The fast-forward is a separate internal rate. The status that rides on `SNAPSHOT` (ADR 0014 decision 7) adds a `fastForward: boolean` so the UI can say so.
   - It drops back to the player's speed when the founder wakes, or as soon as an activity item whose importance is `notify` lands in `knowledge.activity` (ADR 0021 decision 8). Importance comes from a new **`ACTIVITY_IMPORTANCE`** table keyed by activity item kind, never from world events (ADR 0021 decision 2), so the speed change leaks nothing.
@@ -257,6 +299,7 @@ The changes below go in one contract-change task (factory.md §7.3), filed when 
   - `ScenarioDefinition.realMsPerGameHourAt1x`, `founderRules` and `founderStartLocationId` (the M001 scenario: 5 000, `false`, Hollow Creek)
   - the new feed-store route, and validation that the route graph is connected
   - `packages/game-data/test/pacing.test.ts` updated for per-scenario pacing (M001 still 5 000).
+- `packages/simulation/src/kernel/registry.ts` and `simulation.ts`: `founder` added to `PHASES` and run between `resolution` and `deadlines` (decision 2a). Its hooks are SK1's.
 - `apps/game/src/workers/scheduler.ts`: reads the scenario's pacing, plus the rest fast-forward and the `fastForward` status flag.
 - `tools/economy-lab/src/targets.ts`: `TICKS_PER_REAL_MINUTE` comes from the M001 scenario's pacing (unchanged at 720), so the M001 targets keep their meaning until T-LAB.
 
