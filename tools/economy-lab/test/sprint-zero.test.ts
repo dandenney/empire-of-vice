@@ -52,10 +52,11 @@ describe("sprint-zero runner", () => {
   // namely moonshine's basic and standard base prices, so both markets' spot prices and
   // every buyer's quote, and Kessler's and Lakeview's quote ratios. The path's revenue
   // moves with the basic price; its $11.00 cost of goods doesn't);
-  // fnv1a64:4c6140d1b88540fa (T07h, issue #159: the opening building value goes from $800 to $400,
-  // so the opening balance transaction, and moonshine's basic and standard base prices rise, so
-  // both spot prices and every quote. The path itself still costs $11.00 a case).
+  // fnv1a64:a462fc3c3433c143 (T07h, issue #159: the opening building value goes from $800 to $100,
+  // so the opening balance transaction; moonshine's basic and standard base prices and both markets'
+  // baseline demand rise, so both spot prices and every quote; Lakeview's quote ratio and the
+  // roadhouse's daily budget rise. The path itself still costs $11.00 a case).
   it("has a pinned replay hash", async () => {
-    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:4c6140d1b88540fa"`);
+    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:a462fc3c3433c143"`);
   });
 });

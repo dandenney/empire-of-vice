@@ -32,7 +32,7 @@ const shakedown = (netWorthSharePpm: number, patch: Partial<ScenarioShakedown> =
   ...patch,
 });
 
-/** The First Shipment with its building pinned at $800, so the sheet these tests assume doesn't move with tuning (#159 set it to $400). */
+/** The First Shipment with its building pinned at $800, so the sheet these tests assume doesn't move with tuning (#159 set it to $100). */
 const scenarioWith = (...events: ScenarioShakedown[]): ScenarioDefinition => ({
   ...FIRST_SHIPMENT_SCENARIO,
   openingBalance: { ...FIRST_SHIPMENT_SCENARIO.openingBalance, buildings: cents(80_000) },

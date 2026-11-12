@@ -69,7 +69,7 @@ export const RECIPES: readonly RecipeDefinition[] = [
       { materialId: SUGAR, quantity: 2 }, // PLACEHOLDER
     ],
     ticksPerCase: 144, // PLACEHOLDER
-    laborPerCase: cents(1_000), // PLACEHOLDER (T07d tuned: standard priced well above basic, margin close to it)
+    laborPerCase: cents(950), // PLACEHOLDER (T07d tuned: standard priced well above basic, margin close to it; T07h trimmed it from $10.00 to keep the standard strategies level with volume-producer)
     overheadPerCase: cents(100), // PLACEHOLDER (T05g tuned; T07 tunes next)
     requiredEquipmentIds: [COPPER_STILL, QC_STATION],
     failureChance: ratio(0), // PLACEHOLDER
