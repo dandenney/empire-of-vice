@@ -8,7 +8,7 @@ This file is a map. Read the linked doc for the area you're touching before chan
 
 - Game design (rules, formulas, tuning defaults): `docs/game-design/gdd-v0.5.md`. Sections have IDs like SIM-001, ECO-001, FIN-001; issues cite them. GDD §11–12 are superseded by the architecture and milestone docs.
 - Architecture and hard rules: `docs/architecture/technical-architecture.md`
-- Current milestone, task graph, and acceptance criteria: `docs/milestones/001-first-shipment.md`
+- Current milestone, task graph, and acceptance criteria: `docs/milestones/002-the-first-hire.md` (M002 design: GDD Part II, §16–§21). M001: `docs/milestones/001-first-shipment.md`
 - How agent work flows (issues, branches, checks, PRs): `docs/factory.md`
 - Decision records: `docs/decisions/`
 
