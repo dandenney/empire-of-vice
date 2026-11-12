@@ -15,17 +15,18 @@ This record decides how knowledge exists in the simulation and the contracts. Co
 | Layer | Lives in | Read by |
 |---|---|---|
 | **World state** | `GameState` as today (ADR 0008) | Systems, tests, the economy lab, debug tools |
-| **Player knowledge** | New `GameState.knowledge` (decision 4) | The player snapshot builder only |
-| **Channels** | Systems that write knowledge records (decision 6) | — |
+| **Player knowledge** | New `GameState.knowledge` (decisions 4 and 7) | The player snapshot builder only |
+| **Channels** | Systems that write knowledge (decision 6) | — |
 
-Knowledge is **authoritative simulation state**, not a UI cache. It's deterministic, hashed, saved, and replayed. It's updated inside the tick, never in the worker or the UI (architecture rule 7).
+Knowledge is **authoritative simulation state**, not a UI cache. It's deterministic, hashed, saved, and replayed. It's updated inside the simulation, never in the worker or the UI (architecture rule 7).
 
 ### 2. Two projections
 
 - **`snapshot(): GameSnapshot` stays as it is**, renamed in documentation to the **world snapshot**. The lab, tests, and a dev-only debug view use it. It's no longer sent to the game UI.
-- **New `playerSnapshot(): PlayerSnapshot`** is what the worker publishes to the UI. It's built **only** from `knowledge`, the always-known state (decision 3), and the founder's current place (decision 5).
+- **New `playerSnapshot(): PlayerSnapshot`** is what the worker publishes to the UI. It's built **only** from `knowledge`, the always-known state (decision 3), and the live view of the founder's current place (decision 5).
 - **Events:** `takeEvents()` stays the full world event stream for the lab. The UI instead gets the player snapshot's `activity` feed (decision 8). The worker stops forwarding world events to the UI, because toasts built from world events are a channel.
-- **Enforcement:** the game app's gateway client accepts only `PlayerSnapshot` messages. An ESLint boundary rule forbids `apps/game` code outside a `debug/` folder from importing `GameSnapshot`. The debug view exists only in dev builds.
+- **Command results:** the worker returns a **`PlayerCommandResult`** to the UI: the status, the command ID and, if rejected, the reason. It has no `eventIds`, because event IDs come from one global counter and their numbers depend on unobserved activity (decision 9).
+- **Enforcement:** the game app's gateway client accepts only `PlayerSnapshot` and `PlayerCommandResult` messages. An ESLint boundary rule forbids `apps/game` code outside a `debug/` folder from importing `GameSnapshot`. The debug view exists only in dev builds.
 
 Options considered: filter `GameSnapshot` in place (one type, but every field becomes a "maybe stale" question and the lab loses its truth), or a separate knowledge-only type (chosen: the world snapshot keeps working for everything M001 built, and the player snapshot can be checked on its own).
 
@@ -33,148 +34,213 @@ Options considered: filter `GameSnapshot` in place (one type, but every field be
 
 These parts of the player snapshot come straight from world state, because the founder can't fail to know them:
 
-- **The clock** and the **game outcome** (winning or losing ends the game, so it's announced).
+- **The clock** and the **game outcome**. Winning or losing ends the game, so it's announced. It's evaluated on the world, as a rule, and is the one accepted exception to the non-leak property (decision 9).
 - **The founder:** where they are or which route they're travelling, what they carry, and their rest state (shapes in ADR 0023).
-- **Cash: the purse.** In M002 the business's money is one purse the founder controls (GDD §17). Every ledger transaction that moves cash is known when it posts. Money that has been earned but isn't in the purse yet (for example, a payment a hired driver is carrying home) isn't cash; ADR 0022 and ADR 0025 decide how that's booked (FIN-001 already has a receivables account).
+- **The cash balance: the purse.** In M002 the business's money is one purse the founder controls (GDD §17). Every **cash posting** is known when it posts, and it's a channel: it tells the founder its cause (decision 6, table of cash postings). Money earned but not yet in the purse (a payment a hired driver is carrying home, say) isn't cash. ADR 0022 and ADR 0025 decide how that's booked, and they may move some postings that now happen away from the founder into payables and receivables. That would narrow this channel; it doesn't change the rule.
 - **Agreements the founder made:** contract terms signed, equipment and vehicles bought, wages agreed, standing orders given. How those agreements are *going* is knowledge (decision 4).
-- **Geography:** places, names, positions, and route geometry and durations. The map is common knowledge. A route's *condition* isn't.
+- **Geography:** places, names, positions, route geometry and durations, and each route's **risk** (`riskPpm`, static game-data, ADR 0019). A route's *condition* (open or closed) isn't always known. **Place discovery is out of scope for M002**: every place is on the map from the start. "Hearing about a new buyer" (GDD §18) would later be a subject kind for places, added to the tables in decisions 4 and 6.
 
 Nothing else is always known. That includes reputation and tier (decision 4, `STANDING`).
 
-### 4. Knowledge records
+### 4. Knowledge records and their values
 
-`GameState.knowledge` holds one record per **subject**, the latest known value:
+`GameState.knowledge.records` holds one record per **subject**, with the latest known value:
 
 ```ts
 interface KnowledgeRecord {
-  readonly subject: KnowledgeSubject;   // kind + id, e.g. { kind: "FACILITY_STOCK", facilityId }
-  readonly value: KnowledgeValue;       // discriminated by subject kind
+  readonly subject: KnowledgeSubject;   // kind + key, e.g. { kind: "FACILITY_STOCK", facilityId }
+  readonly value: KnowledgeValue;       // discriminated by the same kind
   readonly learnedAt: Tick;
   readonly source: KnowledgeSource;
 }
 
+type PartyKind = LocationOccupant["kind"];   // "FACILITY" | "SUPPLIER" | "BUYER" (ADR 0007)
+
 type KnowledgeSource =
-  | { kind: "IN_PERSON"; locationId }
-  | { kind: "PHONE"; partyLocationId }                  // ADR 0024
-  | { kind: "MESSAGE"; takenAtLocationId; takenBy }     // ADR 0024
-  | { kind: "REPORT"; characterId };                    // ADR 0025
+  | { kind: "IN_PERSON"; locationId: LocationId }
+  | { kind: "CASH_POSTING"; transactionId: TransactionId }            // decision 6
+  | { kind: "PHONE"; partyLocationId: LocationId }                    // ADR 0024
+  | { kind: "MESSAGE"; takenAtLocationId: LocationId; takenBy: CharacterId | null }  // ADR 0024
+  | { kind: "REPORT"; characterId: CharacterId };                     // ADR 0025
 ```
 
-**Subjects are fact groups, not single fields.** A visit refreshes a whole group at once, so values within a group are always consistent with each other. M002's subject kinds:
+**Subjects are fact groups, not single fields.** A visit refreshes a whole group at once, so values within a group always agree with each other.
 
-| Subject kind | Keyed by | Value (reuses ADR 0007 snapshot types) |
-|---|---|---|
-| `FACILITY_STOCK` | facility | products (`InventoryPoolSnapshot[]`), materials (`MaterialStockSnapshot[]`), storage used |
-| `FACILITY_OPERATIONS` | facility | production jobs there, workforce present, equipment in place |
-| `SUPPLIER_OFFER` | supplier | materials with unit price, available quantity, shortage flag |
-| `BUYER_WANTS` | buyer | wants (`BuyerWant[]`) and whether they'll deal |
-| `BUYER_BUDGET` | buyer | budget remaining |
-| `CONTRACT_OFFERS` | buyer | that buyer's open offers |
-| `CONTRACT_PROGRESS` | contract | per installment: delivered, outcome, penalty |
-| `MARKET_PRICES` | — (one) | the regional price table (`ProductPriceSnapshot[]`) |
-| `ROUTE_CONDITION` | route | open/closed, reopening time if known, risk |
-| `VEHICLE_WHEREABOUTS` | vehicle | parked at a place, or the trip as last seen |
-| `STANDING` | — (one) | reputation, current tier, unlocks |
+**Values are observed data only.** A value never carries a number the simulation computed from the world for the UI's convenience. Affordances such as `blockedBy`, `maxStartableQuantity` and `maxAcceptableQuantity` are recomputed by the player snapshot builder from known values (decision 8), and never stored in a record. Values reuse ADR 0007 types where those contain no affordances, and use `Omit<…>` of them where they do, so there are no parallel types:
 
-- **Values reuse the snapshot types** (contracts rule 2: no parallel types). A record's value is copied from the world projection at the moment it's learned, so it doesn't change afterwards.
+```ts
+type KnowledgeValue =
+  | { kind: "FACILITY_STOCK"; facilityId: FacilityId;
+      products: readonly InventoryPoolSnapshot[];          // quantities, reservations, cost
+      materials: readonly MaterialStockSnapshot[];
+      storageUsed: number }
+  | { kind: "FACILITY_OPERATIONS"; facilityId: FacilityId;
+      jobs: readonly ProductionJobSnapshot[];
+      workersPresent: number }
+  | { kind: "SUPPLIER_OFFER"; supplierId: SupplierId;
+      materials: SupplierSnapshot["materials"] }           // price, available, shortage
+  | { kind: "BUYER_WANTS"; buyerId: BuyerId;
+      willDeal: boolean;
+      wants: readonly Omit<BuyerWant, "maxAcceptableQuantity">[] }
+  | { kind: "BUYER_BUDGET"; buyerId: BuyerId; budgetRemaining: Money }
+  | { kind: "CONTRACT_OFFERS"; buyerId: BuyerId;
+      offers: readonly Omit<ContractOfferSnapshot, "blockedBy">[] }
+  | { kind: "CONTRACT_PROGRESS"; contractId: ContractId;
+      status: ContractSnapshot["status"];
+      installments: readonly InstallmentSnapshot[] }
+  | { kind: "MARKET_PRICES"; products: readonly ProductPriceSnapshot[] }
+  | { kind: "ROUTE_CONDITION"; routeId: RouteId; status: RouteSnapshot["status"] }
+  | { kind: "VEHICLE_WHEREABOUTS"; vehicleId: VehicleId;
+      parkedAt: LocationId | null; trip: VehicleTrip | null }
+  | { kind: "STANDING"; reputation: number; tierId: TierId; unlocked: readonly UnlockId[] };
+```
+
+Equipment installed at a facility isn't a subject: the founder bought it, so it's an agreement (decision 3).
+
 - **One record per subject; the newest wins.** If two channels deliver the same subject on one tick, the later in tick order wins. There's no history in M002. Keeping older records (for unreliable reports or contradictions) is a later decision, and the `source` field already supports it.
 - **Never known** is the absence of a record. The player snapshot shows it as `null`.
 - **Records are sorted** by subject kind, then by key with `compareIds` (ADR 0007 amendment), so the state hash is stable.
-- **`STANDING` isn't always known.** Reputation moves when an installment settles, and an always-visible reputation would leak whether it was missed. Instead, the founder learns their standing from anyone they deal with: any in-person visit or phone call refreshes `STANDING`. Equipment gating by tier is checked against the world (it's a rule). What the player sees, and any immediate rejection, uses known standing (ADR 0022 decides which).
+- **`STANDING` isn't always known.** Reputation moves when installments settle and deliveries complete, and it's a fact about what others think of you. The founder learns it from anyone they deal with: any in-person visit or phone call refreshes it. With cash postings as a channel (decision 6), an installment that costs a penalty is learned at once anyway. Hiding standing still matters for changes that move no cash, like a fulfilled installment's reputation gain while the founder is on the road. **Tier gating:** equipment purchases are checked against the world's tier, as a rule. That can't leak, because buying equipment requires being at the facility, and being anywhere refreshes `STANDING` (decision 5), so known and world tier agree whenever the check can run. ADR 0022 can rely on this.
 
 ### 5. Being there: the live view
 
-While the founder is **present** at a place (not travelling; "present" is defined by ADR 0023), every subject belonging to that place is refreshed **every tick** as `IN_PERSON`:
+While the founder is **present** at a place (not travelling; ADR 0023 defines "present"), the subjects belonging to that place are the **live view**:
 
 - the facility, supplier, or buyer at that place (all its subject kinds)
 - vehicles parked there
-- routes that start or end there (`ROUTE_CONDITION`)
+- `ROUTE_CONDITION` for routes listed for that place in game-data's `LIVE_VIEW_ROUTES` (default: every route that starts or ends there; "people talk" about the roads in and out). It's a tuning table.
 - `CONTRACT_PROGRESS` and `CONTRACT_OFFERS` for the buyer there
 - `MARKET_PRICES` at any buyer or supplier (people in the trade talk prices)
 - `STANDING`
 
-A route's condition is also refreshed while the founder **travels** it. So the scene is always the truth, and everywhere else is the ledger.
+A route's condition is also live while the founder **travels** it.
 
-**Tick order:** observation runs as a new last step of the tick, after every system and before the projection is published (SIM-001 step 6 becomes "observe, then emit events and publish"). A record's `learnedAt` is the tick it was observed.
+**The live view is read from the world when the player snapshot is built**, with `learnedAt` = the current tick and source `IN_PERSON`. It's never stale, even after a command applied while paused (ADR 0004 applies commands immediately) or at tick 0 of a new or loaded game. Building it changes no state, so loading leaves the state hash unchanged.
+
+**Persisting:** the live view is written into `knowledge.records`, so it's still known after the founder leaves:
+
+- at the end of every tick (a new last step of the tick: SIM-001 step 6 becomes "persist the live view, then emit events and publish"), and
+- inside the transaction of any command that ends the founder's presence (departing; ADR 0023), so a purchase made while paused and followed by leaving is remembered as it ended.
 
 ### 6. Channels and what each reveals
 
-A channel is a system that writes records. Which subject kinds each source can reveal is **game-data** (`KNOWLEDGE_VISIBILITY`), not simulation code:
+A channel is something that writes records or delivers news. Which subject kinds each source can reveal is **game-data** (`KNOWLEDGE_VISIBILITY`), not simulation code. Its shape is `Record<SourceKind, Record<PartyKind, readonly SubjectKind[]>>`, validated at load like other game-data.
 
 | Source | Reveals |
 |---|---|
-| `IN_PERSON` | Everything at the place (decision 5) |
+| `IN_PERSON` | The live view (decision 5) |
 | `PHONE` to a buyer | `BUYER_WANTS`, `CONTRACT_OFFERS`, `CONTRACT_PROGRESS` for their contracts, `STANDING`. **Not** `BUYER_BUDGET`: Kessler tells you his price, not what's in his safe |
 | `PHONE` to a supplier | `SUPPLIER_OFFER`, `STANDING` |
 | `PHONE` to your own facility | Only what someone there tells you: ADR 0025 |
-| `MESSAGE`, `REPORT` | Defined by ADR 0024 and ADR 0025, using this table's shape |
+| `MESSAGE`, `REPORT` | Defined by ADR 0024 and ADR 0025, in this table's shape |
+| `CASH_POSTING` | The cause of the posting: the subjects and news in the table below |
 
-The table's shape is `Record<SourceKind, Record<PartyKind, readonly SubjectKind[]>>`, validated at load like other game-data. A source never reveals more than the table allows, and the channel copies the world value at the time of contact.
+A source never reveals more than the table allows, and the channel copies the world value at the time of contact.
 
-### 7. Catching up on arrival
+**Cash postings that can happen while the founder is elsewhere** (M001 behaviour), and what each one reveals when it posts:
 
-When the founder arrives at a place, they learn what changed while they were away:
+| Posting | Kind | Reveals |
+|---|---|---|
+| Installment penalty paid at the deadline (ADR 0018 decision 7) | `INSTALLMENT_SETTLEMENT` | `CONTRACT_PROGRESS` for that contract |
+| Penalty paydown at midnight (ADR 0018 decision 8) | `DAILY_SETTLEMENT` | Nothing new. The accrued penalty is already known, because the installment's settlement revealed `CONTRACT_PROGRESS` (above) |
+| Payroll and overhead at midnight (ADR 0017 decision 9) | `DAILY_SETTLEMENT` | Nothing new. Wages and overhead are agreed amounts. If production state changes them, `FACILITY_OPERATIONS` for that facility |
+| Truck home: transport cost (ADR 0019 decision 2) | `VEHICLE_RETURN` | `VEHICLE_WHEREABOUTS` for that truck, plus news of a failed deal if cargo came home (decision 7) |
+| Sale proceeds on arrival | `SALE` | `CONTRACT_PROGRESS` if it was an installment, `VEHICLE_WHEREABOUTS`, and the sale itself as activity. In M002 the founder is usually on the truck, so they're present anyway |
+| A shakedown (T07f) | `LOSS` | The shakedown, as news |
 
-- **Diffs:** for each subject the arrival refreshes, the simulation compares the old record with the new value and produces structured catch-up lines, such as a stock change, a job finished, or a price change. They're structured data, not prose. The words are UI copy, and copy is a placeholder until the human decides it.
-- **News:** some world events happen *at* a place and would be lost by a plain diff, such as materials running out mid-batch, a job failing, or cargo seized. Each such event type is tagged with the place it concerns, and while the founder isn't there it's appended to that place's **pending news** in `knowledge`. Each place keeps at most `PENDING_NEWS_LIMIT` items (game-data); older ones drop, and a dropped count is kept. Arriving, or a channel that covers the place, delivers the pending news and clears it.
+A new kind of cash posting added later has to add its row to this table. The contract task adds a test that fails for any `TransactionKind` with cash entries that's missing from the table.
+
+### 7. Catching up, news, and the books
+
+`GameState.knowledge` also holds **pending news** and **pending books**:
+
+```ts
+interface KnowledgeState {
+  readonly records: readonly KnowledgeRecord[];
+  readonly pendingNews: readonly { locationId: LocationId; items: readonly NewsItem[]; dropped: number }[];
+  readonly pendingBooks: readonly { transactionId: TransactionId; concerns: KnowledgeSubject | { kind: "NEWS"; locationId: LocationId } }[];
+}
+```
+
+**Catching up on arrival.** When the founder arrives at a place, they learn what changed while they were away:
+
+- **Diffs:** for each subject in the live view, the simulation compares the stored record with the new value and produces structured catch-up lines, such as a stock change, a job finished, or a price change. They're structured data, not prose. The words are UI copy, and copy is a placeholder until the human decides it.
+- **News:** some world events happen *at* a place and a plain diff would lose them, such as materials running out mid-batch, a job failing, or a deal falling through. Each such event type is tagged with the place it concerns. Events on a road (cargo seized, a delay, a deal falling through) concern the **origin facility of the delivery**, where the crew would bring the story home. While the founder isn't there, the event becomes a `NewsItem` in that place's pending news. Each place keeps at most `PENDING_NEWS_LIMIT` items (game-data); older ones drop and are counted in `dropped`. Arriving, a cash posting that reveals the event, or another channel covering the place delivers the news and clears it.
 - Arrival emits one `KNOWLEDGE_CAUGHT_UP { locationId, sinceTick, lines, news, droppedNews }` event. The player snapshot carries the latest one as `catchUp`, until the founder leaves.
 
-**"You may learn late, but you always learn eventually"** (GDD §17) is guaranteed like this:
+**The books.** Every ledger transaction that moves no cash and posts while it isn't known (the founder wasn't present and no channel revealed it) goes into `pendingBooks`, with the subject or news place it **concerns**:
 
-- Cash changes are always known (decision 3).
-- A stock change at a place shows up in the diff on the next visit or in a channel covering it.
-- Every ledger transaction that doesn't move cash (capitalised production, a cargo loss, a penalty accrued) carries the ID of the event that caused it (ADR 0006). It becomes visible in the player's books when that event becomes known, through news or a diff.
+| Non-cash transaction | Concerns |
+|---|---|
+| `PRODUCTION`, `PRODUCTION_WRITE_OFF` | `FACILITY_STOCK` of that facility |
+| `RESERVATION` (contract or job) | `FACILITY_STOCK` of the facility holding the goods |
+| `INSTALLMENT_SETTLEMENT` with no cash leg (fulfilled, or a penalty accrued without cash) | `CONTRACT_PROGRESS` of that contract |
+| `CARGO_LOSS`, `TRANSFER` | News at the delivery's origin facility |
+| `PROGRESSION` | `STANDING` |
+| Any other kind with no cash entries | Must be added here; the same table test applies |
 
-So the player's books can lag, but they never stay wrong.
+When the subject a transaction concerns is next learned (through the live view, a phone call, a report, or a cash posting), or its news is delivered, the transaction leaves `pendingBooks`. The player's books show **every ledger transaction except those in `pendingBooks`**, so state records exactly which rows are known.
+
+**"You may learn late, but you always learn eventually"** (GDD §17) holds because every unknown transaction is in `pendingBooks` with a subject or a place, and visiting that place delivers every subject and all the news it concerns. The books can lag, but they never stay wrong. `pendingBooks` holds only what's still unknown, so it stays small.
 
 ### 8. The player snapshot
 
 `PlayerSnapshot` (new `packages/contracts/src/player-snapshot.ts`) follows ADR 0007's rules: plain data, no optional fields, lists sorted with `compareIds`, and self-contained. Its sections:
 
 - `clock`, `outcome`, `founder` (ADR 0023): always known.
-- `places`: every location with its geography (always known), plus a `Known<…>` value for each subject belonging to it.
-- `routes`: geometry (known) plus `Known<RouteCondition>`.
-- `vehicles`: owned vehicles (known) plus `Known<VehicleWhereabouts>`.
-- `market`: `Known<MarketPrices>`.
-- `standing`: `Known<Standing>`.
-- `contracts`: agreed terms (known) plus `Known<ContractProgress>` each; offers through `places`.
-- `finance`: cash (always known), and **the books as known**. The ledger lists the cash transactions plus the non-cash transactions whose cause is known. **Known net worth** is cash + known inventory at cost + owned assets − known liabilities, labelled as known, with the oldest `learnedAt` it relies on. Victory progress shows known values; the outcome itself is evaluated on the world, as a rule.
-- `activity`: replaces `recentEvents`. Only things the founder saw or was told: their own actions, catch-ups, messages, reports. Capped like `recentEvents`.
+- `places`: every location with its geography (always known), plus a `Known<…>` value for each subject belonging to it, with recomputed affordances.
+- `routes`: geometry and risk (known), plus `Known<ROUTE_CONDITION value>`.
+- `vehicles`: owned vehicles (known), plus `Known<VEHICLE_WHEREABOUTS value>`.
+- `market`: `Known<MARKET_PRICES value>`.
+- `standing`: `Known<STANDING value>`.
+- `contracts`: agreed terms (known), plus `Known<CONTRACT_PROGRESS value>` each. Offers come through `places`.
+- `finance`: the cash balance (always known), and **the books as known**: every ledger transaction not in `pendingBooks` (decision 7). **Known net worth** is cash + known inventory at cost + owned assets − known liabilities, labelled as known, with the oldest `learnedAt` it relies on. Victory progress shows known values. The outcome itself is evaluated on the world (decision 3), so the game can announce a win while known net worth still looks short. That's accepted.
+- `activity`: replaces `recentEvents`. Only things the founder saw or was told: their own actions, catch-ups, messages, reports, and what cash postings revealed. Capped like `recentEvents`.
 - `catchUp`: the latest arrival summary, or `null`.
-- `here`: the place the founder is at, or `null` while travelling. The UI uses it to choose which scene to show; the values come from `places` (they're live, `learnedAt` = now).
+- `here`: the place the founder is at, or `null` while travelling. The UI uses it to choose which scene to show. Its values in `places` are the live view (decision 5).
 
 `Known<T>` is `{ value: T; learnedAt: Tick; source: KnowledgeSource } | null`. That's what the ledger's "last updated" date and source are rendered from (GDD §17).
 
-**Every computed affordance in the player snapshot uses only knowledge.** Values such as `blockedBy`, `maxStartableQuantity`, `maxAcceptableQuantity` and quotes are computed from known values and the live view, never from the world. A buyer's `maxAcceptableQuantity` from a phone call is computed without `BUYER_BUDGET`, because the call doesn't reveal it. ADR 0022 decides what an order does when known and true values disagree.
+**Affordances are recomputed from knowledge.** The builder computes `blockedBy`, `maxStartableQuantity`, `maxAcceptableQuantity` and quotes from known values and the live view, never from the world. For example, if `BUYER_BUDGET` isn't known, `maxAcceptableQuantity` is `demandRemaining`. ADR 0022 decides what an order does when known and true values disagree.
+
+**Raw simulation-created IDs are never shown to the player.** The UI uses them only as handles for commands (accepting an offer, say). Labels come from names and known data. Decision 9 relies on this.
 
 ### 9. The non-leak property
 
-Stated so it can be locked as a test (owned by K2, #177; SK1 tests its path):
+Stated so it can be locked as a test. SK1 locks the static half on its path, and K2 (#177) locks both halves.
 
-> **Static.** Let S₁ and S₂ be valid states with identical `knowledge`, identical always-known state (decision 3), and an identical live view (every world value decision 5 would observe this tick). They may differ anywhere else in world state. Then `playerSnapshot(S₁)` and `playerSnapshot(S₂)` are byte-identical in canonical JSON.
+**Renaming.** Simulation-created IDs (`DYNAMIC_ID_PREFIXES`) come from global counters, so their numbers can differ between two worlds even when everything the player knows is the same. Comparisons are made **modulo a consistent renaming**: before comparing, each distinct dynamic ID is replaced with `<prefix>#k`, numbered by first appearance in canonical JSON. Two snapshots that differ only in counter values then compare equal, while different structure (an extra offer, a different quantity) still shows up. Decision 8's "IDs are never shown" makes this sound.
+
+> **Static.** Let S₁ and S₂ be valid states with identical `knowledge`, identical always-known state (decision 3) and an identical live view (decision 5), up to renaming. They may differ anywhere else in world state. Then `playerSnapshot(S₁)` and `playerSnapshot(S₂)` are equal in canonical JSON after renaming.
 >
-> **Dynamic.** From such S₁ and S₂, dispatching the same command gives the same player-visible result: accepted or rejected, the same `RejectionReason`, and the same player snapshot afterwards. Advancing the same number of ticks keeps the player snapshots identical **until a channel delivers a subject on which they differ**.
+> **Dynamic.** Build S₂ from S₁ by perturbing a set **P** of subjects (and their pending news) that are outside the live view. From S₁ and S₂, apply the same commands and advance the same ticks. Then the player snapshots and the `PlayerCommandResult`s stay equal after renaming **until the first tick at which a channel delivers a subject in P, news caused by P, or a cash posting whose cause is in P**. From that tick on, they may differ.
 
-The test generators perturb world values outside the live view: stock at facilities the founder isn't at, supplier and buyer state elsewhere, route conditions off the founder's route, vehicle trips out of sight, installment progress for contracts not at the current buyer, reputation, and pending news. Validation errors, `blockedBy`, activity and catch-up all fall under the property, because they're all part of the player snapshot or the dispatch result. The dynamic half needs ADR 0022's split between orders and outcomes, so SK1 locks the static half and K2 locks both.
+The test generators perturb world values outside the live view: stock at facilities the founder isn't at, supplier and buyer state elsewhere, route conditions off the founder's route, vehicle trips out of sight, installment progress for contracts not at the current buyer, reputation, and pending news. Validation errors, `blockedBy`, activity and catch-up all fall under the property, because they're part of the player snapshot or the command result.
+
+The dynamic half needs ADR 0022's split between orders and outcomes, because M001 commands are checked against the world and are rejected with world reasons.
+
+**The only exception is the game outcome** (decision 3): a WON or LOST status may appear while the player snapshots otherwise agree. K2's test excludes the `outcome` field and stops at a game-ending tick.
 
 ### 10. Saves
 
-- `GameState` gains `knowledge: KnowledgeState` (records plus pending news per place). It's a required field, so `SAVE_SCHEMA_VERSION` bumps (ADR 0009).
-- **M001 saves migrate with empty knowledge:** the migration creates no records. Records are copies of world projections, and migrations never read game-data (ADR 0009), so they can't be rebuilt there. The first tick observes the founder's place, and the rest of the world starts as unknown. A migrated M001 game is playable, but it starts out not knowing anything, which is fine for saves that predate the mechanic. ADR 0023 decides where the founder stands in a migrated save.
-- Size: one record per subject, bounded by game-data entity counts, plus pending news capped per place. That's comparable to the market state.
+- `GameState` gains `knowledge: KnowledgeState` (records, pending news, pending books). It's a required field, so `SAVE_SCHEMA_VERSION` bumps (ADR 0009).
+- **M001 saves migrate with empty knowledge:** no records, no pending news, no pending books. Records are copies of world projections, and migrations never read game-data (ADR 0009), so they can't be rebuilt there. The live view (decision 5) shows the founder's place at once, and the rest of the world starts out unknown. With empty `pendingBooks`, a migrated game's whole M001 ledger counts as known. That fits, because M001 players saw everything. ADR 0023 decides where the founder stands in a migrated save.
+- Size: one record per subject (bounded by game-data entity counts), pending news capped per place, and pending books holding only what's unknown. That's comparable to the market state.
 
 ### 11. Contract changes (their own task)
 
 The changes below go in one contract-change task (factory.md §7.3), filed when this ADR merges, before SK1:
 
-- `packages/contracts/src/knowledge.ts` (new): `KnowledgeSubject`, `KnowledgeValue`, `KnowledgeSource`, `KnowledgeRecord`, `KnowledgeState`, pending news, `Known<T>`, catch-up line types.
+- `packages/contracts/src/knowledge.ts` (new): `KnowledgeSubject`, `KnowledgeValue`, `KnowledgeSource`, `PartyKind`, `KnowledgeRecord`, `KnowledgeState`, `NewsItem`, `Known<T>`, catch-up line types.
 - `packages/contracts/src/player-snapshot.ts` (new): `PlayerSnapshot` and its sections (decision 8).
+- `commands.ts`: `PlayerCommandResult` (decision 2).
 - `state.ts`: `GameState.knowledge`.
 - `events.ts`: `KNOWLEDGE_CAUGHT_UP`; a "concerns place" tag for the event types listed in decision 7. Adding union members doesn't bump the save version (ADR 0009); `GameState.knowledge` does.
 - `engine.ts`: `playerSnapshot()`.
 - `schemas.ts`: Zod schemas for all of the above.
 - `save.ts`: `SAVE_SCHEMA_VERSION` bump and the migration from decision 10.
-- `packages/game-data`: the types for `KNOWLEDGE_VISIBILITY` and `PENDING_NEWS_LIMIT` (ADR 0012 lets game-data own them).
+- `packages/game-data`: the types for `KNOWLEDGE_VISIBILITY`, `LIVE_VIEW_ROUTES` and `PENDING_NEWS_LIMIT` (ADR 0012 lets game-data own them).
+- Tests: the cash-posting table (decision 6) and the non-cash table (decision 7) each cover every `TransactionKind`.
 - `eslint.config.js`: the `GameSnapshot` boundary rule from decision 2.
 
 Founder fields (ADR 0023), order and outcome shapes (ADR 0022), and phone and report sources (ADR 0024, 0025) are added by their own tasks.
@@ -183,6 +249,7 @@ Founder fields (ADR 0023), order and outcome shapes (ADR 0022), and phone and re
 
 - The M001 UI panels can't render a `PlayerSnapshot` without changes. Until K2 (#177) moves them over, the walking skeleton (SK2) uses new scene and ledger views, and the old panels stay on the world snapshot in the dev-only debug view. The non-leak property only applies once the UI reads `PlayerSnapshot` alone, which is K2's acceptance criterion.
 - The economy lab keeps working against the world snapshot until T-LAB (#184) moves its bots to `playerSnapshot()`. After that, bot results measure play under fog.
-- Every new subject kind or source later (rival intel, informants, unreliable reports) extends the tables in decisions 4 and 6, instead of adding a parallel system. Unreliable reports will need records whose value differs from the world; the `source` field is where trust attaches.
-- Observing every tick at the founder's place costs one projection of one place per tick. That's cheap at M002's sizes. If it shows up in profiles, it can observe only on ticks where that place's state changed. The result is the same.
+- Cash postings as a channel mean a missed installment that costs a penalty is known at its deadline. That's the honest result of "the purse is always known". If playtests want contract fog to last longer, ADR 0022/0025 can move away-from-founder postings to payables, as decision 3 allows.
+- Every new subject kind or source later (place discovery, rival intel, informants, unreliable reports) extends the tables in decisions 4, 6 and 7, instead of adding a parallel system. Unreliable reports will need records whose value differs from the world; the `source` field is where trust attaches.
+- Building the live view costs one projection of one place per player snapshot, plus persisting it once per tick. That's cheap at M002's sizes. If it shows up in profiles, persisting can skip ticks where that place's state didn't change. The result is the same.
 - The world snapshot's `blockedBy` and the player snapshot's `blockedBy` can disagree, and that's intended. ADR 0022 decides how commands deal with it.
