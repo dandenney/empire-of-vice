@@ -121,8 +121,9 @@ const commands: GameCommand[] = [
     type: "DISPATCH_DELIVERY",
     vehicleId: ids.truck,
     cargo: [{ productId: ids.moonshine, quality: "basic", quantity: 8 }],
-    purpose: { kind: "SALE", buyerId: ids.speakeasy, agreedUnitPrice: cents(1_520) },
+    purpose: { kind: "SALE", buyerId: ids.speakeasy, dealId: asId("Deal", "deal-2") },
     routeId: ids.routeSpeakeasyBack,
+    driver: { kind: "FOUNDER" },
   },
   {
     type: "DISPATCH_DELIVERY",
@@ -130,11 +131,13 @@ const commands: GameCommand[] = [
     cargo: [{ productId: ids.moonshine, quality: "basic", quantity: 8 }],
     purpose: { kind: "TRANSFER", destinationFacilityId: ids.barn },
     routeId: null,
+    // null only in commands migrated from a pre-M002 save (ADR 0023 decision 10).
+    driver: null,
   },
   { type: "ACCEPT_CONTRACT", contractOfferId: "offer-2" as never },
   { type: "PURCHASE_EQUIPMENT", facilityId: ids.distillery, equipmentId: ids.condenser },
   { type: "SET_WORKFORCE", facilityId: ids.distillery, workerCount: 0 },
-  { type: "RELEASE_RESERVATION", reservationId: "res-4" as never },
+  { type: "RELEASE_RESERVATION", facilityId: ids.distillery, reservationId: "res-4" as never },
   { type: "REPEAT_OPERATION", sourceCommandId: "cmd-1" as never },
   { type: "SELL_EQUIPMENT", facilityId: ids.distillery, equipmentId: ids.copperStill },
   { type: "TRAVEL", destinationLocationId: ids.locSupplier, transport: { kind: "FOOT" }, via: null },
@@ -146,6 +149,15 @@ const commands: GameCommand[] = [
   },
   { type: "REST", untilTick: tick(1_800) },
   { type: "WAKE" },
+  { type: "AGREE_DEAL", buyerId: ids.speakeasy, productId: ids.moonshine, quality: "basic", quantity: 8, agreedUnitPrice: cents(1_520) },
+  {
+    type: "DISPATCH_DELIVERY",
+    vehicleId: ids.truck,
+    cargo: [{ productId: ids.moonshine, quality: "basic", quantity: 8 }],
+    purpose: { kind: "SALE", buyerId: ids.speakeasy, dealId: null },
+    routeId: null,
+    driver: { kind: "EMPLOYEE", characterId: asId("Character", "driver-1") },
+  },
 ];
 
 describe("commands", () => {
@@ -160,7 +172,13 @@ describe("commands", () => {
     ["unknown key", { ...commands[0], discount: 5 }],
     ["missing routeId (must be explicit null)", withoutKey(commands[3], "routeId")],
     ["empty cargo", { ...commands[2], cargo: [] }],
-    ["fractional price", { ...commands[2], purpose: { kind: "SALE", buyerId: ids.speakeasy, agreedUnitPrice: 15.2 } }],
+    ["a sale with M001's agreedUnitPrice", { ...commands[2], purpose: { kind: "SALE", buyerId: ids.speakeasy, agreedUnitPrice: cents(1_520) } }],
+    ["a sale without dealId (must be explicit null)", { ...commands[2], purpose: { kind: "SALE", buyerId: ids.speakeasy } }],
+    ["a sale naming a deal with a bad ID", { ...commands[2], purpose: { kind: "SALE", buyerId: ids.speakeasy, dealId: "Deal 2" } }],
+    ["a dispatch without driver (must be explicit null)", withoutKey(commands[2], "driver")],
+    ["a release without its facility", withoutKey(commands[7], "facilityId")],
+    ["fractional agreed price", { ...commands[14], agreedUnitPrice: 15.2 }],
+    ["zero-case deal", { ...commands[14], quantity: 0 }],
     ["unknown command", { type: "BRIBE_SHERIFF" }],
   ])("rejects %s", (_label, bad) => {
     expect(gameCommandSchema.safeParse(bad).success).toBe(false);

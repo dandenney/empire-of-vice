@@ -1,5 +1,6 @@
 // Player commands, how they're scheduled, and their results.
-// See docs/decisions/0004-command-identity-and-timing.md and 0005-delivery-deals-and-payment.md.
+// See docs/decisions/0004-command-identity-and-timing.md, 0005-delivery-deals-and-payment.md
+// and 0022-orders-authority-outcomes.md.
 //
 // A command is the player's intent. The simulation applies it atomically or
 // rejects it with a typed reason. It never partially mutates state
@@ -8,9 +9,11 @@
 import type { CargoLine, QualityTier } from "./goods.ts";
 import type {
   BuyerId,
+  CharacterId,
   CommandId,
   ContractId,
   ContractOfferId,
+  DealId,
   EquipmentId,
   EventId,
   FacilityId,
@@ -27,7 +30,7 @@ import type {
   VehicleId,
 } from "./ids.ts";
 import type { Money } from "./money.ts";
-import type { RouteLeg, Transport } from "./state.ts";
+import type { DriverRef, RouteLeg, Transport } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 // ---------------------------------------------------------------------------
@@ -56,19 +59,17 @@ export interface StartProductionCommand {
 }
 
 /**
- * Why a truck is being sent. A sale to a buyer is a deal struck at dispatch:
- * quantity and unit price are fixed now, and the buyer pays cash on delivery (ADR 0005).
+ * Why a truck is being sent. The buyer pays cash on delivery (ADR 0005). A sale
+ * either carries out a held deal (`dealId`: quantity and price were fixed by
+ * AGREE_DEAL), or goes on spec (`dealId: null`): the buyer takes what they want
+ * at that day's quote when the truck arrives (ADR 0022 decision 6).
  */
 export type DeliveryPurpose =
   | {
       readonly kind: "SALE";
       readonly buyerId: BuyerId;
-      /**
-       * The per-case price the player agreed to, as shown in the UI. If it no longer
-       * matches the buyer's quote when the command applies, the command is rejected
-       * with QUOTE_CHANGED rather than silently selling at a different price.
-       */
-      readonly agreedUnitPrice: Money;
+      /** The held deal this dispatch carries out, or null for a sale on spec. */
+      readonly dealId: DealId | null;
     }
   | { readonly kind: "CONTRACT_INSTALLMENT"; readonly contractId: ContractId }
   | { readonly kind: "TRANSFER"; readonly destinationFacilityId: FacilityId };
@@ -87,6 +88,31 @@ export interface DispatchDeliveryCommand {
    * Explicit null, not optional, because commands are stored in state (ADR 0008).
    */
   readonly routeId: RouteId | null;
+  /**
+   * Who drives (ADR 0023 decision 5). A new dispatch names one; null only in
+   * commands migrated from a pre-M002 save (ADR 0023 decision 10). With
+   * `founderRules: false`, a FOUNDER driver doesn't put the founder aboard.
+   */
+  readonly driver: DriverRef | null;
+}
+
+/**
+ * Agrees a deal with a buyer ahead of the run (ADR 0022 decision 6): the buyer
+ * commits demand (and, in person, budget) at `agreedUnitPrice` for this quantity
+ * and quality, held until `DEAL_HOLD_TICKS` (game-data) after agreeing. A
+ * DISPATCH_DELIVERY naming the deal carries it out. Checked as ADR 0005's sale
+ * was: UNKNOWN_ENTITY, REPUTATION_TOO_LOW, PRODUCT_NOT_WANTED, QUOTE_CHANGED and
+ * BUYER_WILL_TAKE_LESS.
+ */
+export interface AgreeDealCommand {
+  readonly type: "AGREE_DEAL";
+  readonly buyerId: BuyerId;
+  readonly productId: ProductId;
+  /** The cargo quality the deal is for, matched to the buyer's most specific want (ADR 0016). */
+  readonly quality: QualityTier;
+  readonly quantity: number;
+  /** The per-case price the player saw. A different quote when it applies is QUOTE_CHANGED, never a silent re-price. */
+  readonly agreedUnitPrice: Money;
 }
 
 /** GDD §4 action 7. Reserves contract inventory and funds as GDD §7 requires. */
@@ -123,16 +149,23 @@ export interface SetWorkforceCommand {
   readonly workerCount: number;
 }
 
-/** GDD §7: the player may release reserved inventory, accepting the risk of missing an installment. */
+/**
+ * GDD §7: the player may release reserved inventory, accepting the risk of missing
+ * an installment. Names the facility it acts at (ADR 0022 decision 3): the
+ * reservation must be active there, otherwise RESERVATION_NOT_ACTIVE.
+ */
 export interface ReleaseReservationCommand {
   readonly type: "RELEASE_RESERVATION";
+  readonly facilityId: FacilityId;
   readonly reservationId: ReservationId;
 }
 
 /**
  * GDD §9 earned automation, level 2: re-issue a previously applied operation.
  * The source command is copied and fully re-validated against current state.
- * A repeated SALE uses the buyer's current quote, so it can't lock in a stale price.
+ * A deal is single-use, so a repeated SALE never reuses its source's deal. With
+ * `founderRules: false` it agrees a new deal at the buyer's current quote, in the
+ * dispatch's own transaction, so it can't lock in a stale price (issue #192).
  */
 export interface RepeatOperationCommand {
   readonly type: "REPEAT_OPERATION";
@@ -182,7 +215,8 @@ export type GameCommand =
   | SellEquipmentCommand
   | TravelCommand
   | RestCommand
-  | WakeCommand;
+  | WakeCommand
+  | AgreeDealCommand;
 
 export type GameCommandType = GameCommand["type"];
 
@@ -202,6 +236,7 @@ export const GAME_COMMAND_TYPES = [
   "TRAVEL",
   "REST",
   "WAKE",
+  "AGREE_DEAL",
 ] as const satisfies readonly GameCommandType[];
 
 // ---------------------------------------------------------------------------
@@ -220,6 +255,12 @@ export interface CommandRequest {
 }
 
 /**
+ * Who issued a command (ADR 0022 decision 5). Player commands are always the
+ * FOUNDER's. The EMPLOYEE variant (standing orders) is ADR 0025's task.
+ */
+export type CommandIssuer = { readonly kind: "FOUNDER" };
+
+/**
  * A command as journaled and saved. The simulation assigns `id` and `sequence`
  * at dispatch, so both are deterministic. Commands apply in (scheduledTick, sequence) order.
  */
@@ -227,6 +268,7 @@ export interface CommandEnvelope {
   readonly id: CommandId;
   readonly scheduledTick: Tick;
   readonly sequence: number;
+  readonly issuer: CommandIssuer;
   readonly command: GameCommand;
 }
 
@@ -295,10 +337,14 @@ export type RejectionReason =
   | { readonly code: "VEHICLE_CAPACITY_EXCEEDED"; readonly vehicleId: VehicleId; readonly requested: number; readonly capacity: number }
   | { readonly code: "NO_ROUTE"; readonly vehicleId: VehicleId }
   | { readonly code: "ROUTE_CLOSED"; readonly routeId: RouteId; readonly reopensAt: Tick | null }
-  // Buyers and deals (ADR 0005)
+  // Buyers and deals (ADR 0005; checked by AGREE_DEAL since ADR 0022 decision 6)
   | { readonly code: "QUOTE_CHANGED"; readonly buyerId: BuyerId; readonly agreed: Money; readonly current: Money }
   | { readonly code: "BUYER_WILL_TAKE_LESS"; readonly buyerId: BuyerId; readonly requested: number; readonly acceptable: number }
   | { readonly code: "PRODUCT_NOT_WANTED"; readonly buyerId: BuyerId; readonly productId: ProductId; readonly quality: QualityTier }
+  /** A sale names a deal the founder doesn't hold: never agreed, already dispatched, or ended (ADR 0022 decision 6). */
+  | { readonly code: "DEAL_UNAVAILABLE"; readonly dealId: DealId }
+  /** A sale's buyer or cargo (product, quality, quantity) isn't what its deal was agreed for (ADR 0022 decision 6). */
+  | { readonly code: "CARGO_DOES_NOT_MATCH_DEAL"; readonly dealId: DealId }
   // Contracts
   | { readonly code: "OFFER_UNAVAILABLE"; readonly contractOfferId: ContractOfferId }
   | { readonly code: "CONTRACT_NOT_ACTIVE"; readonly contractId: ContractId }
@@ -322,6 +368,11 @@ export type RejectionReason =
   | { readonly code: "VEHICLE_NOT_AT"; readonly vehicleId: VehicleId; readonly locationId: LocationId }
   /** The named driver can't drive, or a new dispatch names none while founder rules are on (ADR 0022 decision 3). */
   | { readonly code: "NO_DRIVER"; readonly vehicleId: VehicleId }
+  /**
+   * An order someone else must carry out can't reach them: the founder isn't with
+   * them and no call connects (ADR 0022 decision 4). From always-known facts only.
+   */
+  | { readonly code: "NO_WAY_TO_REACH"; readonly characterId: CharacterId }
   // The founder's own commands: TRAVEL, REST, WAKE (ADR 0023 decision 3a).
   /** TRAVEL or REST while the founder is travelling, riding a delivery, or resting. */
   | { readonly code: "FOUNDER_AWAY"; readonly whereabouts: "TRAVELLING" | "ON_DELIVERY" | "RESTING" }

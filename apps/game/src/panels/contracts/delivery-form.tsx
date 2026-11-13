@@ -45,6 +45,7 @@ export function DeliveryForm({ contract, snapshot }: { readonly contract: Contra
         cargo: [{ productId: contract.productId, quality, quantity: Number(quantity) }],
         purpose: { kind: "CONTRACT_INSTALLMENT", contractId: contract.id },
         routeId: commandRouteId(route),
+        driver: { kind: "FOUNDER" },
       },
     });
   };

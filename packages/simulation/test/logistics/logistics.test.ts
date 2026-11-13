@@ -51,13 +51,19 @@ function gameWithStock(data: GameData, quantity: number): KernelSimulation {
 
 function dispatchSale(sim: KernelSimulation, routeId: RouteId, quantity: number): void {
   const unitPrice = sim.state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!.wants.find((w) => w.productId === MOONSHINE)!.unitPrice;
+  // ADR 0022 decision 6: agree the deal at the quote, then dispatch against it.
+  const agreed = sim.dispatch({
+    command: { type: "AGREE_DEAL", buyerId: CROSSROADS_ROADHOUSE, productId: MOONSHINE, quality: "basic", quantity, agreedUnitPrice: unitPrice },
+  });
+  expect(agreed.status).toBe("applied");
   const result = sim.dispatch({
     command: {
       type: "DISPATCH_DELIVERY",
       vehicleId: MODEL_TT_TRUCK,
       cargo: [{ productId: MOONSHINE, quality: "basic", quantity }],
-      purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: unitPrice },
+      purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: sim.state.heldDeals.at(-1)!.id },
       routeId,
+      driver: { kind: "FOUNDER" },
     },
   });
   expect(result.status).toBe("applied");

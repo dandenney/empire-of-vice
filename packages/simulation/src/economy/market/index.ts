@@ -1,7 +1,13 @@
-// ECO-001 daily market (T02d): spot price, midnight cycle, shortages, buyers, spot deals.
+// ECO-001 daily market (T02d): spot price, midnight cycle, shortages, buyers, deals (ADR 0022).
 export {
+  agreeDeal,
   commitDeal,
+  currentQuote,
+  dispatchDeal,
+  dispatchedDealOf,
+  endDeal,
   findCommitment,
+  heldDeal,
   initialBuyers,
   initialMarkets,
   initialSuppliers,
@@ -12,5 +18,7 @@ export {
   releaseDeal,
   settleDeal,
   validateMarketData,
+  type Agreement,
   type Deal,
+  type DealTerms,
 } from "./market.ts";

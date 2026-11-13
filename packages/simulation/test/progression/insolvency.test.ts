@@ -59,6 +59,7 @@ const transfer = (quantity: number): GameCommand => ({
   cargo: [{ productId: MOONSHINE, quality: "basic", quantity }],
   purpose: { kind: "TRANSFER", destinationFacilityId: RIVERSIDE_WAREHOUSE },
   routeId: null,
+  driver: { kind: "FOUNDER" },
 });
 
 /** Empties every product pool (the pure rule reads only state, so no ledger is needed here). */

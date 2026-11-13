@@ -59,7 +59,7 @@ function playPath(): { sim: KernelSimulation; snapshots: Record<string, GameSnap
   snapshots.producing = sim.snapshot();
   advanceTo(sim, snapshots.producing.productionJobs[0]!.completesAt);
   snapshots.produced = sim.snapshot();
-  expectApplied(sim.dispatch({ command: sell(1, roadhouseWant(snapshots.produced).unitPrice) }));
+  expectApplied(sell(sim, 1, roadhouseWant(snapshots.produced).unitPrice));
   snapshots.dispatched = sim.snapshot();
   advanceTo(sim, snapshots.dispatched.vehicles[0]!.trip!.arrivesAt);
   snapshots.sold = sim.snapshot();
@@ -258,7 +258,7 @@ describe("snapshot projection", () => {
     expect(distillery(snapshots.produced!).storage.used).toBe(1);
     const trip = snapshots.dispatched!.vehicles[0]!.trip!;
     expect(trip).toMatchObject({ routeId: "state-highway", leg: "OUTBOUND", cargo: [{ productId: "moonshine", quality: "basic", quantity: 1 }] });
-    expect(trip.purpose).toEqual({ kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: ROADHOUSE_QUOTE });
+    expect(trip.purpose).toEqual({ kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: "deal-1" }); // the price is on the deal (ADR 0022 decision 6)
     // One case committed: demand and budget each drop by one case (GDD §7 liquidity).
     const roadhouse = GAME_DATA.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!;
     const daily = roadhouse.wants[0]!.dailyDemand;
@@ -366,6 +366,7 @@ describe("snapshot projection", () => {
       "RESERVATION_RELEASED",
       "RESERVATION_RELEASED",
       "PRODUCTION_COMPLETED",
+      "DEAL_AGREED", // ADR 0022 decision 6: the sale is agreed, then dispatched
       "DELIVERY_DISPATCHED",
       "SALE_COMPLETED",
       "VEHICLE_RETURNED",

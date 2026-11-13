@@ -17,7 +17,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { newGame } from "../../src/game/index.ts";
 import type { KernelSimulation } from "../../src/index.ts";
-import { balances, buyCorn, buySugar, expectApplied, produce, roadhouseQuote, sell } from "./helpers.ts";
+import { agree, balances, buyCorn, buySugar, dealSale, expectApplied, lastDealId, produce, roadhouseQuote } from "./helpers.ts";
 
 const recipe = GAME_DATA.recipes.find((r) => r.id === BASIC_MOONSHINE_RECIPE)!;
 const supplier = GAME_DATA.suppliers.find((s) => s.id === MILLERS_FEED)!;
@@ -110,18 +110,21 @@ describe("Sprint Zero rejections", () => {
   it("rejects deals that don't match the buyer's quote, liquidity, or stock", () => {
     const sim = withOneCase();
     const price = roadhouseQuote(sim.state);
-    expectRejected(sim, sell(1, cents(price + 1)), "QUOTE_CHANGED");
-    expectRejected(sim, sell(2, price), "INSUFFICIENT_STOCK");
-    // A full truckload fits the vehicle but exceeds the one case in stock.
-    expectRejected(sim, sell(truck.capacityCases, price), "INSUFFICIENT_STOCK");
-    expectRejected(sim, sell(truck.capacityCases + 1, price), "VEHICLE_CAPACITY_EXCEEDED");
+    // The quote is checked when the deal is agreed (ADR 0022 decision 6).
+    expectRejected(sim, agree(1, cents(price + 1)), "QUOTE_CHANGED");
+    expectApplied(sim.dispatch({ command: agree(2, price) }));
+    expectRejected(sim, dealSale(2, lastDealId(sim.state)), "INSUFFICIENT_STOCK");
+    // Too much for the truck is checked before the deal and the stock (one case here).
+    expectRejected(sim, dealSale(truck.capacityCases + 1, lastDealId(sim.state)), "VEHICLE_CAPACITY_EXCEEDED");
+    expectApplied(sim.dispatch({ command: agree(1, price) }));
+    const deal = lastDealId(sim.state);
     expectRejected(
       sim,
-      { ...sell(1, price), cargo: [{ productId: MOONSHINE, quality: "basic", quantity: 1 }, { productId: MOONSHINE, quality: "basic", quantity: 1 }] } as GameCommand,
+      { ...dealSale(1, deal), cargo: [{ productId: MOONSHINE, quality: "basic", quantity: 1 }, { productId: MOONSHINE, quality: "basic", quantity: 1 }] } as GameCommand,
       "INVALID_QUANTITY",
     );
-    expectApplied(sim.dispatch({ command: sell(1, price) }));
-    expectRejected(sim, sell(1, price), "VEHICLE_UNAVAILABLE");
+    expectApplied(sim.dispatch({ command: dealSale(1, deal) }));
+    expectRejected(sim, dealSale(1, deal), "VEHICLE_UNAVAILABLE");
   });
 
   it("rejects more cases than the buyer will take", () => {
@@ -139,13 +142,14 @@ describe("Sprint Zero rejections", () => {
     const buyer = sim.state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!;
     const acceptable = Math.min(buyer.wants[0]!.demandRemaining, Math.floor(buyer.budgetRemaining / quote));
     expect(acceptable).toBeLessThan(cases);
-    const result = sim.dispatch({ command: sell(cases, quote) });
+    const result = sim.dispatch({ command: agree(cases, quote) });
     expect(result).toMatchObject({ status: "rejected", reason: { code: "BUYER_WILL_TAKE_LESS", requested: cases, acceptable } });
   });
 
   it("rejects purposes the S0 stub doesn't support with typed reasons", () => {
     const sim = withOneCase();
-    const base = sell(1, roadhouseQuote(sim.state));
+    expectApplied(sim.dispatch({ command: agree(1, roadhouseQuote(sim.state)) }));
+    const base = dealSale(1, lastDealId(sim.state));
     expectRejected(
       sim,
       { ...base, purpose: { kind: "TRANSFER", destinationFacilityId: GAME_DATA.facilities[0]!.id } } as GameCommand,

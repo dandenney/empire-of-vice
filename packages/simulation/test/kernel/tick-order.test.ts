@@ -33,7 +33,7 @@ describe("tick order", () => {
         registry.onPhase("production", "rec-production-b", record("production-b"));
       },
     );
-    sim.dispatch({ command: { type: "RELEASE_RESERVATION", reservationId: asId("Reservation", "res-1") }, scheduledTick: tick(1_440) });
+    sim.dispatch({ command: { type: "RELEASE_RESERVATION", facilityId: ids.distillery, reservationId: asId("Reservation", "res-1") }, scheduledTick: tick(1_440) });
     sim.advance(1_438 - 600);
     log.length = 0;
     sim.advance(2); // ticks 1439 and 1440 (midnight)
@@ -122,6 +122,7 @@ describe("exact deadlines (SIM-001)", () => {
         {
           id: ids.truck,
           parkedAt: null,
+          tripCount: 1,
           trip: { deliveryId: asId("Delivery", "delivery-1"), routeId: ids.routeHotel, leg: "OUTBOUND", departedAt: tick(600), arrivesAt, delayed: false },
         },
       ],

@@ -11,7 +11,7 @@
 // coordinator's job (ADR 0010).
 
 import { z } from "zod";
-import type { DeliveryPurpose, GameCommand } from "./commands.ts";
+import type { CommandIssuer, DeliveryPurpose, GameCommand } from "./commands.ts";
 import { GAME_COMMAND_TYPES } from "./commands.ts";
 import type { EventMeta } from "./events.ts";
 import { QUALITY_TIERS } from "./goods.ts";
@@ -129,7 +129,7 @@ export const driverRefSchema = z.discriminatedUnion("kind", [
 // ---------------------------------------------------------------------------
 
 export const deliveryPurposeSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("SALE"), buyerId: idSchema("Buyer"), agreedUnitPrice: moneySchema }),
+  z.strictObject({ kind: z.literal("SALE"), buyerId: idSchema("Buyer"), dealId: idSchema("Deal").nullable() }),
   z.strictObject({ kind: z.literal("CONTRACT_INSTALLMENT"), contractId: idSchema("Contract") }),
   z.strictObject({ kind: z.literal("TRANSFER"), destinationFacilityId: idSchema("Facility") }),
 ]) satisfies z.ZodType<DeliveryPurpose>;
@@ -154,6 +154,7 @@ export const gameCommandSchema = z.discriminatedUnion("type", [
     cargo: z.array(cargoLineSchema).min(1),
     purpose: deliveryPurposeSchema,
     routeId: idSchema("Route").nullable(),
+    driver: driverRefSchema.nullable(),
   }),
   z.strictObject({ type: z.literal("ACCEPT_CONTRACT"), contractOfferId: idSchema("ContractOffer") }),
   z.strictObject({
@@ -162,7 +163,7 @@ export const gameCommandSchema = z.discriminatedUnion("type", [
     equipmentId: idSchema("Equipment"),
   }),
   z.strictObject({ type: z.literal("SET_WORKFORCE"), facilityId: idSchema("Facility"), workerCount: count }),
-  z.strictObject({ type: z.literal("RELEASE_RESERVATION"), reservationId: idSchema("Reservation") }),
+  z.strictObject({ type: z.literal("RELEASE_RESERVATION"), facilityId: idSchema("Facility"), reservationId: idSchema("Reservation") }),
   z.strictObject({ type: z.literal("REPEAT_OPERATION"), sourceCommandId: idSchema("Command") }),
   z.strictObject({
     type: z.literal("SELL_EQUIPMENT"),
@@ -177,6 +178,14 @@ export const gameCommandSchema = z.discriminatedUnion("type", [
   }),
   z.strictObject({ type: z.literal("REST"), untilTick: tickSchema }),
   z.strictObject({ type: z.literal("WAKE") }),
+  z.strictObject({
+    type: z.literal("AGREE_DEAL"),
+    buyerId: idSchema("Buyer"),
+    productId: idSchema("Product"),
+    quality: qualitySchema,
+    quantity: positiveQuantity,
+    agreedUnitPrice: moneySchema,
+  }),
 ]) satisfies z.ZodType<GameCommand>;
 
 /** What the worker gateway validates before calling `Simulation.dispatch`. */
@@ -185,10 +194,14 @@ export const commandRequestSchema = z.strictObject({
   scheduledTick: tickSchema.optional(),
 });
 
+/** `CommandIssuer` (ADR 0022 decision 5): FOUNDER only until ADR 0025's task. */
+export const commandIssuerSchema = z.strictObject({ kind: z.literal("FOUNDER") }) satisfies z.ZodType<CommandIssuer>;
+
 export const commandEnvelopeSchema = z.strictObject({
   id: idSchema("Command"),
   scheduledTick: tickSchema,
   sequence: nonNegativeInt,
+  issuer: commandIssuerSchema,
   command: gameCommandSchema,
 });
 
@@ -202,7 +215,7 @@ void (GAME_COMMAND_TYPES satisfies readonly z.infer<typeof gameCommandSchema>["t
 const idKindSchema = z.enum([
   "Location", "Facility", "Supplier", "Buyer", "Vehicle", "Route", "Material", "Product", "Recipe",
   "Equipment", "Character", "Family", "Unlock", "Tier", "Scenario", "Command", "Event", "Transaction",
-  "ProductionJob", "Delivery", "ContractOffer", "Contract", "Reservation",
+  "ProductionJob", "Delivery", "ContractOffer", "Contract", "Reservation", "Deal",
 ] as const satisfies readonly IdKind[]);
 
 export const rejectionReasonSchema = z.discriminatedUnion("code", [
@@ -245,6 +258,8 @@ export const rejectionReasonSchema = z.discriminatedUnion("code", [
   z.strictObject({ code: z.literal("OFFER_UNAVAILABLE"), contractOfferId: idSchema("ContractOffer") }),
   z.strictObject({ code: z.literal("CONTRACT_NOT_ACTIVE"), contractId: idSchema("Contract") }),
   z.strictObject({ code: z.literal("CARGO_DOES_NOT_MATCH_CONTRACT"), contractId: idSchema("Contract") }),
+  z.strictObject({ code: z.literal("DEAL_UNAVAILABLE"), dealId: idSchema("Deal") }),
+  z.strictObject({ code: z.literal("CARGO_DOES_NOT_MATCH_DEAL"), dealId: idSchema("Deal") }),
   z.strictObject({ code: z.literal("NOT_REPEATABLE"), sourceCommandId: idSchema("Command") }),
   z.strictObject({
     code: z.literal("NOT_PRESENT"),
@@ -255,6 +270,7 @@ export const rejectionReasonSchema = z.discriminatedUnion("code", [
   z.strictObject({ code: z.literal("PLACE_CLOSED"), locationId: idSchema("Location"), opensAt: tickSchema }),
   z.strictObject({ code: z.literal("VEHICLE_NOT_AT"), vehicleId: idSchema("Vehicle"), locationId: idSchema("Location") }),
   z.strictObject({ code: z.literal("NO_DRIVER"), vehicleId: idSchema("Vehicle") }),
+  z.strictObject({ code: z.literal("NO_WAY_TO_REACH"), characterId: idSchema("Character") }),
   z.strictObject({ code: z.literal("FOUNDER_AWAY"), whereabouts: z.enum(["TRAVELLING", "ON_DELIVERY", "RESTING"]) }),
   z.strictObject({ code: z.literal("ALREADY_THERE") }),
   z.strictObject({ code: z.literal("INVALID_PATH") }),
@@ -298,7 +314,11 @@ const deliveryDelayedShape = {
 const dealFellThroughShape = {
   deliveryId: idSchema("Delivery"),
   buyerId: idSchema("Buyer"),
-  reason: z.enum(["TOO_LATE", "CARGO_LOST"]),
+  reason: z.enum(["TOO_LATE", "CARGO_LOST", "NOT_WANTED", "CONTRACT_CLOSED", "ROUTE_CLOSED"]),
+};
+const routeFoundClosedShape = {
+  deliveryId: idSchema("Delivery"),
+  routeId: idSchema("Route"),
 };
 const cargoLostShape = {
   deliveryId: idSchema("Delivery"),
@@ -539,6 +559,7 @@ const newsEventSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("DELIVERY_DELAYED"), ...deliveryDelayedShape }),
   z.strictObject({ type: z.literal("DEAL_FELL_THROUGH"), ...dealFellThroughShape }),
   z.strictObject({ type: z.literal("CARGO_LOST"), ...cargoLostShape }),
+  z.strictObject({ type: z.literal("ROUTE_FOUND_CLOSED"), ...routeFoundClosedShape }),
 ]);
 
 export const newsItemSchema = z.strictObject({ tick: tickSchema, event: newsEventSchema });
@@ -767,6 +788,25 @@ export const gameEventSchema = z.discriminatedUnion("type", [
   ev("FOUNDER_HALTED", { routeId: idSchema("Route"), locationId: idSchema("Location") }),
   ev("FOUNDER_RESTED", { locationId: idSchema("Location"), until: tickSchema }),
   ev("FOUNDER_WOKE", { locationId: idSchema("Location"), early: z.boolean() }),
+  ev("DEAL_AGREED", {
+    dealId: idSchema("Deal"),
+    buyerId: idSchema("Buyer"),
+    productId: idSchema("Product"),
+    quality: qualitySchema,
+    quantity: positiveQuantity,
+    unitPrice: moneySchema,
+    expiresAt: tickSchema,
+    budgetCommitted: z.boolean(),
+  }),
+  ev("DEAL_EXPIRED", { dealId: idSchema("Deal"), buyerId: idSchema("Buyer") }),
+  ev("SPEC_SALE_SETTLED", {
+    deliveryId: idSchema("Delivery"),
+    buyerId: idSchema("Buyer"),
+    offered: positiveQuantity,
+    accepted: count,
+    unitPrice: moneySchema,
+  }),
+  ev("ROUTE_FOUND_CLOSED", routeFoundClosedShape),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -893,6 +933,7 @@ export const gameStateSchema = z.strictObject({
     z.strictObject({
       id: idSchema("Vehicle"),
       parkedAt: idSchema("Location").nullable(),
+      tripCount: count,
       trip: z
         .strictObject({
           deliveryId: idSchema("Delivery"),
@@ -922,7 +963,27 @@ export const gameStateSchema = z.strictObject({
       purpose: deliveryPurposeSchema,
       status: z.enum(["OUTBOUND", "DELIVERED", "FAILED"]),
       dealDeadline: tickSchema.nullable(),
+      driver: driverRefSchema.nullable(),
     }),
+  ),
+  heldDeals: z.array(
+    z
+      .strictObject({
+        id: idSchema("Deal"),
+        buyerId: idSchema("Buyer"),
+        productId: idSchema("Product"),
+        quality: qualitySchema,
+        quantity: positiveQuantity,
+        unitPrice: moneySchema,
+        agreedAt: tickSchema,
+        expiresAt: tickSchema,
+        budgetCommitted: z.boolean(),
+        status: z.enum(["HELD", "DISPATCHED", "SETTLED", "EXPIRED", "FELL_THROUGH"]),
+        deliveryId: idSchema("Delivery").nullable(),
+      })
+      // Terminal deals leave the list (ADR 0022 decision 6); a dispatched one names its delivery.
+      .refine((d) => d.status === "HELD" || d.status === "DISPATCHED", "heldDeals holds only HELD and DISPATCHED deals")
+      .refine((d) => (d.status === "DISPATCHED") === (d.deliveryId !== null), "A deal names a delivery exactly when it's DISPATCHED"),
   ),
   markets: z.array(
     z.strictObject({
@@ -962,8 +1023,9 @@ export const gameStateSchema = z.strictObject({
       ),
       commitments: z.array(
         z.strictObject({
-          deliveryId: idSchema("Delivery"),
+          dealId: idSchema("Deal"),
           productId: idSchema("Product"),
+          quality: qualitySchema,
           quantity: positiveQuantity,
           amount: moneySchema,
         }),
@@ -1223,6 +1285,21 @@ export const playerSnapshotSchema = z.strictObject({
   market: known(marketPricesValueSchema),
   standing: known(standingValueSchema),
   contracts: z.array(playerContractSchema),
+  deals: z.array(
+    z.strictObject({
+      id: idSchema("Deal"),
+      buyerId: idSchema("Buyer"),
+      productId: idSchema("Product"),
+      quality: qualitySchema,
+      quantity: positiveQuantity,
+      unitPrice: moneySchema,
+      agreedAt: tickSchema,
+      expiresAt: tickSchema,
+      budgetCommitted: z.boolean(),
+      status: z.enum(["HELD", "DISPATCHED"]),
+      deliveryId: idSchema("Delivery").nullable(),
+    }),
+  ),
   finance: z.strictObject({
     cash: moneySchema,
     books: z.array(

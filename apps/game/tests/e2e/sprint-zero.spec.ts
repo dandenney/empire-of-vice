@@ -20,7 +20,7 @@ import type { EovTestHook } from "../../src/app/test-hook.ts";
  * The headless Sprint Zero run's hash once the truck is home. Must equal the
  * hash pinned in tools/economy-lab/test/sprint-zero.test.ts; update both together.
  */
-const HEADLESS_HASH = "fnv1a64:c0347e40711dd8bc";
+const HEADLESS_HASH = "fnv1a64:59a882e0fd44576d";
 
 type Snapshot = NonNullable<EovTestHook["snapshot"]>;
 
@@ -97,22 +97,30 @@ test("plays the Sprint Zero path through the worker and matches the headless has
   expect(produced.productionJobs).toHaveLength(0);
   expect(produced.facilities[0]!.products[0]!.quantity).toBe(1);
 
-  // Dispatch the truck to the first buyer (the headless run's), at today's quote.
+  // Agree a deal with the first buyer (the headless run's) at today's quote, then
+  // dispatch the truck against it (ADR 0022 decision 6).
   const buyer = produced.market.buyers[0]!;
   const pool = produced.facilities[0]!.products[0]!;
+  await dispatch(page, {
+    command: { type: "AGREE_DEAL", buyerId: buyer.id, productId: pool.productId, quality: pool.quality, quantity: 1, agreedUnitPrice: buyer.wants[0]!.unitPrice },
+  });
+  const agreed = (await snapshot(page)).recentEvents.filter((e) => e.type === "DEAL_AGREED").at(-1)!;
+  if (agreed.type !== "DEAL_AGREED") throw new Error("No DEAL_AGREED");
+  expect(agreed.unitPrice).toBe(buyer.wants[0]!.unitPrice);
   await dispatch(page, {
     command: {
       type: "DISPATCH_DELIVERY",
       vehicleId: produced.vehicles[0]!.id,
       cargo: [{ productId: pool.productId, quality: pool.quality, quantity: 1 }],
-      purpose: { kind: "SALE", buyerId: buyer.id, agreedUnitPrice: buyer.wants[0]!.unitPrice },
+      purpose: { kind: "SALE", buyerId: buyer.id, dealId: agreed.dealId },
       routeId: null,
+      driver: { kind: "FOUNDER" },
     },
   });
   const dispatched = await snapshot(page);
   const outbound = dispatched.vehicles[0]!.trip!;
   expect(outbound.leg).toBe("OUTBOUND");
-  expect(outbound.purpose).toEqual({ kind: "SALE", buyerId: buyer.id, agreedUnitPrice: buyer.wants[0]!.unitPrice });
+  expect(outbound.purpose).toEqual({ kind: "SALE", buyerId: buyer.id, dealId: agreed.dealId });
   const parked = await truckPosition(page, dispatched.clock.tick);
 
   // Deliver and sell: halfway there, the truck is drawn between home and the buyer.

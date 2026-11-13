@@ -43,6 +43,9 @@ function pricingWant(s: GameSnapshot, buyerId: string, productId: string, qualit
  * applied: the state hash has moved and the panel's result line says so.
  */
 export async function sendThroughUi(page: Page, command: GameCommand): Promise<void> {
+  // The sale form agrees and dispatches in one click, so a plan's AGREE_DEAL is
+  // entered with the sale dispatch that follows it (ADR 0022 decision 6).
+  if (command.type === "AGREE_DEAL") return;
   const before = await stateHash(page);
   const s = await snapshot(page);
   let result: string | null = null;
@@ -70,15 +73,16 @@ export async function sendThroughUi(page: Page, command: GameCommand): Promise<v
       const purpose = command.purpose;
       if (purpose.kind === "SALE") {
         await openPanel(page, "market");
+        // The form agrees the deal at the quote it shows, then dispatches against it
+        // (ADR 0022 decision 6): the plan's AGREE_DEAL just before this step.
         const { buyer, want } = pricingWant(s, purpose.buyerId, line.productId, line.quality);
-        expect(want.unitPrice, `${buyer.name}'s quote`).toBe(purpose.agreedUnitPrice);
         const form = `sale-${buyer.id}`;
         if (buyer.wants.length > 1) await page.getByTestId(`${form}-want`).selectOption(`${want.productId}:${want.minimumQuality}`);
         await page.getByTestId(`${form}-quality`).selectOption(line.quality);
         await page.getByTestId(`${form}-truck`).selectOption(command.vehicleId);
         await page.getByTestId(`${form}-quantity`).fill(String(line.quantity));
         await pickRoute(page, `${form}-route`, command.routeId);
-        await expect(page.getByTestId(`${form}-price`)).toHaveText(formatMoney(purpose.agreedUnitPrice));
+        await expect(page.getByTestId(`${form}-price`)).toHaveText(formatMoney(want.unitPrice));
         await page.getByTestId(`${form}-dispatch`).click();
         result = `${form}-result`;
       } else if (purpose.kind === "CONTRACT_INSTALLMENT") {

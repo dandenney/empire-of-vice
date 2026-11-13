@@ -20,6 +20,7 @@ describe("sprint-zero runner", () => {
       "RESERVATION_RELEASED",
       "RESERVATION_RELEASED",
       "PRODUCTION_COMPLETED",
+      "DEAL_AGREED",
       "DELIVERY_DISPATCHED",
       "SALE_COMPLETED",
       "VEHICLE_RETURNED",
@@ -62,8 +63,15 @@ describe("sprint-zero runner", () => {
   // fnv1a64:c0347e40711dd8bc (P1, issue #193: state gains `founder`, present at Hollow Creek and
   // never changing with founder rules off; every vehicle gains `parkedAt`; and the new feed-store
   // road, which joins two occupied places, gets a RouteState. Hashing the same final state without
-  // those three gives d3b2228b80705018 again, so nothing else moved).
+  // those three gives d3b2228b80705018 again, so nothing else moved);
+  // fnv1a64:59a882e0fd44576d (O1a, issue #192, ADR 0022 decision 6: the sale is now AGREE_DEAL then a
+  // deal dispatch, so the path has one more command envelope, one more entry-free DAILY_SETTLEMENT
+  // transaction and one more event (DEAL_AGREED), shifting later command, transaction and event IDs;
+  // state gains `heldDeals` (empty again once the deal settles), the `Deal` counter, `tripCount` on
+  // the truck (1), `driver` on the delivery, `issuer` on every envelope, and a sale's purpose names
+  // its deal. Removing the AGREE_DEAL step and those fields from the final state gives
+  // c0347e40711dd8bc again, so nothing else moved: the money is the same).
   it("has a pinned replay hash", async () => {
-    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:c0347e40711dd8bc"`);
+    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:59a882e0fd44576d"`);
   });
 });

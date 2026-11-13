@@ -357,7 +357,9 @@ export const EMPTY_KNOWLEDGE: KnowledgeState = {
  * What can cause a producer's transactions, for decision 6 rule 1:
  * - `GAME_CREATION`, `FOUNDER_COMMAND`: known at once;
  * - `AGREED_CHARGE`: a charge whose amount depends only on agreements the founder
- *   made (midnight wages and overhead), known at once with or without a cash leg;
+ *   made (midnight wages and overhead), known at once with or without a cash leg.
+ *   Also an agreement's own change by time alone (a held deal expiring, ADR 0022
+ *   decision 9);
  * - `WORLD`: can post without a founder command, so rules 2 and 3 apply.
  *
  * "Posted at the founder's place while they're present" is decided per
@@ -384,8 +386,8 @@ export interface TransactionProducerDefinition {
  * below. The producer coverage test (packages/contracts/test) enforces both,
  * against the simulation's own `idempotencyKey(...)` call sites.
  *
- * M001 producers only. Later tasks add theirs (ADR 0022's outcomes, ADR 0024's
- * messages, ADR 0025's employees).
+ * M001 producers plus ADR 0022's deals (O1a). Later tasks add theirs (ADR 0022's
+ * other outcomes, ADR 0024's messages, ADR 0025's employees).
  */
 export const TRANSACTION_PRODUCERS = {
   // Game creation and founder commands (rule 1).
@@ -398,9 +400,13 @@ export const TRANSACTION_PRODUCERS = {
   "RESERVATION:ACCEPT": { trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] },
   "RESERVATION:RELEASE": { trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] },
   "DAILY_SETTLEMENT:WORKFORCE": { trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] },
+  /** AGREE_DEAL (ADR 0022 decision 9: rule 1, the founder's own command). */
+  "DAILY_SETTLEMENT:DEAL_AGREED": { trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] },
   // Charges fixed by agreements (rule 1).
   "DAILY_SETTLEMENT:WAGES": { trigger: "AGREED_CHARGE", legs: ["CASH", "NON_CASH"] },
   "DAILY_SETTLEMENT:OVERHEAD": { trigger: "AGREED_CHARGE", legs: ["CASH", "NON_CASH"] },
+  /** A HELD deal expiring: an agreement's state, always known (ADR 0022 decision 9). */
+  "DAILY_SETTLEMENT:DEAL_EXPIRED": { trigger: "AGREED_CHARGE", legs: ["NO_ENTRIES"] },
   // The world, with money lines.
   "DAILY_SETTLEMENT:PAYROLL": { trigger: "WORLD", legs: ["CASH", "NO_ENTRIES"] },
   "DAILY_SETTLEMENT:PENALTIES": { trigger: "WORLD", legs: ["CASH"] },

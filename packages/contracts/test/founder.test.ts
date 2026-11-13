@@ -112,7 +112,8 @@ describe("founder state (decision 1)", () => {
 
 describe("TRAVEL, REST and WAKE (decisions 3 and 7)", () => {
   it("are commands, after the M001 ones, and not repeatable", () => {
-    expect(GAME_COMMAND_TYPES.slice(-3)).toEqual(["TRAVEL", "REST", "WAKE"]);
+    // Right after the M001 commands; O1a's AGREE_DEAL (ADR 0022) comes after them.
+    expect(GAME_COMMAND_TYPES.slice(GAME_COMMAND_TYPES.indexOf("SELL_EQUIPMENT") + 1, GAME_COMMAND_TYPES.indexOf("SELL_EQUIPMENT") + 4)).toEqual(["TRAVEL", "REST", "WAKE"]);
     expectTypeOf<Extract<RepeatableCommand, { type: "TRAVEL" | "REST" | "WAKE" }>>().toBeNever();
   });
 

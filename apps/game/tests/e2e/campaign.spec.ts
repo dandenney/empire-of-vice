@@ -327,8 +327,10 @@ test("responds to the rival County Road closure: the picker routes around it, an
     type: "DISPATCH_DELIVERY",
     vehicleId: truck.id,
     cargo: [{ productId: pool.productId, quality: pool.quality, quantity }],
-    purpose: { kind: "SALE", buyerId: kessler.id, agreedUnitPrice: want.unitPrice },
+    // The sale form agrees the deal at the quote it shows, then dispatches against it (ADR 0022 decision 6).
+    purpose: { kind: "SALE", buyerId: kessler.id, dealId: null },
     routeId: backRoad.id,
+    driver: { kind: "FOUNDER" },
   });
   const sent = await snapshot(page);
   const dispatched = sent.recentEvents.filter((e) => e.type === "DELIVERY_DISPATCHED").at(-1)!;

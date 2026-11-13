@@ -114,13 +114,15 @@ describe("record order (decision 4)", () => {
 
 describe("news place tags (decision 7)", () => {
   it("tags facility events and road events, and nothing else", () => {
-    expectTypeOf<PlaceTaggedEventType>().toEqualTypeOf<"PRODUCTION_FAILED" | "DELIVERY_DELAYED" | "DEAL_FELL_THROUGH" | "CARGO_LOST">();
+    expectTypeOf<PlaceTaggedEventType>().toEqualTypeOf<"PRODUCTION_FAILED" | "DELIVERY_DELAYED" | "DEAL_FELL_THROUGH" | "CARGO_LOST" | "ROUTE_FOUND_CLOSED">();
     const tagged = Object.entries(EVENT_CONCERNS_PLACE).filter(([, tag]) => tag !== null);
     expect(Object.fromEntries(tagged)).toEqual({
       PRODUCTION_FAILED: "FACILITY",
       DELIVERY_DELAYED: "DELIVERY_ORIGIN",
       DEAL_FELL_THROUGH: "DELIVERY_ORIGIN",
       CARGO_LOST: "DELIVERY_ORIGIN",
+      // ADR 0022 decision 9: news at the delivery's origin facility.
+      ROUTE_FOUND_CLOSED: "DELIVERY_ORIGIN",
     });
   });
 
@@ -184,7 +186,7 @@ const rich: KnowledgeState = {
           departedAt: tick(650),
           arrivesAt: tick(760),
           cargo: [{ productId: ids.moonshine, quality: "basic", quantity: 8 }],
-          purpose: { kind: "SALE", buyerId: ids.speakeasy, agreedUnitPrice: cents(1_520) },
+          purpose: { kind: "SALE", buyerId: ids.speakeasy, dealId: asId("Deal", "deal-2") },
           delayed: false,
         },
       },
@@ -376,6 +378,34 @@ describe("player snapshot schema (decision 8)", () => {
         }),
       },
     ],
+    deals: [
+      {
+        id: asId("Deal", "deal-2"),
+        buyerId: ids.speakeasy,
+        productId: ids.moonshine,
+        quality: "basic",
+        quantity: 8,
+        unitPrice: cents(1_520),
+        agreedAt: tick(640),
+        expiresAt: tick(3_520),
+        budgetCommitted: true,
+        status: "DISPATCHED",
+        deliveryId: asId("Delivery", "delivery-3"),
+      },
+      {
+        id: asId("Deal", "deal-3"),
+        buyerId: ids.speakeasy,
+        productId: ids.moonshine,
+        quality: "basic",
+        quantity: 4,
+        unitPrice: cents(1_520),
+        agreedAt: tick(880),
+        expiresAt: tick(3_760),
+        budgetCommitted: false,
+        status: "HELD",
+        deliveryId: null,
+      },
+    ],
     finance: {
       cash: cents(120_000),
       books: [
@@ -408,7 +438,14 @@ describe("player snapshot schema (decision 8)", () => {
     ["a world event feed", { ...snapshot, recentEvents: [] }],
     ["a book row with an idempotency key", { ...snapshot, finance: { ...snapshot.finance, books: [{ ...snapshot.finance.books[0], idempotencyKey: "MATERIAL_PURCHASE:cmd-1" }] } }],
     ["a stored affordance missing", { ...snapshot, contracts: [{ ...snapshot.contracts[0], progress: { ...snapshot.contracts[0]!.progress, value: { ...snapshot.contracts[0]!.progress!.value, installments: [{ index: 0, deadline: 3_000, required: 10, delivered: 0, outcome: null, penalty: null }] } } }] }],
+    // The player's list shows only what the founder knows: never a world-side terminal status (ADR 0022 round-3 follow-up).
+    ["a deal shown SETTLED", { ...snapshot, deals: [{ ...snapshot.deals[0], status: "SETTLED" }] }],
+    ["no deal list", withoutDeals(snapshot)],
   ])("rejects %s", (_label, bad) => {
     expect(playerSnapshotSchema.safeParse(roundTrip(bad)).success).toBe(false);
   });
 });
+
+function withoutDeals(snapshot: PlayerSnapshot): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== "deals"));
+}
