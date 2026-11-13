@@ -167,7 +167,8 @@ export function tickEnd(state: GameState, data: GameData, t: Tick): GameState {
     const place = newsPlace(s, data, event);
     if (place === null) continue;
     const onOwnRun = place.deliveryId !== null && place.deliveryId === aboard;
-    if (onOwnRun) roadEvent = true;
+    // At a stop the live view already sees the delivery's subjects there, IN_PERSON at the stop.
+    if (onOwnRun && obs.stop === null) roadEvent = true;
     const seen = place.locationId === obs.locationId || (place.deliveryId !== null && obs.stop?.id === place.deliveryId) || onOwnRun;
     if (!seen) s = withKnowledge(s, (k) => addNews(k, place.locationId, newsItem(event)));
   }

@@ -284,6 +284,47 @@ describe("news and deals on the road (ADR 0021 decision 7, ADR 0022 decision 6)"
     expect(sim.state.knowledge.pendingNews).toEqual([]);
     expect(sim.state.knowledge.lastCatchUp).toMatchObject({ locationId: HOLLOW_CREEK, news: [] });
   });
+
+  it("an event at the stop is seen at the stop: a buyer taking nothing on spec leaves the truck's record IN_PERSON at the buyer (#222)", () => {
+    const sim0 = stocked(1);
+    // The roadhouse wants nothing more today, in the world; the founder doesn't need to know.
+    const sim = loadGame(
+      {
+        ...sim0.serialize(),
+        state: {
+          ...sim0.state,
+          buyers: sim0.state.buyers.map((b) => (b.id === CROSSROADS_ROADHOUSE ? { ...b, wants: b.wants.map((w) => ({ ...w, demandRemaining: 0 })) } : b)),
+        },
+      },
+      { scenario: FOUNDER_SCENARIO },
+    );
+    applied(
+      sim.dispatch({
+        command: {
+          type: "DISPATCH_DELIVERY",
+          vehicleId: MODEL_TT_TRUCK,
+          cargo: [{ productId: MOONSHINE, quality: "basic", quantity: 1 }],
+          purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: null },
+          routeId: null,
+          driver: { kind: "FOUNDER" },
+        },
+      }),
+      "dispatch on spec",
+    );
+    const deliveryId = sim.state.deliveries.at(-1)!.id;
+    sim.takeEvents();
+    until(sim, (s) => s.founder.whereabouts.kind === "ON_DELIVERY" && s.founder.whereabouts.atStop?.tick === s.tick, TICKS_PER_DAY, "the stop");
+    const events = sim.takeEvents();
+    expect(events.find((e) => e.type === "SPEC_SALE_SETTLED"), "construction: nothing taken").toMatchObject({ deliveryId, accepted: 0 });
+    expect(events.find((e) => e.type === "DEAL_FELL_THROUGH"), "construction: it fell through at the stop").toMatchObject({ deliveryId, reason: "NOT_WANTED" });
+    const stop = GAME_DATA.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!.locationId;
+    expect(record(sim.state, "VEHICLE_WHEREABOUTS", MODEL_TT_TRUCK)).toMatchObject({
+      learnedAt: sim.state.tick,
+      source: { kind: "IN_PERSON", locationId: stop },
+      value: { trip: { deliveryId, leg: "RETURN" } },
+    });
+    expect(sim.state.knowledge.pendingNews, "seen at the stop, not news").toEqual([]);
+  });
 });
 
 describe("the founder's commands in the activity feed (ADR 0021 decision 8)", () => {
