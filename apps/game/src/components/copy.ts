@@ -76,6 +76,16 @@ export const REJECTION_FIELD_COPY: Readonly<Record<RejectionField, string>> = {
   contractOfferId: "contractOfferId",
   contractId: "contractId",
   sourceCommandId: "sourceCommandId",
+  // ADR 0022 / 0023 presence reasons (P1, #193). PLACEHOLDER: raw field names, like the rest.
+  requiredLocationId: "requiredLocationId",
+  issuerLocationId: "issuerLocationId",
+  until: "until",
+  locationId: "locationId",
+  opensAt: "opensAt",
+  whereabouts: "whereabouts",
+  destinationLocationId: "destinationLocationId",
+  min: "min",
+  max: "max",
 };
 
 /** The label for each quality tier. Placeholder: the raw tier. */
@@ -117,4 +127,17 @@ export const REJECTION_COPY: Readonly<Record<RejectionCode, string>> = {
   CONTRACT_NOT_ACTIVE: "Contract isn't active",
   CARGO_DOES_NOT_MATCH_CONTRACT: "Cargo doesn't match the contract",
   NOT_REPEATABLE: "Can't repeat that",
+  // ADR 0022 / 0023 presence reasons (P1, #193). None can happen in M001
+  // (founder rules off). PLACEHOLDER copy until the M002 UI tasks write it.
+  NOT_PRESENT: "You're not there",
+  FOUNDER_BUSY: "You're busy",
+  PLACE_CLOSED: "They're closed",
+  VEHICLE_NOT_AT: "The truck isn't here",
+  NO_DRIVER: "No one to drive",
+  FOUNDER_AWAY: "You're away",
+  ALREADY_THERE: "You're already there",
+  INVALID_PATH: "That way doesn't lead there",
+  NO_PATH: "No open road there",
+  INVALID_REST_LENGTH: "Can't rest that long",
+  NOT_RESTING: "You're not resting",
 };

@@ -275,6 +275,12 @@ describe("player snapshot schema (decision 8)", () => {
   const snapshot: PlayerSnapshot = {
     clock: { tick: tick(900), dayIndex: 0, date: { year: 1920, month: 1, day: 17, hour: 15, minute: 0 } },
     outcome: { status: "PLAYING" },
+    founder: {
+      whereabouts: { kind: "PRESENT", locationId: ids.locDistillery, busy: { activity: "START_BATCH", until: tick(920) } },
+      awakeSince: tick(360),
+      tired: false,
+      currentLeg: null,
+    },
     here: ids.locDistillery,
     places: [
       {

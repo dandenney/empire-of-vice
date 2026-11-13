@@ -121,8 +121,8 @@ export function parseSaveFile(text: string, options: LoadOptions = {}): SaveLoad
  * over canonical JSON, so it needs no types, but not every parsed JSON value
  * can be canonicalized: a number too large for a double (`1e400`) parses as
  * Infinity. A non-object state and a CanonicalJsonError are both INVALID, never
- * a throw. Exported for its tests only: `parseSaveFile` reaches it once
- * SAVE_SCHEMA_VERSION goes above 1.
+ * a throw. `parseSaveFile` calls it for every save older than
+ * SAVE_SCHEMA_VERSION; it's exported for its tests.
  */
 export function rawStateHash(
   state: unknown,

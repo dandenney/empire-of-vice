@@ -12,11 +12,9 @@
 // `maxStartableQuantity`, `maxAcceptableQuantity`, quotes, `inTransit`) is
 // recomputed from known values, never read from the world. Raw
 // simulation-created IDs are command handles only; the UI never shows them.
-//
-// The founder section (ADR 0023) is added by its own contract task (P1).
 
 import type { WorldPoint } from "./geometry.ts";
-import type { BuyerId, ContractId, LocationId, SupplierId } from "./ids.ts";
+import type { BuyerId, ContractId, LocationId, RouteId, SupplierId } from "./ids.ts";
 import type { ActivityItem, CatchUp, Known, KnowledgeValueOf } from "./knowledge.ts";
 import type { LedgerEntry, TransactionKind } from "./ledger.ts";
 import type { Money } from "./money.ts";
@@ -33,6 +31,7 @@ import type {
   VehicleSnapshot,
   VictoryProgress,
 } from "./snapshot.ts";
+import type { FounderState } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 export interface PlayerSnapshot {
@@ -40,6 +39,8 @@ export interface PlayerSnapshot {
   readonly clock: ClockSnapshot;
   /** Always known; evaluated on the world, the one accepted exception to the non-leak property (decision 9). */
   readonly outcome: GameOutcome;
+  /** Always known (ADR 0021 decision 3, ADR 0023 decision 1). */
+  readonly founder: PlayerFounder;
   /** The place the founder is at, or null while travelling. Its values in `places` are the live view (decision 5). */
   readonly here: LocationId | null;
   /** Every location, sorted by ID. */
@@ -57,6 +58,32 @@ export interface PlayerSnapshot {
   readonly activity: readonly ActivityItem[];
   /** `knowledge.lastCatchUp`. */
   readonly catchUp: CatchUp | null;
+}
+
+// ---------------------------------------------------------------------------
+// The founder (ADR 0023 decision 1): always known
+// ---------------------------------------------------------------------------
+
+/**
+ * `GameState.founder` unchanged, plus display fields derived from it and
+ * game-data.
+ */
+export interface PlayerFounder extends FounderState {
+  /** `now − awakeSince > TIRED_AFTER_TICKS` (ADR 0023 decision 7): activities take longer. */
+  readonly tired: boolean;
+  /** The leg under way while TRAVELLING, for the map; null otherwise. */
+  readonly currentLeg: PlayerFounderLeg | null;
+}
+
+export interface PlayerFounderLeg {
+  readonly routeId: RouteId;
+  /** The route's waypoints in the direction of travel (reversed when the leg is). */
+  readonly waypoints: readonly WorldPoint[];
+  /**
+   * How far along the leg, in parts per million: 0 at `legDepartedAt`,
+   * 1 000 000 at `legArrivesAt`. Integer, clamped to that range.
+   */
+  readonly progressPpm: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -8,8 +8,20 @@
 //   - The clock is read as whole milliseconds (floored). Successive floored
 //     readings telescope, so flooring loses no time over a run.
 //   - Elapsed time is accumulated in "tick units": ms × speed × TICKS_PER_HOUR.
-//     One tick costs REAL_MS_PER_GAME_HOUR_AT_1X units at every speed, so the
-//     remainder carries across speed changes unchanged.
+//     One tick costs the scenario's `realMsPerGameHourAt1x` units at every
+//     speed, so the remainder carries across speed changes unchanged.
+//
+// Pacing is per scenario (ADR 0023 decision 9): the scheduler runs at the
+// loaded scenario's `realMsPerGameHourAt1x`, set when it's created and on
+// `reset` for a new or loaded game. The default is the M001 scenario's (5 000).
+//
+// Rest fast-forward (ADR 0023 decision 9): while it's on and the game is
+// running, time accrues at REST_SPEED_MULTIPLIER × 1× whatever speed the player
+// picked. It isn't a player Speed: `speed` stays 0 | 1 | 2 | 4. The host turns
+// it on while the founder rests and off when they wake or a `notify` activity
+// item lands; that wiring, and the `fastForward` flag on SchedulerStatus, are
+// SK1a's. Until then nothing turns it on, and with `founderRules` off the
+// founder never rests, so it stays inert.
 //   - Whole ticks move from the accumulator into a backlog. Each step takes at
 //     most MAX_TICKS_PER_STEP from the backlog; the rest waits for the next
 //     step. Ticks are never dropped (SIM-001).
@@ -23,7 +35,7 @@
 //     resumes it. Speed requests while hidden are refused.
 
 import { TICKS_PER_HOUR } from "@eov/contracts";
-import { REAL_MS_PER_GAME_HOUR_AT_1X, SPEED_MULTIPLIERS, type SpeedMultiplier } from "@eov/game-data";
+import { FIRST_SHIPMENT_SCENARIO, REST_SPEED_MULTIPLIER, SPEED_MULTIPLIERS, type SpeedMultiplier } from "@eov/game-data";
 import { WORKER_COPY } from "./copy.ts";
 
 /** 0 is paused; otherwise a speed multiplier from game-data. */
@@ -52,6 +64,13 @@ export function isSpeed(value: unknown): value is Speed {
   return value === 0 || (SPEED_MULTIPLIERS as readonly unknown[]).includes(value);
 }
 
+/**
+ * The pacing a scheduler starts with: the M001 scenario's, the one the game
+ * plays. A scenario's pacing is a whole number of ms, at least 1, checked when
+ * the scenario file is parsed (game-data `parseScenario`).
+ */
+export const DEFAULT_REAL_MS_PER_GAME_HOUR_AT_1X = FIRST_SHIPMENT_SCENARIO.realMsPerGameHourAt1x;
+
 export class SpeedScheduler {
   readonly #clock: SchedulerClock;
   #speed: Speed = 0;
@@ -59,14 +78,24 @@ export class SpeedScheduler {
   #visible = true;
   /** Last clock reading, in whole ms. */
   #lastMs: number;
-  /** Sub-tick time, in tick units (ms × speed × TICKS_PER_HOUR). Always < REAL_MS_PER_GAME_HOUR_AT_1X. */
+  /** Real ms per game hour at 1×: what one tick costs, in tick units. The loaded scenario's. */
+  #msPerHour: number;
+  /** Sub-tick time, in tick units (ms × speed × TICKS_PER_HOUR). Always < #msPerHour. */
   #remainder = 0;
   /** Whole ticks earned but not yet handed out. */
   #backlog = 0;
+  /** The rest fast-forward is requested (ADR 0023 decision 9). */
+  #restFastForward = false;
 
-  constructor(clock: SchedulerClock) {
+  constructor(clock: SchedulerClock, realMsPerGameHourAt1x: number = DEFAULT_REAL_MS_PER_GAME_HOUR_AT_1X) {
     this.#clock = clock;
+    this.#msPerHour = realMsPerGameHourAt1x;
     this.#lastMs = this.#read();
+  }
+
+  /** The pacing in use: real ms per game hour at 1× (ADR 0023 decision 9). */
+  get realMsPerGameHourAt1x(): number {
+    return this.#msPerHour;
   }
 
   get status(): SchedulerStatus {
@@ -79,6 +108,21 @@ export class SpeedScheduler {
 
   get visible(): boolean {
     return this.#visible;
+  }
+
+  /** True while the rest fast-forward is on and the game is running (ADR 0023 decision 9). */
+  get fastForward(): boolean {
+    return this.#restFastForward && this.#speed !== 0;
+  }
+
+  /**
+   * Turns the rest fast-forward on or off. Time up to now accrues at the old
+   * rate first. Pausing still pauses; the player's speed is kept for when it
+   * turns off. Nothing calls this until SK1a.
+   */
+  setRestFastForward(on: boolean): void {
+    this.#accrue();
+    this.#restFastForward = on;
   }
 
   /** Whole ticks owed but not yet handed out by `step()`. */
@@ -113,13 +157,19 @@ export class SpeedScheduler {
     this.#visible = visible;
   }
 
-  /** A new or loaded game: paused, nothing owed. Visibility is the tab's and is kept. */
-  reset(): void {
+  /**
+   * A new or loaded game: paused, nothing owed, no fast-forward. Visibility is
+   * the tab's and is kept. Pass the game's scenario pacing to change it (ADR 0023 decision 9);
+   * omitted, the pacing stays as it was.
+   */
+  reset(realMsPerGameHourAt1x: number = this.#msPerHour): void {
     this.#accrue();
+    this.#msPerHour = realMsPerGameHourAt1x;
     this.#speed = 0;
     this.#autoPaused = false;
     this.#remainder = 0;
     this.#backlog = 0;
+    this.#restFastForward = false;
   }
 
   /** Ticks to run now: whatever is owed, at most MAX_TICKS_PER_STEP. 0 while paused. */
@@ -140,9 +190,10 @@ export class SpeedScheduler {
     const elapsed = nowMs - this.#lastMs;
     this.#lastMs = nowMs;
     if (elapsed <= 0 || this.#speed === 0 || !this.#visible) return;
-    this.#remainder += elapsed * this.#speed * TICKS_PER_HOUR;
-    const ticks = Math.floor(this.#remainder / REAL_MS_PER_GAME_HOUR_AT_1X);
-    this.#remainder -= ticks * REAL_MS_PER_GAME_HOUR_AT_1X;
+    const rate = this.#restFastForward ? REST_SPEED_MULTIPLIER : this.#speed;
+    this.#remainder += elapsed * rate * TICKS_PER_HOUR;
+    const ticks = Math.floor(this.#remainder / this.#msPerHour);
+    this.#remainder -= ticks * this.#msPerHour;
     this.#backlog += ticks;
   }
 }
