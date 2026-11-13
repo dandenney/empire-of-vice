@@ -228,10 +228,20 @@ export interface PlayerFinance {
   readonly cash: Money;
   /** Every ledger transaction with entries except those still in `pendingBooks`, oldest first. */
   readonly books: readonly PlayerBookRow[];
-  /** Cash + known inventory at cost + owned assets − known liabilities. Labelled as known. */
+  /**
+   * Cash + known inventory at cost + owned assets − known liabilities, labelled
+   * as known: the balance sheet of `books` (every known transaction). Inventory
+   * at cost includes raw materials, finished goods, goods in transit and the
+   * conversion cost prepaid into running jobs (`PRODUCTION_IN_PROGRESS`, ADR 0022
+   * decision 7).
+   */
   readonly knownNetWorth: {
     readonly amount: Money;
-    /** The oldest `learnedAt` the figure relies on, or null if it relies on no record. */
+    /**
+     * The oldest `learnedAt` the figure relies on: of the owned facilities' known
+     * FACILITY_STOCK and the owned vehicles' known VEHICLE_WHEREABOUTS (the
+     * inventory the books may still lag on). Null if none is known.
+     */
     readonly asOf: Tick | null;
   };
   /** Victory progress from known values. The outcome itself is evaluated on the world. */

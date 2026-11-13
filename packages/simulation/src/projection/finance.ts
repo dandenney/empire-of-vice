@@ -119,7 +119,7 @@ export class FinanceProjectionError extends Error {
   override readonly name = "FinanceProjectionError";
 }
 
-function cashMovement(transaction: LedgerTransaction): Money {
+export function cashMovement(transaction: LedgerTransaction): Money {
   let net = ZERO_MONEY;
   for (const e of transaction.entries) {
     if (e.account !== "CASH") continue;
@@ -129,7 +129,7 @@ function cashMovement(transaction: LedgerTransaction): Money {
 }
 
 /** ADR 0015: the one category all non-cash accounts share, else the kind's default. */
-function cashFlowCategoryOf(transaction: LedgerTransaction): CashFlowCategory | null {
+export function cashFlowCategoryOf(transaction: LedgerTransaction): CashFlowCategory | null {
   let shared: CashFlowCategory | null = null;
   for (const e of transaction.entries) {
     if (e.account === "CASH") continue;
