@@ -32,6 +32,7 @@ import {
 } from "@eov/contracts";
 import type { GameData } from "@eov/game-data";
 import type { SystemRegistry } from "../kernel/registry.ts";
+import { M001_RULES, type GameRules } from "../kernel/rules.ts";
 import { dispatchRequotedSale } from "../logistics/logistics.ts";
 
 const notRepeatable = (sourceCommandId: CommandId): RejectionReason => ({ code: "NOT_REPEATABLE", sourceCommandId });
@@ -71,7 +72,7 @@ export function resolveRepeatSource(state: GameState, sourceCommandId: CommandId
 }
 
 /** A RegisterSystem (game/systems.ts). It posts nothing itself: the copy goes through its own command's handler. */
-export function registerRepeat(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator): void {
+export function registerRepeat(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): void {
   registry.onCommand("REPEAT_OPERATION", {
     apply: (state, command, ctx) => {
       const source = resolveRepeatSource(state, command.sourceCommandId);
@@ -80,7 +81,7 @@ export function registerRepeat(registry: SystemRegistry, data: GameData, coordin
       // founder rules off it re-agrees at the buyer's current quote, in the dispatch's
       // own transaction (ADR 0022 decision 6; issue #192). The on-spec repeat is SK1c's.
       if (source.type === "DISPATCH_DELIVERY" && source.purpose.kind === "SALE") {
-        return dispatchRequotedSale(state, source, ctx, data, coordinator);
+        return dispatchRequotedSale(state, source, ctx, data, coordinator, rules);
       }
       const handler = registry.commandHandler(source.type);
       return handler.apply(state, source as never, ctx);

@@ -1,5 +1,5 @@
-// Per-scenario pacing and the (inert) rest fast-forward in the speed scheduler
-// (ADR 0023 decision 9, P1 #193).
+// Per-scenario pacing and the rest fast-forward in the speed scheduler
+// (ADR 0023 decision 9, P1 #193; `followFounder`, SK1a #198).
 
 import { FIRST_SHIPMENT_SCENARIO, REAL_MS_PER_GAME_HOUR_AT_1X, REST_SPEED_MULTIPLIER } from "@eov/game-data";
 import { describe, expect, it } from "vitest";
@@ -53,7 +53,7 @@ describe("per-scenario pacing", () => {
   });
 });
 
-describe("rest fast-forward (inert until SK1a)", () => {
+describe("rest fast-forward", () => {
   it("is off by default, so pacing is exactly the player's speed", () => {
     const clock = new FakeClock();
     const scheduler = new SpeedScheduler(clock);
@@ -86,5 +86,47 @@ describe("rest fast-forward (inert until SK1a)", () => {
     expect(scheduler.fastForward).toBe(true);
     scheduler.reset();
     expect(scheduler.fastForward).toBe(false);
+  });
+});
+
+describe("following the founder (ADR 0023 decision 9, SK1a)", () => {
+  it("fast-forwards from the moment a rest is seen until the founder wakes", () => {
+    const clock = new FakeClock();
+    const scheduler = new SpeedScheduler(clock, 20_000);
+    scheduler.setSpeed(2);
+    scheduler.followFounder({ restStartedAt: null, notifyLanded: false });
+    expect(scheduler.fastForward).toBe(false);
+    scheduler.followFounder({ restStartedAt: 1_300, notifyLanded: false });
+    expect(scheduler.fastForward).toBe(true);
+    expect(run(clock, scheduler, 10_000)).toBe(480);
+    scheduler.followFounder({ restStartedAt: null, notifyLanded: false });
+    expect(scheduler.fastForward).toBe(false);
+    expect(scheduler.speed).toBe(2);
+    expect(run(clock, scheduler, 10_000)).toBe(60);
+  });
+
+  it("drops back for the rest of that rest once a notify item lands; the next rest fast-forwards again", () => {
+    const clock = new FakeClock();
+    const scheduler = new SpeedScheduler(clock, 20_000);
+    scheduler.setSpeed(1);
+    scheduler.followFounder({ restStartedAt: 1_300, notifyLanded: false });
+    scheduler.followFounder({ restStartedAt: 1_300, notifyLanded: true });
+    expect(scheduler.fastForward).toBe(false);
+    // Later batches of the same rest stay at the player's speed.
+    scheduler.followFounder({ restStartedAt: 1_300, notifyLanded: false });
+    expect(scheduler.fastForward).toBe(false);
+    scheduler.followFounder({ restStartedAt: null, notifyLanded: false });
+    scheduler.followFounder({ restStartedAt: 2_900, notifyLanded: false });
+    expect(scheduler.fastForward).toBe(true);
+  });
+
+  it("forgets the rest it followed on a new or loaded game", () => {
+    const clock = new FakeClock();
+    const scheduler = new SpeedScheduler(clock);
+    scheduler.followFounder({ restStartedAt: 1_300, notifyLanded: true });
+    scheduler.reset();
+    scheduler.setSpeed(1);
+    scheduler.followFounder({ restStartedAt: 1_300, notifyLanded: false });
+    expect(scheduler.fastForward).toBe(true);
   });
 });

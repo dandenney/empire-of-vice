@@ -44,6 +44,21 @@
 //
 // Limits (M001): transfers leave only from the vehicle's home, and a trip carries
 // one cargo line (decision 6).
+//
+// With founder rules on (ADR 0023 decision 5, SK1a):
+// - A new dispatch needs a driver: the founder, PRESENT at the place the truck is
+//   parked (else NO_DRIVER; a hired Driver is ADR 0025's), and the truck parked
+//   there with no trip (else VEHICLE_NOT_AT, naming the founder's place, never
+//   the truck's).
+// - The dispatch origin is the owned facility at the founder's place, recorded
+//   in `fromFacilityId`. The route and the stock are resolved from it, and the
+//   truck returns there: returned cargo unloads into it, VEHICLE_RETURNED names
+//   its location, and the truck is parked there again.
+// - The founder loads the truck first (LOAD_TRUCK, decision 4): the trip departs
+//   when loading ends (`departedAt`), and its arrival and deal deadline count
+//   from then. The founder phase sets `parkedAt: null` at the departure.
+// With founder rules off the origin is the vehicle's home, as in M001, and
+// `parkedAt` never changes.
 
 import {
   addMoney,
@@ -92,8 +107,10 @@ import {
 import { scheduleWorldEvent } from "../events/world-events.ts";
 import { addProduct, allocateRemovalCost, availableProduct, takeForContract, takeProduct } from "../inventory/pools.ts";
 import { storageAvailable } from "../production/capacity.ts";
+import { activityTicks } from "../founder/time.ts";
 import { allocateId, formatId } from "../kernel/ids.ts";
 import type { CommandContext, CommandOutcome, SystemRegistry, TickContext } from "../kernel/registry.ts";
+import { M001_RULES, type GameRules } from "../kernel/rules.ts";
 import { nextInt } from "../rng/xoshiro128.ts";
 
 /** The draw bound for route disruption: parts per million (ADR 0019 decision 3). */
@@ -155,6 +172,10 @@ function dealIdOf(delivery: DeliveryState): DealId {
   if (delivery.purpose.kind !== "SALE") throw new RangeError(`Delivery ${delivery.id} isn't a sale`);
   if (delivery.purpose.dealId === null) throw new RangeError(`Sale ${delivery.id} on spec: SK1c (#200) resolves those`);
   return delivery.purpose.dealId;
+}
+
+function withParkedAt(state: GameState, vehicleId: VehicleState["id"], parkedAt: LocationId): GameState {
+  return { ...state, vehicles: state.vehicles.map((v) => (v.id === vehicleId ? { ...v, parkedAt } : v)) };
 }
 
 function withDelivery(state: GameState, deliveryId: DeliveryState["id"], status: DeliveryState["status"]): GameState {
@@ -370,11 +391,15 @@ function returnHome(
   data: GameData,
   coordinator: TransactionCoordinator,
   ctx: TickContext,
+  rules: GameRules,
 ): GameState {
   const trip = vehicle.trip!;
-  const def = data.vehicles.find((v) => v.id === vehicle.id);
-  const home = data.facilities.find((f) => f.id === def?.homeFacilityId);
-  if (!home) throw new RangeError(`Vehicle ${vehicle.id} has no home facility`);
+  // The trip ends where it started (ADR 0023 decision 5): the delivery's origin.
+  // With founder rules off every delivery leaves from the vehicle's home, so
+  // that's the home facility, as in M001.
+  const fromFacilityId = state.deliveries.find((d) => d.id === trip.deliveryId)?.fromFacilityId;
+  const home = data.facilities.find((f) => f.id === fromFacilityId);
+  if (!home) throw new RangeError(`Vehicle ${vehicle.id} is returning to unknown facility ${String(fromFacilityId)}`);
   const route = routeDefinition(data, trip.routeId);
   const tx = coordinator.begin(state, {
     kind: "VEHICLE_RETURN",
@@ -389,6 +414,7 @@ function returnHome(
   const returned = delivery.status === "FAILED" ? delivery.cargo : [];
 
   tx.update((s) => withVehicle(s, vehicle.id, null));
+  if (rules.founderRules) tx.update((s) => withParkedAt(s, vehicle.id, home.locationId));
   if (returned.length > 0) {
     tx.update((s) =>
       returned.reduce((acc, line) => addProduct(acc, home.id, line.productId, line.quality, line.quantity, line.cost), s),
@@ -689,6 +715,37 @@ function saleDealCheck(
   return matches ? deal : { code: "CARGO_DOES_NOT_MATCH_DEAL", dealId: deal.id };
 }
 
+/** Where a dispatch leaves from and returns to. */
+interface Origin {
+  readonly id: FacilityId;
+  readonly locationId: LocationId;
+}
+
+/**
+ * The dispatch origin with founder rules on (ADR 0023 decision 5): the owned
+ * facility at the place the founder drives from. Checks, in order:
+ * - NO_DRIVER: the dispatch names no driver, names an employee (no Driver can be
+ *   hired until ADR 0025), or the founder isn't PRESENT anywhere;
+ * - VEHICLE_NOT_AT: the truck is on a trip (or being loaded), carrying the
+ *   founder, or parked elsewhere. `locationId` is the founder's place, never the
+ *   truck's;
+ * - INSUFFICIENT_STOCK with none available: there's no facility of yours here,
+ *   so there's nothing to load.
+ */
+function founderOrigin(state: GameState, data: GameData, command: DispatchDeliveryCommand, vehicle: VehicleState): Origin | RejectionReason {
+  const { vehicleId, driver } = command;
+  const w = state.founder.whereabouts;
+  if (driver?.kind !== "FOUNDER" || w.kind !== "PRESENT") return { code: "NO_DRIVER", vehicleId };
+  const here = w.locationId;
+  if (vehicle.trip !== null || vehicle.parkedAt !== here) return { code: "VEHICLE_NOT_AT", vehicleId, locationId: here };
+  const facility = data.facilities.find((f) => f.locationId === here && state.facilities.some((owned) => owned.id === f.id));
+  if (!facility) {
+    const line = command.cargo[0]!;
+    return { code: "INSUFFICIENT_STOCK", productId: line.productId, quality: line.quality, requested: line.quantity, available: 0 };
+  }
+  return { id: facility.id, locationId: facility.locationId };
+}
+
 /**
  * Validates a dispatch against current state (business rules). Returns what to
  * stage, or why not. M001's order: the vehicle, the cargo's shape, the truck's
@@ -701,17 +758,24 @@ function planDispatch(
   command: DispatchDeliveryCommand,
   data: GameData,
   terms: SaleTerms,
+  rules: GameRules,
 ): DispatchPlan | ContractDispatchPlan | TransferDispatchPlan | RejectionReason {
   const { vehicleId, cargo, purpose } = command;
   const vehicle = state.vehicles.find((v) => v.id === vehicleId);
   const def = data.vehicles.find((v) => v.id === vehicleId);
-  const home = data.facilities.find((f) => f.id === def?.homeFacilityId);
-  if (!vehicle || !def || !home) return { code: "UNKNOWN_ENTITY", kind: "Vehicle", id: vehicleId };
-  if (vehicle.trip !== null) return { code: "VEHICLE_UNAVAILABLE", vehicleId };
+  const vehicleHome = data.facilities.find((f) => f.id === def?.homeFacilityId);
+  if (!vehicle || !def || !vehicleHome) return { code: "UNKNOWN_ENTITY", kind: "Vehicle", id: vehicleId };
+  if (!rules.founderRules && vehicle.trip !== null) return { code: "VEHICLE_UNAVAILABLE", vehicleId };
   const first = cargo[0];
   if (cargo.length !== 1 || !first) return { code: "INVALID_QUANTITY", field: "cargo", value: cargo.length };
   if (!Number.isSafeInteger(first.quantity) || first.quantity <= 0) {
     return { code: "INVALID_QUANTITY", field: "cargo[0].quantity", value: first.quantity };
+  }
+  let home: Origin = vehicleHome;
+  if (rules.founderRules) {
+    const origin = founderOrigin(state, data, command, vehicle);
+    if ("code" in origin) return origin;
+    home = origin;
   }
   if (first.quantity > def.capacityCases) {
     return { code: "VEHICLE_CAPACITY_EXCEEDED", vehicleId, requested: first.quantity, capacity: def.capacityCases };
@@ -754,6 +818,7 @@ function applyDispatch(
   data: GameData,
   coordinator: TransactionCoordinator,
   terms: SaleTerms,
+  rules: GameRules,
 ): CommandOutcome {
   const { vehicleId, driver } = command;
   const deliveryId = formatId("Delivery", state.counters.nextId.Delivery);
@@ -765,12 +830,16 @@ function applyDispatch(
   });
   if (tx.status === "duplicate") return { status: "applied", state };
 
-  const plan = planDispatch(tx.state, command, data, terms);
+  const plan = planDispatch(tx.state, command, data, terms, rules);
   if ("code" in plan) {
     tx.reject(plan);
   } else {
     const { route, line, homeId } = plan;
-    const arrivesAt = addTicks(ctx.tick, route.durationTicks);
+    // With founder rules on the founder loads the truck first (LOAD_TRUCK), and it
+    // leaves when loading ends (ADR 0023 decisions 4 and 5).
+    const loading = rules.founderRules && driver?.kind === "FOUNDER" ? activityTicks(state.founder, "LOAD_TRUCK", ctx.tick) : 0;
+    const departedAt = addTicks(ctx.tick, loading);
+    const arrivesAt = addTicks(departedAt, route.durationTicks);
     // A contract installment draws the contract's reservations first (ADR 0018 decision 5);
     // a sale or a transfer takes unreserved stock only (ADR 0013).
     const taken =
@@ -814,7 +883,7 @@ function applyDispatch(
       const minted = allocateId(x, "Delivery").state;
       return { ...minted, deliveries: [...minted.deliveries, delivery].sort(compareById) };
     });
-    tx.update((x) => departing(x, vehicleId, { deliveryId, routeId: route.id, leg: "OUTBOUND", departedAt: ctx.tick, arrivesAt, delayed: false }));
+    tx.update((x) => departing(x, vehicleId, { deliveryId, routeId: route.id, leg: "OUTBOUND", departedAt, arrivesAt, delayed: false }));
     tx.post(dispatchEntries(taken.cost));
     tx.emit({ type: "DELIVERY_DISPATCHED", deliveryId, vehicleId, routeId: route.id, cargo: [line], purpose, arrivesAt });
     for (const reservationId of taken.consumed) tx.emit({ type: "RESERVATION_RELEASED", reservationId, reason: "CONSUMED" });
@@ -836,13 +905,19 @@ export function dispatchRequotedSale(
   ctx: CommandContext,
   data: GameData,
   coordinator: TransactionCoordinator,
+  rules: GameRules = M001_RULES,
 ): CommandOutcome {
-  return applyDispatch(state, command, ctx, data, coordinator, "REQUOTE");
+  return applyDispatch(state, command, ctx, data, coordinator, "REQUOTE", rules);
 }
 
-export function registerLogistics(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator): void {
+export function registerLogistics(
+  registry: SystemRegistry,
+  data: GameData,
+  coordinator: TransactionCoordinator,
+  rules: GameRules = M001_RULES,
+): void {
   registry.onCommand("DISPATCH_DELIVERY", {
-    apply: (state, command, ctx) => applyDispatch(state, command, ctx, data, coordinator, "NAMED_DEAL"),
+    apply: (state, command, ctx) => applyDispatch(state, command, ctx, data, coordinator, "NAMED_DEAL", rules),
   });
 
   registry.onPhase("vehicles", "vehicle-arrivals", (state, ctx) => {
@@ -850,7 +925,7 @@ export function registerLogistics(registry: SystemRegistry, data: GameData, coor
     for (const vehicle of state.vehicles) {
       const trip = vehicle.trip;
       if (!trip || trip.arrivesAt > ctx.tick) continue;
-      s = trip.leg === "RETURN" ? returnHome(s, vehicle, data, coordinator, ctx) : resolveOutbound(s, vehicle, data, coordinator, ctx);
+      s = trip.leg === "RETURN" ? returnHome(s, vehicle, data, coordinator, ctx, rules) : resolveOutbound(s, vehicle, data, coordinator, ctx);
     }
     return s;
   });

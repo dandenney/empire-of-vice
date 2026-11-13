@@ -238,7 +238,7 @@ export function simulationOptions(setup: GameSetup = {}): SimulationOptions {
   const scenario = setup.scenario ?? FIRST_SHIPMENT_SCENARIO;
   const data = setup.data ?? GAME_DATA;
   return {
-    registry: createGameRegistry(data, createCoordinator(), setup.systems ?? SYSTEMS),
+    registry: createGameRegistry(data, createCoordinator(), setup.systems ?? SYSTEMS, { founderRules: scenario.founderRules }),
     startDate: scenario.startDate,
     gameDataVersion: data.version,
   };
