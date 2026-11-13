@@ -84,7 +84,8 @@ describe("the phone table (ADR 0027 decision 2)", () => {
   });
 
   it("messages from a buyer carry the contract, never the price or the standing (ADR 0024 decision 6)", () => {
-    expect(KNOWLEDGE_VISIBILITY.MESSAGE).toEqual({ FACILITY: [], SUPPLIER: [], BUYER: ["CONTRACT_OFFERS", "CONTRACT_PROGRESS"] });
+    expect(KNOWLEDGE_VISIBILITY.MESSAGE.BUYER).toEqual(["CONTRACT_OFFERS", "CONTRACT_PROGRESS"]);
+    expect(KNOWLEDGE_VISIBILITY.MESSAGE.SUPPLIER).toEqual([]);
     for (const rule of CALL_IN_RULES) {
       expect(KNOWLEDGE_VISIBILITY.PHONE[rule.partyKind]).toContain(rule.subjectKind);
       expect(KNOWLEDGE_VISIBILITY.MESSAGE[rule.partyKind]).toContain(rule.subjectKind);

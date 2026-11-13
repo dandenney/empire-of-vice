@@ -58,6 +58,9 @@ describe("founder state (decision 1)", () => {
       "PHONE_NO_ANSWER",
       "INSTALL_PHONE",
       "CHECK_IN",
+      // ADR 0025 decisions 4 and 5 (EM1).
+      "HIRE",
+      "BRIEF_EMPLOYEE",
     ]);
     expectTypeOf<(typeof ACTIVITY_KINDS)[number]>().toEqualTypeOf<ActivityKind>();
   });
@@ -253,6 +256,7 @@ describe("ACTIVITY_IMPORTANCE (decision 9)", () => {
       "MESSAGES_DROPPED",
       "MESSAGE_DELIVERED",
       "PHONE_INSTALLED",
+      "REPORT",
     ]);
     for (const value of Object.values(ACTIVITY_IMPORTANCE)) expect(["notify", "log"]).toContain(value);
   });

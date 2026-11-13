@@ -221,8 +221,8 @@ describe("the warehouse (T03b, #76)", () => {
 });
 
 describe("GAME_DATA_VERSION", () => {
-  it("is bumped for PH1 and recorded in GAME_DATA", () => {
-    expect(GAME_DATA_VERSION).toBe("0.8.0-ph1-phones");
+  it("is bumped for EM1 and recorded in GAME_DATA", () => {
+    expect(GAME_DATA_VERSION).toBe("0.9.0-em1-employees");
     expect(GAME_DATA.version).toBe(GAME_DATA_VERSION);
   });
 });

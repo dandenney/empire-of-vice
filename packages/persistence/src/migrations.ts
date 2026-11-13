@@ -369,8 +369,70 @@ export const migrateV5ToV6: SaveMigration = {
   },
 };
 
+/** A v6 message (held or delivered) with `report: null`: no v6 save can hold an employee's report. */
+function withoutReport(message: Readonly<Record<string, unknown>>, where: string): Record<string, unknown> {
+  if ("report" in message) throw new Error(`${where} already has report`);
+  if (message["reason"] === "EMPLOYEE_REPORT") throw new Error(`${where} is an EMPLOYEE_REPORT message, which no v6 save can hold`);
+  return { ...message, report: null };
+}
+
+/**
+ * v6 → v7 (EM1, ADR 0025 decision 14), from the save's own fields only (ADR 0009):
+ * - `employees: []` and `formerEmployees: []`: no earlier save can hold an
+ *   employee or have dismissed one, because no command could hire;
+ * - `counters.nextId.StandingOrder: 1`: no earlier save holds a standing order,
+ *   and counters start at 1 (`new-game.ts`);
+ * - `report: null` on every held message (`knowledge.pendingMessages[].items[]`)
+ *   and every delivered one (`knowledge.activity[]` items of kind
+ *   MESSAGE_DELIVERED, whose `message` ADR 0024 decision 15 saves there), read
+ *   from the message's own `reason`: no earlier save can hold an EMPLOYEE_REPORT
+ *   message, because the reason didn't exist.
+ * Unchanged: `knowledge.records` (no earlier save holds an EMPLOYEE_PERFORMANCE
+ * record, and the kind sorts last), production jobs, catch-ups, and command
+ * envelopes (`issuer` is only ever FOUNDER). The new union members (commands,
+ * events, reasons, activity kinds and items, the call-in reason, the transaction
+ * kind) are additive. ADR 0028's `limitedBy` and `atArrival` are part of the first
+ * version of their types, so they need nothing here.
+ */
+export const migrateV6ToV7: SaveMigration = {
+  fromVersion: 6,
+  toVersion: 7,
+  migrate: (save) => {
+    const state = asObject(save["state"], "save.state");
+    if ("employees" in state) throw new Error("save.state already has employees");
+    if ("formerEmployees" in state) throw new Error("save.state already has formerEmployees");
+    const counters = asObject(state["counters"], "save.state.counters");
+    const nextId = asObject(counters["nextId"], "save.state.counters.nextId");
+    if ("StandingOrder" in nextId) throw new Error("save.state.counters.nextId already has StandingOrder");
+    const knowledge = asObject(state["knowledge"], "save.state.knowledge");
+    const pendingMessages = asArray(knowledge["pendingMessages"], "save.state.knowledge.pendingMessages").map((p, i) => {
+      const place = asObject(p, `save.state.knowledge.pendingMessages[${i}]`);
+      const items = asArray(place["items"], `save.state.knowledge.pendingMessages[${i}].items`).map((m, j) =>
+        withoutReport(asObject(m, `save.state.knowledge.pendingMessages[${i}].items[${j}]`), `save.state.knowledge.pendingMessages[${i}].items[${j}]`),
+      );
+      return { ...place, items };
+    });
+    const activity = asArray(knowledge["activity"], "save.state.knowledge.activity").map((a, i) => {
+      const item = asObject(a, `save.state.knowledge.activity[${i}]`);
+      if (item["kind"] !== "MESSAGE_DELIVERED") return item;
+      const where = `save.state.knowledge.activity[${i}].message`;
+      return { ...item, message: withoutReport(asObject(item["message"], where), where) };
+    });
+    return {
+      ...save,
+      state: {
+        ...state,
+        counters: { ...counters, nextId: { ...nextId, StandingOrder: 1 } },
+        knowledge: { ...knowledge, pendingMessages, activity },
+        employees: [],
+        formerEmployees: [],
+      },
+    };
+  },
+};
+
 /** Every migration, oldest first. Add one per SAVE_SCHEMA_VERSION bump. */
-export const SAVE_MIGRATIONS: readonly SaveMigration[] = [migrateV1ToV2, migrateV2ToV3, migrateV3ToV4, migrateV4ToV5, migrateV5ToV6];
+export const SAVE_MIGRATIONS: readonly SaveMigration[] = [migrateV1ToV2, migrateV2ToV3, migrateV3ToV4, migrateV4ToV5, migrateV5ToV6, migrateV6ToV7];
 
 export type MigrationResult =
   | { readonly ok: true; readonly save: Record<string, unknown> }

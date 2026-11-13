@@ -14,7 +14,16 @@ import { EQUIPMENT, type EquipmentDefinition } from "./equipment.ts";
 import { FACILITY_PRODUCTION, type FacilityProductionDefinition } from "./facilities.ts";
 import { FACILITIES, LOCATIONS, type FacilityDefinition, type LocationDefinition } from "./map.ts";
 import { MARKETS, type MarketDefinition } from "./markets.ts";
-import { CHARACTERS, FAMILIES, WORKFORCE, type CharacterDefinition, type FamilyDefinition, type WorkforceDefinition } from "./personnel.ts";
+import {
+  CHARACTERS,
+  FAMILIES,
+  PERSONNEL_DATA,
+  WORKFORCE,
+  type CharacterDefinition,
+  type FamilyDefinition,
+  type PersonnelData,
+  type WorkforceDefinition,
+} from "./personnel.ts";
 import { PHONE_DATA, type PhoneData } from "./phones.ts";
 import { MATERIALS, PRODUCTS, type MaterialDefinition, type ProductDefinition } from "./products.ts";
 import { PROGRESSION, type ProgressionDefinition } from "./progression.ts";
@@ -49,8 +58,11 @@ export * from "./vehicles.ts";
  * 0.8.0 (PH1, #205): the phone, room and arrangement tables (ADR 0024, ADR 0027),
  * the MESSAGE visibility rows, and the knowledge tables SK1b started reading
  * (K1 review follow-up 5).
+ * 0.9.0 (EM1, #210): the employee tables (ADR 0025, ADR 0028), the HIRE and
+ * BRIEF_EMPLOYEE durations, the facility rows of the PHONE, MESSAGE and REPORT
+ * visibility, and the scenarios' `firstCandidates`.
  */
-export const GAME_DATA_VERSION = "0.8.0-ph1-phones";
+export const GAME_DATA_VERSION = "0.9.0-em1-employees";
 
 /** Every static definition, in one object the simulation's systems are built from. */
 export interface GameData {
@@ -74,6 +86,12 @@ export interface GameData {
   readonly families: readonly FamilyDefinition[];
   /** Phones, calls, messages and arrangements (ADR 0024, ADR 0027 decision 17). Read only with founder rules on. */
   readonly phones: PhoneData;
+  /**
+   * Candidates, hiring places, role terms (working hours, estimate spread), the
+   * bands and the standing-order tables (ADR 0025, ADR 0028 decision 11). Read
+   * only with founder rules on. ADR 0028's `data.roleTerms` is `data.personnel.roleTerms`.
+   */
+  readonly personnel: PersonnelData;
 }
 
 export const GAME_DATA: GameData = {
@@ -96,6 +114,7 @@ export const GAME_DATA: GameData = {
   progression: PROGRESSION,
   families: FAMILIES,
   phones: PHONE_DATA,
+  personnel: PERSONNEL_DATA,
 };
 
 /** The First Shipment scenario (GDD §4; ADR 0020 decisions 1, 2, 12). */

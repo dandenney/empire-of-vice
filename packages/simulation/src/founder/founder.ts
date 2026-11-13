@@ -70,7 +70,7 @@ function withParkedAt(state: GameState, vehicleId: VehicleId, parkedAt: Location
   return { ...state, vehicles: state.vehicles.map((v) => (v.id === vehicleId ? { ...v, parkedAt } : v)) };
 }
 
-function emit(state: GameState, event: GameEventInput, t: Tick, causedBy: CommandContext["envelope"]["id"] | null): GameState {
+function emit(state: GameState, event: GameEventInput, t: Tick, causedBy: NonNullable<CommandContext["envelope"]>["id"] | null): GameState {
   return emitEvent(state, event, { tick: t, causedBy }).state;
 }
 
@@ -143,7 +143,7 @@ function applyTravel(state: GameState, command: TravelCommand, ctx: CommandConte
   // starts here, where the founder can see it, so this only happens for a route
   // outside the place's live view: the founder sets out and halts at once.
   if (!onFoot && closedInWorld(state, first.routeId)) {
-    let s = emit(state, { type: "FOUNDER_HALTED", routeId: first.routeId, locationId: here }, t, ctx.envelope.id);
+    let s = emit(state, { type: "FOUNDER_HALTED", routeId: first.routeId, locationId: here }, t, ctx.envelope?.id ?? null);
     s = founderArrived(s, here, { kind: "HALTED", routeId: first.routeId }, t);
     return { status: "applied", state: s };
   }
@@ -158,7 +158,7 @@ function applyTravel(state: GameState, command: TravelCommand, ctx: CommandConte
     legArrivesAt: addTicks(t, pathLegTicks(data, first, onFoot)),
     destinationLocationId: destination,
   });
-  s = emit(s, { type: "FOUNDER_DEPARTED", from: here, to: destination, transport }, t, ctx.envelope.id);
+  s = emit(s, { type: "FOUNDER_DEPARTED", from: here, to: destination, transport }, t, ctx.envelope?.id ?? null);
   return { status: "applied", state: s };
 }
 
@@ -194,12 +194,12 @@ function applyRest(state: GameState, command: RestCommand, ctx: CommandContext, 
   const until = command.untilTick;
   let s = founderDeparting(state, w.locationId, "REST", t);
   s = withWhereabouts(s, { kind: "RESTING", locationId: w.locationId, startedAt: t, until });
-  s = emit(s, { type: "FOUNDER_RESTED", locationId: w.locationId, until }, t, ctx.envelope.id);
+  s = emit(s, { type: "FOUNDER_RESTED", locationId: w.locationId, until }, t, ctx.envelope?.id ?? null);
   return { status: "applied", state: s };
 }
 
 /** The founder wakes at `t` where they rested (decision 7): PRESENT, not busy, with the recovery for what was rested. */
-function wake(state: GameState, t: Tick, early: boolean, causedBy: CommandContext["envelope"]["id"] | null): GameState {
+function wake(state: GameState, t: Tick, early: boolean, causedBy: NonNullable<CommandContext["envelope"]>["id"] | null): GameState {
   const w = state.founder.whereabouts;
   if (w.kind !== "RESTING") throw new RangeError("Only a resting founder wakes");
   const awakeSince = awakeSinceAfterRest(state.founder.awakeSince, w.locationId, w.startedAt, t);
@@ -211,7 +211,7 @@ function wake(state: GameState, t: Tick, early: boolean, causedBy: CommandContex
 function applyWake(state: GameState, command: WakeCommand, ctx: CommandContext, data: GameData, rules: GameRules): CommandOutcome {
   const rejection = judgeOrder(wakeValidator(), state, data, rules, command, ctx.tick);
   if (rejection) return rejected(rejection);
-  return { status: "applied", state: wake(state, ctx.tick, true, ctx.envelope.id) };
+  return { status: "applied", state: wake(state, ctx.tick, true, ctx.envelope?.id ?? null) };
 }
 
 // ---------------------------------------------------------------------------

@@ -36,7 +36,7 @@ import type {
 } from "./ids.ts";
 import type { LedgerTransaction } from "./ledger.ts";
 import type { Money } from "./money.ts";
-import type { ContractTermsData } from "./state.ts";
+import type { ContractTermsData, EmployeeRole, EmployeeState } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 export interface GameSnapshot {
@@ -52,11 +52,18 @@ export interface GameSnapshot {
   readonly facilities: readonly FacilitySnapshot[];
   readonly productionJobs: readonly ProductionJobSnapshot[];
   readonly vehicles: readonly VehicleSnapshot[];
+  /** The family's employees, the whole world state (ADR 0025 decision 16), for the lab and the debug view. Sorted by `characterId`. */
+  readonly employees: readonly EmployeeSnapshot[];
   // Market and contracts
   readonly market: MarketReport;
   readonly contracts: ContractsSnapshot;
   /** The most recent SNAPSHOT_RECENT_EVENTS events, oldest first. */
   readonly recentEvents: readonly GameEvent[];
+}
+
+/** An employee as the world has them: `EmployeeState` plus the candidate pool's name. */
+export interface EmployeeSnapshot extends EmployeeState {
+  readonly name: string;
 }
 
 /** Events included per snapshot. The full journal stays in state (ADR 0006). */
@@ -102,7 +109,8 @@ export interface FamilySnapshot {
 export interface CharacterSnapshot {
   readonly id: CharacterId;
   readonly name: string;
-  readonly role: "FOUNDER" | "FOREMAN";
+  /** An employee leader (founder rules on) has their role, and `skill` is their true competence (ADR 0025 decision 1). */
+  readonly role: "FOUNDER" | "FOREMAN" | EmployeeRole;
   readonly skill: number;
   readonly loyalty: number;
   readonly dailyWage: Money;

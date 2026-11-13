@@ -1071,7 +1071,7 @@ function applyDispatch(
     kind: "DISPATCH",
     idempotencyKey: idempotencyKey("DISPATCH", deliveryId),
     tick: ctx.tick,
-    causedBy: ctx.envelope.id,
+    causedBy: ctx.envelope?.id ?? null,
   });
   if (tx.status === "duplicate") return { status: "applied", state };
 

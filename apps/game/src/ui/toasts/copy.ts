@@ -91,4 +91,8 @@ export const COMMAND_COPY: Readonly<Record<GameCommandType, string>> = {
   PLACE_CALL: "Place a call",
   INSTALL_PHONE: "Install a telephone",
   RENT_ROOM: "Rent a room",
+  // ADR 0025 (EM1, #210). No-ops in M001 and until E1 (#180). PLACEHOLDER copy.
+  HIRE_EMPLOYEE: "Hire",
+  SET_STANDING_ORDER: "Give standing orders",
+  DISMISS_EMPLOYEE: "Let go",
 };

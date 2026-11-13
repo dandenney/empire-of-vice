@@ -55,7 +55,7 @@ export function fakeRegistry(extra?: (registry: SystemRegistry) => void): System
       const emitted = emitEvent(
         changed,
         { type: "WORKFORCE_CHANGED", facilityId: facility.id, from: facility.workerCount, to: command.workerCount },
-        { tick: ctx.tick, causedBy: ctx.envelope.id },
+        { tick: ctx.tick, causedBy: ctx.envelope?.id ?? null },
       );
       return { status: "applied", state: emitted.state };
     },
@@ -112,7 +112,7 @@ export function fakeRegistry(extra?: (registry: SystemRegistry) => void): System
           facilityId: command.facilityId,
           transactionId: txn.id,
         },
-        { tick: ctx.tick, causedBy: ctx.envelope.id },
+        { tick: ctx.tick, causedBy: ctx.envelope?.id ?? null },
       ).state;
       return { status: "applied", state: s };
     },

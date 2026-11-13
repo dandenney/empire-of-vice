@@ -214,7 +214,7 @@ export function registerContracts(registry: SystemRegistry, data: GameData, coor
         kind: "RESERVATION",
         idempotencyKey: idempotencyKey("RESERVATION", contractId, "ACCEPT"),
         tick: ctx.tick,
-        causedBy: ctx.envelope.id,
+        causedBy: ctx.envelope?.id ?? null,
       });
       if (tx.status === "duplicate") return { status: "applied", state };
 

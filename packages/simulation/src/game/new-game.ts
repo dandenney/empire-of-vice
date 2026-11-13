@@ -12,6 +12,7 @@ import {
   compareIds,
   EMPTY_KNOWLEDGE,
   idempotencyKey,
+  EMPLOYEE_ROLES,
   RATIO_SCALE,
   tick,
   ZERO_MONEY,
@@ -76,6 +77,16 @@ function validateScenario(scenario: ScenarioDefinition, data: GameData): readonl
   }
   find(data.families, scenario.family.id, "family");
   find(data.locations, scenario.founderStartLocationId, "founder start location");
+  // The first slate's forced candidates (ADR 0025 decision 3): known, once each,
+  // and never more for a role than its slate holds.
+  const pool = data.personnel.candidatePool;
+  for (const id of scenario.firstCandidates) find(pool, id, "first candidate");
+  if (new Set(scenario.firstCandidates).size !== scenario.firstCandidates.length) throw new ScenarioSetupError("Scenario firstCandidates repeats a candidate");
+  for (const role of EMPLOYEE_ROLES) {
+    const forced = scenario.firstCandidates.filter((id) => find(pool, id, "first candidate").roles.includes(role)).length;
+    const slateSize = data.personnel.roleTerms[role].slateSize;
+    if (forced > slateSize) throw new ScenarioSetupError(`Scenario firstCandidates has ${forced} ${role} candidates; a slate holds ${slateSize}`);
+  }
   const tiers = data.progression.tiers;
   const tierIndex = tiers.findIndex((t) => t.id === scenario.family.tierId);
   if (tierIndex < 0) throw new ScenarioSetupError(`Scenario references unknown tier ${scenario.family.tierId}`);
@@ -197,6 +208,9 @@ export function createInitialState(
     founder: initialFounder(scenario),
     // No dealings yet (ADR 0027 decision 3).
     arrangements: [],
+    // No one hired yet, and no one let go (ADR 0025 decision 1).
+    employees: [],
+    formerEmployees: [],
   };
   // The scenario's world events, in file order (ADR 0020 decision 12).
   const blank = scenario.scheduledEvents.reduce<GameState>(

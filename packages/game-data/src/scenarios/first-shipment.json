@@ -20,5 +20,6 @@
   ],
   "realMsPerGameHourAt1x": 5000,
   "founderRules": false,
-  "founderStartLocationId": "hollow-creek"
+  "founderStartLocationId": "hollow-creek",
+  "firstCandidates": []
 }

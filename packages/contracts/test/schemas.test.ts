@@ -56,6 +56,48 @@ import {
   type FounderState,
   type RouteLeg,
   type Transport,
+  batchLimitSchema,
+  callAnswererSchema,
+  callInReasonSchema,
+  commandIssuerSchema,
+  competenceEstimateSchema,
+  deliveredMessageSchema,
+  employeeStateSchema,
+  employeeWorkSchema,
+  formerEmployeeStateSchema,
+  founderIssuerSchema,
+  heldMessageSchema,
+  holdReasonSchema,
+  pendingReportSchema,
+  playerCandidateSchema,
+  playerEmployeeSchema,
+  playerHiringSchema,
+  reportContentSchema,
+  reportLineSchema,
+  reportViaSchema,
+  standingOrderStateSchema,
+  standingOrderTermsSchema,
+  type BatchLimit,
+  type CallAnswerer,
+  type CallInReason,
+  type CommandIssuer,
+  type CompetenceEstimate,
+  type DeliveredMessage,
+  type EmployeeState,
+  type EmployeeWork,
+  type FormerEmployeeState,
+  type FounderIssuer,
+  type HeldMessage,
+  type HoldReason,
+  type PendingReport,
+  type PlayerCandidate,
+  type PlayerEmployee,
+  type PlayerHiring,
+  type ReportContent,
+  type ReportLine,
+  type ReportVia,
+  type StandingOrderState,
+  type StandingOrderTerms,
 } from "../src/index.ts";
 
 /** Strips readonly all the way down, so a schema's (mutable) output can be compared to a readonly contract type. */
@@ -91,6 +133,29 @@ describe("schemas match the contract types exactly", () => {
     expectTypeOf<z.infer<typeof transportSchema>>().toEqualTypeOf<DeepMutable<Transport>>();
     expectTypeOf<z.infer<typeof routeLegSchema>>().toEqualTypeOf<DeepMutable<RouteLeg>>();
     expectTypeOf<z.infer<typeof driverRefSchema>>().toEqualTypeOf<DeepMutable<DriverRef>>();
+    // Calls and messages (ADR 0024): checked directly, not only as parts of the state (PH1 review, #210).
+    expectTypeOf<z.infer<typeof callInReasonSchema>>().toEqualTypeOf<CallInReason>();
+    expectTypeOf<z.infer<typeof heldMessageSchema>>().toEqualTypeOf<DeepMutable<HeldMessage>>();
+    expectTypeOf<z.infer<typeof deliveredMessageSchema>>().toEqualTypeOf<DeepMutable<DeliveredMessage>>();
+    expectTypeOf<z.infer<typeof callAnswererSchema>>().toEqualTypeOf<DeepMutable<CallAnswerer>>();
+    // Employees, standing orders and reports (ADR 0025 decision 16, as restated by ADR 0028 decision 11).
+    expectTypeOf<z.infer<typeof commandIssuerSchema>>().toEqualTypeOf<DeepMutable<CommandIssuer>>();
+    expectTypeOf<z.infer<typeof founderIssuerSchema>>().toEqualTypeOf<DeepMutable<FounderIssuer>>();
+    expectTypeOf<z.infer<typeof competenceEstimateSchema>>().toEqualTypeOf<DeepMutable<CompetenceEstimate>>();
+    expectTypeOf<z.infer<typeof standingOrderTermsSchema>>().toEqualTypeOf<DeepMutable<StandingOrderTerms>>();
+    expectTypeOf<z.infer<typeof standingOrderStateSchema>>().toEqualTypeOf<DeepMutable<StandingOrderState>>();
+    expectTypeOf<z.infer<typeof employeeWorkSchema>>().toEqualTypeOf<DeepMutable<EmployeeWork>>();
+    expectTypeOf<z.infer<typeof employeeStateSchema>>().toEqualTypeOf<DeepMutable<EmployeeState>>();
+    expectTypeOf<z.infer<typeof formerEmployeeStateSchema>>().toEqualTypeOf<DeepMutable<FormerEmployeeState>>();
+    expectTypeOf<z.infer<typeof holdReasonSchema>>().toEqualTypeOf<DeepMutable<HoldReason>>();
+    expectTypeOf<z.infer<typeof batchLimitSchema>>().toEqualTypeOf<DeepMutable<BatchLimit>>();
+    expectTypeOf<z.infer<typeof reportLineSchema>>().toEqualTypeOf<DeepMutable<ReportLine>>();
+    expectTypeOf<z.infer<typeof pendingReportSchema>>().toEqualTypeOf<DeepMutable<PendingReport>>();
+    expectTypeOf<z.infer<typeof reportContentSchema>>().toEqualTypeOf<DeepMutable<ReportContent>>();
+    expectTypeOf<z.infer<typeof reportViaSchema>>().toEqualTypeOf<ReportVia>();
+    expectTypeOf<z.infer<typeof playerEmployeeSchema>>().toEqualTypeOf<DeepMutable<PlayerEmployee>>();
+    expectTypeOf<z.infer<typeof playerCandidateSchema>>().toEqualTypeOf<DeepMutable<PlayerCandidate>>();
+    expectTypeOf<z.infer<typeof playerHiringSchema>>().toEqualTypeOf<DeepMutable<PlayerHiring>>();
   });
 
   it("and the comparison really detects drift", () => {
@@ -100,6 +165,8 @@ describe("schemas match the contract types exactly", () => {
     expectTypeOf<z.infer<typeof gameCommandSchema>>().not.toEqualTypeOf<DeepMutable<Exclude<GameCommand, { type: "SET_WORKFORCE" }>>>();
     expectTypeOf<z.infer<typeof playerSnapshotSchema>>().not.toEqualTypeOf<DeepMutable<Omit<PlayerSnapshot, "here">>>();
     expectTypeOf<z.infer<typeof knowledgeValueSchema>>().not.toEqualTypeOf<DeepMutable<Exclude<KnowledgeValue, { kind: "STANDING" }>>>();
+    expectTypeOf<z.infer<typeof callInReasonSchema>>().not.toEqualTypeOf<Exclude<CallInReason, "EMPLOYEE_REPORT">>();
+    expectTypeOf<z.infer<typeof reportLineSchema>>().not.toEqualTypeOf<DeepMutable<Exclude<ReportLine, { kind: "HELD_BACK" }>>>();
     // Brands survive: schema output is Money, not a plain number.
     expectTypeOf<z.infer<typeof saveGameSchema>["state"]["materialPools"][number]["totalCost"]>().toEqualTypeOf<Money>();
     expectTypeOf<Money>().not.toEqualTypeOf<number>();

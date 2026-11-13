@@ -236,6 +236,7 @@ const rich: KnowledgeState = {
           takenBy: null,
           reason: "NEW_CONTRACT_OFFER",
           values: [{ subject: { kind: "CONTRACT_OFFERS", buyerId: ids.speakeasy }, value: { kind: "CONTRACT_OFFERS", buyerId: ids.speakeasy, offers: [] } }],
+          report: null,
         },
       ],
       dropped: 0,
@@ -501,6 +502,8 @@ describe("player snapshot schema (decision 8)", () => {
     },
     activity: rich.activity,
     catchUp,
+    employees: [],
+    hiring: null,
   };
 
   it("round-trips a player snapshot", () => {
