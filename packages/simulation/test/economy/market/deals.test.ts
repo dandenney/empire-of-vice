@@ -205,9 +205,13 @@ describe("DISPATCH_DELIVERY against a deal", () => {
     expect(sim.dispatch({ command: sale(dealId, 2) }).status).toBe("applied");
   });
 
-  it("doesn't take a sale on spec yet (SK1c): INVALID_QUANTITY on purpose.dealId", () => {
+  it("takes a sale on spec (SK1c-2, #226): no deal, no deal deadline, nothing committed on the buyer", () => {
     const sim = game();
-    expect(expectRejected(sim, sale(null), "INVALID_QUANTITY")).toEqual({ code: "INVALID_QUANTITY", field: "purpose.dealId", value: 0 });
+    const buyers = sim.state.buyers;
+    expect(sim.dispatch({ command: sale(null) }).status).toBe("applied");
+    expect(sim.state.deliveries.at(-1)).toMatchObject({ purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: null }, dealDeadline: null });
+    expect(sim.state.heldDeals).toEqual([]);
+    expect(sim.state.buyers).toEqual(buyers);
   });
 
   it("caps the deadline at the deal's expiry: a run that can't arrive before it falls through TOO_LATE, never DEAL_EXPIRED", () => {

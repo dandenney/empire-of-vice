@@ -6,7 +6,7 @@
 // the next RngState. Nothing is hidden in closures, so RNG state lives in
 // GameState, is saved, and is included in the state hash.
 
-import { RNG_STREAMS, type GameState, type RngState, type RngStream } from "@eov/contracts";
+import { RNG_STREAMS, type GameState, type RngState, type RngStream, type VehicleId } from "@eov/contracts";
 
 const TWO_POW_32 = 0x1_0000_0000;
 
@@ -120,6 +120,42 @@ export function seedRng(seed: number, stream: RngStream): RngState {
   // distinct inputs, so four consecutive outputs can't all be zero, but guard anyway.
   if (!words.some((w) => w !== 0)) words[0] = 1;
   return { algorithm: "xoshiro128**", words: [words[0]!, words[1]!, words[2]!, words[3]!] };
+}
+
+/**
+ * A fresh stream for one keyed draw (ADR 0024 decision 7): the seed's two 32-bit
+ * halves, fnv1a32(key) and the ordinal, mixed with splitmix32 and expanded into
+ * four words as `seedRng` does. Integer-only; no transcendental math. Pure, so
+ * nothing is stored, and a draw that never happens advances nothing.
+ */
+export function keyedRng(seed: number, key: string, ordinal: number): RngState {
+  if (!Number.isSafeInteger(seed)) throw new InvalidSeedError(`Seed must be a safe integer, got ${seed}`);
+  if (!Number.isSafeInteger(ordinal) || ordinal < 0) throw new RangeError(`keyedRng ordinal must be a non-negative safe integer, got ${ordinal}`);
+  const lo = seed >>> 0;
+  const hi = Math.floor(seed / TWO_POW_32) >>> 0;
+  const ordinalLo = ordinal >>> 0;
+  const ordinalHi = Math.floor(ordinal / TWO_POW_32) >>> 0;
+  let x = splitmix32(lo ^ fnv1a32(key));
+  x = splitmix32((x ^ Math.imul(hi, GOLDEN_GAMMA)) >>> 0);
+  x = splitmix32((x ^ ordinalLo) >>> 0);
+  x = (x ^ Math.imul(ordinalHi, GOLDEN_GAMMA)) >>> 0;
+  const words: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    x = (x + GOLDEN_GAMMA) >>> 0;
+    words.push(splitmix32(x));
+  }
+  if (!words.some((w) => w !== 0)) words[0] = 1;
+  return { algorithm: "xoshiro128**", words: [words[0]!, words[1]!, words[2]!, words[3]!] };
+}
+
+/**
+ * The stream a trip's route draws come from (ADR 0022 decision 8): the game
+ * seed, the vehicle ID and the vehicle's trip ordinal (`VehicleState.tripCount`,
+ * counted at dispatch). Hidden activity can't change any of them for the
+ * founder's truck, and the master `routes` stream is never drawn for a trip.
+ */
+export function tripRng(seed: number, vehicleId: VehicleId, tripCount: number): RngState {
+  return keyedRng(seed, `trip:${vehicleId}`, tripCount);
 }
 
 /** Seeds every RngStream from the scenario seed. For building a new game's GameState. */

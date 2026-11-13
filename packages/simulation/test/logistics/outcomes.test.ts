@@ -1,13 +1,14 @@
 // SK1c-1 (#200): ADR 0022 decision 6's outcomes with founder rules on, where an
 // order accepted on the founder's view meets a world that differs.
 //
-// - An installment dispatched on stale known CONTRACT_PROGRESS arrives at a
-//   contract that has completed since: it falls through (CONTRACT_CLOSED) and the
-//   cargo comes home, unsold (review round 1 on #229).
+// - An installment dispatched on known CONTRACT_PROGRESS arrives at a contract
+//   that has completed since: it falls through (CONTRACT_CLOSED) and the cargo
+//   comes home, unsold (review round 1 on #229). Played (SK1c-2, #226): one
+//   case sent shortly before the final deadline.
 // - A road that closes while the truck is loaded: ROUTE_FOUND_CLOSED at
 //   departure, the route recorded IN_PERSON, and the turn-back known at once.
 
-import { cents, tick, TICKS_PER_DAY, type CommandResult, type GameCommand, type GameState, type LocationId } from "@eov/contracts";
+import { tick, TICKS_PER_DAY, type CommandResult, type GameCommand, type GameState, type LocationId } from "@eov/contracts";
 import {
   BASIC_MOONSHINE_RECIPE,
   CORN,
@@ -92,24 +93,19 @@ describe("an installment arriving at a contract that closed unseen (ADR 0022 dec
     if (!offer) throw new Error("no offer at Kessler's");
     applied(sim0, { type: "ACCEPT_CONTRACT", contractOfferId: offer.id });
     walkTo(sim0, HOLLOW_CREEK);
-    const contract = sim0.state.contracts[0]!;
+    const sim = sim0;
+    const contract = sim.state.contracts[0]!;
 
-    // While the founder is home, the contract's final installment settles short and
-    // it completes. Settled at cash 0, the penalty posts no CASH leg (it accrues to
-    // PENALTIES_PAYABLE), so nothing reveals CONTRACT_PROGRESS: the founder's record
-    // still shows it ACTIVE with cases outstanding. This is that world, edited in.
-    const closed = {
-      ...contract,
-      status: "COMPLETED" as const,
-      installments: contract.installments.map((i) => ({ ...i, outcome: "MISSED" as const, penalty: i.penalty ?? cents(0) })),
-    };
-    const sim = withState(sim0, {
-      ...sim0.state,
-      contracts: sim0.state.contracts.map((c) => (c.id === contract.id ? closed : c)),
-      reservations: sim0.state.reservations.filter((r) => r.holder.kind !== "CONTRACT"),
-    });
+    // Played, not edited: the founder waits at home until shortly before the final
+    // deadline, then sends one case. Loading and the road take longer than what's
+    // left, so the last installment settles (short) and the contract completes
+    // while the truck is on the road. At dispatch the founder's record still
+    // shows the contract ACTIVE, which is all the order is judged on.
+    const finalDeadline = contract.installments.at(-1)!.deadline;
+    until(sim, (s) => s.tick >= finalDeadline - 20 && free(s) && at(s, HOLLOW_CREEK), 8 * TICKS_PER_DAY);
+    expect(sim.state.tick, "construction: before the final deadline").toBeLessThan(finalDeadline);
     const record = sim.state.knowledge.records.find((r) => r.subject.kind === "CONTRACT_PROGRESS" && r.subject.contractId === contract.id);
-    expect(record?.value, "construction: the founder's record is stale").toMatchObject({ kind: "CONTRACT_PROGRESS", status: "ACTIVE" });
+    expect(record?.value, "construction: the founder knows the contract as still running").toMatchObject({ kind: "CONTRACT_PROGRESS", status: "ACTIVE" });
 
     const stockBefore = moonshineAtHome(sim.state);
     const dispatched: CommandResult = sim.dispatch({
@@ -127,6 +123,8 @@ describe("an installment arriving at a contract that closed unseen (ADR 0022 dec
     sim.takeEvents();
 
     until(sim, (s) => s.deliveries.find((d) => d.id === deliveryId)?.status !== "OUTBOUND");
+    expect(sim.state.contracts.find((c) => c.id === contract.id)!.status, "construction: it completed while the truck was out").toBe("COMPLETED");
+    expect(sim.state.tick, "construction: the truck arrived after the final deadline").toBeGreaterThan(finalDeadline);
     const events = sim.takeEvents();
     expect(events.filter((e) => e.type === "SALE_COMPLETED")).toEqual([]);
     expect(events.filter((e) => e.type === "DEAL_FELL_THROUGH")).toEqual([

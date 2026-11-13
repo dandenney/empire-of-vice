@@ -3,8 +3,8 @@
 // route data (a safe default and a risky alternative per buyer, the new per-route
 // tuning fields), dispatch (route choice, deal deadline, capacity, no funds
 // check), the transport charge at VEHICLE_RETURN (paid or accrued, filed under
-// TRANSPORT), disruption on risky routes (rng.routes at the outbound arrival,
-// at most once per trip, delay and seizure, the return leg, keyed outcome
+// TRANSPORT), disruption on risky routes (the trip's own stream at the outbound
+// arrival, at most once per trip, delay and seizure, the return leg, keyed outcome
 // transactions, no CLEAR on safe routes), deal deadlines and deals that fall
 // through (TOO_LATE, cargo home unreserved at cost, always unloads), contract
 // trips on risky routes, a conservation property, the recoverable choice, route
@@ -17,8 +17,25 @@
 // Imports are limited to the public package entry `src/index.ts`, the inventory
 // module `src/inventory/index.ts` (`addProduct`, for fixtures), and
 // `@eov/contracts` and `@eov/game-data`. Logistics is driven only through the
-// Simulation (commands, ticks, world events, snapshots). No new simulation
-// export is assumed.
+// Simulation (commands, ticks, world events, snapshots).
+//
+// Re-locked for SK1c-2 (issue #226), per-trip randomness (ADR 0022 decision 8):
+// a trip's route draws come from a stream of its own, seeded from the game
+// seed, the vehicle and the vehicle's trip ordinal (`VehicleState.tripCount`,
+// incremented at each dispatch before anything is drawn, so a new game's first
+// trip is ordinal 1). The master `rng.routes` stream is never drawn for a trip;
+// it stays for scheduled world events. One new simulation export is assumed,
+// from `src/index.ts`:
+//
+//   /** The stream a trip's route draws come from (ADR 0022 decision 8): an
+//    *  integer-only mix of the game seed, a stable hash of the vehicle ID and
+//    *  the trip ordinal, expanded like `seedRng`. Pure. */
+//   export function tripRng(seed: number, vehicleId: VehicleId, tripCount: number): RngState;
+//
+// The mix itself isn't pinned (ADR 0024 decision 7's `keyedRng` shape fits);
+// what is pinned is that a trip's outcome is decision 3's draws on
+// `tripRng(state.seed, vehicleId, tripCount)`, with `tripCount` the trip's own
+// ordinal, and that `rng.routes` doesn't move.
 //
 // New `RouteDefinition` fields (ADR 0019 decision 1): `delayTicks`,
 // `seizureSharePpm`, `dealGraceTicks`. They don't exist on main, so this file
@@ -35,8 +52,9 @@
 //   riskPpm 1 000 000 makes the first draw always disrupt (a < 1 000 000);
 //   seizureSharePpm 1 000 000 makes it always a seizure, 0 always a delay.
 // Where the real numbers matter, the expected outcome is recomputed from the
-// state's `rng.routes` with `nextInt`, exactly as decision 3 specifies.
-// These tests assume nothing else draws from `rng.routes` during day 0.
+// trip's own stream (`tripRng`, above) with `nextInt`, exactly as decision 3
+// specifies. These tests assume nothing else draws from `rng.routes` during
+// day 0, so it must stay where it started.
 //
 // Settled-only. Points ADR 0019 leaves open are not pinned:
 //   - The order of DEAL_FELL_THROUGH and CARGO_LOST inside the seizure
@@ -114,6 +132,7 @@ import {
   scheduleWorldEvent,
   seedRngStreams,
   simulationOptions,
+  tripRng,
   type GameSetup,
   type KernelSimulation,
 } from "../../src/index.ts";
@@ -510,10 +529,15 @@ function untilHome(g: Game, vehicleId: VehicleId = MODEL_TT_TRUCK, limit = 2 * D
   }
 }
 
-/** First seed (from 1) whose day-0 rng.routes gives `outcome` on `route`'s first trip. */
+/** The stream the vehicle's current trip draws from (ADR 0022 decision 8): game seed, vehicle, trip ordinal. */
+function tripStream(state: GameState, vehicleId: VehicleId = MODEL_TT_TRUCK): RngState {
+  return tripRng(state.seed, vehicleId, truckOf(state, vehicleId).tripCount);
+}
+
+/** First seed (from 1) whose first trip (ordinal 1) of the truck gives `outcome` on `route`. */
 function seedFor(route: RouteDefinition, outcome: Outcome): number {
   for (let seed = 1; seed <= 500; seed++) {
-    if (expectedDraw(seedRngStreams(seed).routes, route).outcome === outcome) return seed;
+    if (expectedDraw(tripRng(seed, MODEL_TT_TRUCK, 1), route).outcome === outcome) return seed;
   }
   throw new Error(`No seed in 1..500 gives ${outcome} on ${route.id}`);
 }
@@ -600,6 +624,7 @@ describe("T03 dispatch", () => {
       edit(g, (s) => withStock(s, "basic", 4));
       const route = choice === "safe" ? safeRoute(CROSSROADS_ROADHOUSE) : riskyRoute(CROSSROADS_ROADHOUSE);
       const rngBefore = g.sim.state.rng.routes;
+      const tripCountBefore = truckOf(g.sim.state).tripCount;
       const result = run(g, sale(g, CROSSROADS_ROADHOUSE, 4, { routeId: choice === "safe" ? null : route.id }));
       expectApplied(result);
       if (result.status !== "applied") return;
@@ -615,8 +640,9 @@ describe("T03 dispatch", () => {
       });
       expect(delivery.routeId).toBe(route.id);
       expect(delivery.dealDeadline).toBe(trip.arrivesAt + tuning(route).dealGraceTicks);
-      // Nothing is drawn at dispatch (decision 3: at the outbound arrival tick).
+      // Nothing is drawn at dispatch (decision 3: at the outbound arrival tick), and the dispatch counts the trip (ADR 0022 decision 8).
       expect(g.sim.state.rng.routes).toEqual(rngBefore);
+      expect(truckOf(g.sim.state).tripCount).toBe(tripCountBefore + 1);
       // Dispatch moves the cargo cost only; transport is charged at return.
       const tx = oneTx(g.sim.state, keys.dispatch(delivery.id));
       expectEntries(tx.entries, dispatchEntries(delivery.cargo[0]!.cost));
@@ -752,30 +778,32 @@ describe("T03 disruption (decision 3)", () => {
     expect(deliveryOf(g.sim.state, t.deliveryId).status).toBe("DELIVERED");
   });
 
-  it("draws once at the outbound arrival on a risky route; a clear trip commits a no-event DISPATCH:<id>:CLEAR just before the SALE", () => {
+  it("draws once at the outbound arrival on a risky route, from the trip's own stream; a clear trip commits a no-event DISPATCH:<id>:CLEAR just before the SALE", () => {
     const route = riskyRoute(CROSSROADS_ROADHOUSE);
     const seed = seedFor(route, "CLEAR");
     const g = start({ scenario: scenarioWith({ seed }) });
     edit(g, (s) => withStock(s, "basic", 4));
     const rng = g.sim.state.rng.routes;
     const t = dispatchSale(g, CROSSROADS_ROADHOUSE, 4, route.id);
+    expect(truckOf(g.sim.state).tripCount, "a new game's first trip is ordinal 1").toBe(1);
     to(g, t.arrivesAt - 1);
     expect(g.sim.state.rng.routes).toEqual(rng);
     expect(outcomeKeysOf(g.sim.state, t.deliveryId)).toEqual([]);
     to(g, t.arrivesAt);
 
     const s = g.sim.state;
-    expect(s.rng.routes).toEqual(expectedDraw(rng, route).rng);
+    expect(expectedDraw(tripStream(s), route).outcome).toBe("CLEAR");
+    // The master stream isn't drawn for a trip (ADR 0022 decision 8).
+    expect(s.rng.routes).toEqual(rng);
     const clear = oneTx(s, keys.clear(t.deliveryId));
     expect(clear).toMatchObject({ kind: "DISPATCH", tick: t.arrivesAt, entries: [], eventIds: [] });
     expect(indexOfKey(s, keys.sale(t.deliveryId))).toBe(indexOfKey(s, keys.clear(t.deliveryId)) + 1);
     expect(outcomeKeysOf(s, t.deliveryId)).toEqual([keys.clear(t.deliveryId)]);
     expect(deliveryOf(s, t.deliveryId).status).toBe("DELIVERED");
 
-    // The return leg draws nothing.
-    const after = s.rng.routes;
+    // The return leg draws nothing either.
     untilHome(g);
-    expect(g.sim.state.rng.routes).toEqual(after);
+    expect(g.sim.state.rng.routes).toEqual(rng);
   });
 
   it("a delay pushes arrivesAt by delayTicks, emits DELIVERY_DELAYED in DISPATCH:<id>:DELAY, and the late arrival draws nothing", () => {
@@ -788,9 +816,9 @@ describe("T03 disruption (decision 3)", () => {
     to(g, t.arrivesAt);
 
     const s = g.sim.state;
-    const draw = expectedDraw(rng, t.route);
+    const draw = expectedDraw(tripStream(s), t.route);
     expect(draw.outcome).toBe("DELAY");
-    expect(s.rng.routes).toEqual(draw.rng);
+    expect(s.rng.routes).toEqual(rng);
     const tx = oneTx(s, keys.delay(t.deliveryId));
     expect(tx).toMatchObject({ kind: "DISPATCH", tick: t.arrivesAt, entries: [] });
     expect(eventsOf(g, tx)).toEqual([
@@ -818,7 +846,7 @@ describe("T03 disruption (decision 3)", () => {
 
     to(g, t.arrivesAt + 60);
     const late = g.sim.state;
-    expect(late.rng.routes).toEqual(draw.rng);
+    expect(late.rng.routes).toEqual(rng);
     expect(oneTx(late, keys.sale(t.deliveryId)).tick).toBe(t.arrivesAt + 60);
     expect(outcomeKeysOf(late, t.deliveryId)).toEqual([keys.delay(t.deliveryId)]);
     expect(deliveryOf(late, t.deliveryId).status).toBe("DELIVERED");
@@ -836,9 +864,9 @@ describe("T03 disruption (decision 3)", () => {
     to(g, t.arrivesAt);
 
     const s = g.sim.state;
-    const draw = expectedDraw(rng, t.route);
+    const draw = expectedDraw(tripStream(s), t.route);
     expect(draw.outcome).toBe("SEIZE");
-    expect(s.rng.routes).toEqual(draw.rng);
+    expect(s.rng.routes).toEqual(rng);
     const tx = oneTx(s, keys.loss(t.deliveryId));
     expect(tx).toMatchObject({ kind: "CARGO_LOSS", tick: t.arrivesAt });
     expectEntries(tx.entries, cargoLossEntries(t.cost));
@@ -866,7 +894,7 @@ describe("T03 disruption (decision 3)", () => {
 
     to(g, t.arrivesAt + t.route.durationTicks);
     const end = g.sim.state;
-    expect(end.rng.routes).toEqual(draw.rng);
+    expect(end.rng.routes).toEqual(rng);
     expect(truckOf(end).trip).toBeNull();
     const ret = oneTx(end, keys.ret(t.deliveryId));
     expectEntries(ret.entries, transportEntries(t.route.transportCost, balancesBefore(end, ret).CASH));
@@ -880,7 +908,7 @@ describe("T03 disruption (decision 3)", () => {
     expect(end.family.reputation).toBe(reputation);
   });
 
-  it("resolves same-tick risky arrivals in vehicle ID order, drawing for each in turn", () => {
+  it("resolves same-tick risky arrivals in vehicle ID order, each from its own trip stream", () => {
     const data = withRiskyRoutes({ riskPpm: 500_000, seizureSharePpm: 500_000, delayTicks: 60, dealGraceTicks: 120 });
     for (const seed of [1, 2, 3, 4, 5, 6]) {
       const g = start(twoTruckSetup(data, seed));
@@ -896,22 +924,21 @@ describe("T03 disruption (decision 3)", () => {
         [MODEL_TT_TRUCK, a],
         [SECOND_TRUCK, b],
       ]);
-      const order = [...byVehicle.keys()].sort(compareIds).map((id) => byVehicle.get(id)!);
-      let current = rng;
       const indexes: number[] = [];
-      for (const trip of order) {
-        const draw = expectedDraw(current, route);
-        current = draw.rng;
+      for (const [vehicleId, trip] of [...byVehicle.entries()].sort(([x], [y]) => compareIds(x, y))) {
+        // Each truck's first trip: ordinal 1 of its own stream, whatever the other truck drew.
+        expect(truckOf(g.sim.state, vehicleId).tripCount, `seed ${seed}: ${vehicleId}'s first trip`).toBe(1);
+        const draw = expectedDraw(tripRng(seed, vehicleId, 1), route);
         const key = draw.outcome === "SEIZE" ? keys.loss(trip.deliveryId) : draw.outcome === "DELAY" ? keys.delay(trip.deliveryId) : keys.clear(trip.deliveryId);
         expect(outcomeKeysOf(g.sim.state, trip.deliveryId), `seed ${seed}`).toEqual([key]);
         indexes.push(indexOfKey(g.sim.state, key));
       }
-      expect(g.sim.state.rng.routes, `seed ${seed}`).toEqual(current);
+      expect(g.sim.state.rng.routes, `seed ${seed}`).toEqual(rng);
       expect(indexes[0]!).toBeLessThan(indexes[1]!);
     }
   });
 
-  it("property: on the shipped risky route the outcome follows the two draws, and only the matching outcome transaction exists", { timeout: 60_000 }, () => {
+  it("property: on the shipped risky route the outcome follows the two draws on the trip's stream, and only the matching outcome transaction exists", { timeout: 60_000 }, () => {
     const route = riskyRoute(KESSLERS_BACK_ROOM);
     fc.assert(
       fc.property(fc.integer({ min: 1, max: 0x7fff_ffff }), (seed) => {
@@ -920,17 +947,72 @@ describe("T03 disruption (decision 3)", () => {
         const rng = g.sim.state.rng.routes;
         const t = dispatchSale(g, KESSLERS_BACK_ROOM, 2, route.id);
         to(g, t.arrivesAt);
-        const draw = expectedDraw(rng, route);
+        const draw = expectedDraw(tripRng(seed, MODEL_TT_TRUCK, 1), route);
         const expected =
           draw.outcome === "SEIZE" ? keys.loss(t.deliveryId) : draw.outcome === "DELAY" ? keys.delay(t.deliveryId) : keys.clear(t.deliveryId);
         expect(outcomeKeysOf(g.sim.state, t.deliveryId)).toEqual([expected]);
-        expect(g.sim.state.rng.routes).toEqual(draw.rng);
+        expect(g.sim.state.rng.routes).toEqual(rng);
         expect(deliveryOf(g.sim.state, t.deliveryId).status).toBe(
           draw.outcome === "SEIZE" ? "FAILED" : draw.outcome === "DELAY" ? "OUTBOUND" : "DELIVERED",
         );
       }),
       { numRuns: 40, seed: 0x7e03 },
     );
+  });
+
+  it("tripRng is a pure function of the seed, the vehicle and the ordinal, and isn't the master routes stream", () => {
+    for (const seed of [1, 2, FIRST_SHIPMENT_SCENARIO.seed]) {
+      expect(tripRng(seed, MODEL_TT_TRUCK, 1)).toEqual(tripRng(seed, MODEL_TT_TRUCK, 1));
+      expect(tripRng(seed, MODEL_TT_TRUCK, 1), `seed ${seed}: the ordinal`).not.toEqual(tripRng(seed, MODEL_TT_TRUCK, 2));
+      expect(tripRng(seed, MODEL_TT_TRUCK, 1), `seed ${seed}: the vehicle`).not.toEqual(tripRng(seed, SECOND_TRUCK, 1));
+      expect(tripRng(seed, MODEL_TT_TRUCK, 1), `seed ${seed}: the seed`).not.toEqual(tripRng(seed + 1, MODEL_TT_TRUCK, 1));
+      expect(tripRng(seed, MODEL_TT_TRUCK, 1), `seed ${seed}: not the master stream`).not.toEqual(seedRngStreams(seed).routes);
+    }
+  });
+
+  it("the master routes stream doesn't decide a trip: replacing it before the arrival changes no outcome", () => {
+    const route = riskyRoute(KESSLERS_BACK_ROOM);
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const outcomes: string[][] = [];
+      for (const replace of [false, true]) {
+        const g = start({ scenario: scenarioWith({ seed }) });
+        edit(g, (s) => withStock(s, "basic", 2));
+        const t = dispatchSale(g, KESSLERS_BACK_ROOM, 2, route.id);
+        to(g, t.arrivesAt - 1);
+        if (replace) edit(g, (s) => ({ ...s, rng: { ...s.rng, routes: seedRngStreams(seed + 1_000).routes } }));
+        const master = g.sim.state.rng.routes;
+        to(g, t.arrivesAt);
+        const draw = expectedDraw(tripRng(seed, MODEL_TT_TRUCK, 1), route);
+        const expected = draw.outcome === "SEIZE" ? keys.loss(t.deliveryId) : draw.outcome === "DELAY" ? keys.delay(t.deliveryId) : keys.clear(t.deliveryId);
+        expect(outcomeKeysOf(g.sim.state, t.deliveryId), `seed ${seed}, master replaced: ${replace}`).toEqual([expected]);
+        expect(g.sim.state.rng.routes, `seed ${seed}: the master stream isn't drawn`).toEqual(master);
+        outcomes.push(outcomeKeysOf(g.sim.state, t.deliveryId));
+      }
+      expect(outcomes[1], `seed ${seed}`).toEqual(outcomes[0]);
+    }
+  });
+
+  it("each dispatch counts the truck's trip: a second trip draws from ordinal 2, even after a safe first trip that drew nothing", () => {
+    const route = riskyRoute(CROSSROADS_ROADHOUSE);
+    // A seed whose ordinal 2 is clear on the risky route but ordinal 1 isn't, so drawing from the wrong ordinal shows.
+    let seed = 0;
+    for (let k = 1; k <= 2_000 && seed === 0; k++) {
+      if (expectedDraw(tripRng(k, MODEL_TT_TRUCK, 2), route).outcome === "CLEAR" && expectedDraw(tripRng(k, MODEL_TT_TRUCK, 1), route).outcome !== "CLEAR") seed = k;
+    }
+    expect(seed, "construction: such a seed exists").toBeGreaterThan(0);
+    const g = start({ scenario: scenarioWith({ seed }) });
+    edit(g, (s) => withStock(s, "basic", 2));
+    const rng = g.sim.state.rng.routes;
+    const first = dispatchSale(g, CROSSROADS_ROADHOUSE, 1, null);
+    expect(first.route.riskPpm).toBe(0);
+    untilHome(g);
+    expect(truckOf(g.sim.state).tripCount).toBe(1);
+    const second = dispatchSale(g, CROSSROADS_ROADHOUSE, 1, route.id);
+    expect(truckOf(g.sim.state).tripCount).toBe(2);
+    to(g, second.arrivesAt);
+    expect(outcomeKeysOf(g.sim.state, second.deliveryId)).toEqual([keys.clear(second.deliveryId)]);
+    expect(deliveryOf(g.sim.state, second.deliveryId).status).toBe("DELIVERED");
+    expect(g.sim.state.rng.routes).toEqual(rng);
   });
 });
 

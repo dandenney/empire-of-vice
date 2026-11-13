@@ -12,19 +12,25 @@
 //     never are). Nothing in state ties a job or delivery to its command, and the
 //     copy is fully validated by its own handler anyway.
 // Every link of a chain is checked the same way, judged by the underlying
-// command's type.
+// command's type, and must be the founder's (ADR 0022 decision 3). The handler
+// and the order validator (`repeat-order.ts`) share this one lookup: the command
+// log and the books are always known, so the world and the view agree on it.
 //
-// A SALE dispatch (ADR 0022 decision 6, founder rules off; issue #192): a deal is
-// single-use, so the copy re-agrees with the same buyer at its current quote,
-// inside the dispatch's own DISPATCH transaction (DEAL_AGREED, then
-// DELIVERY_DISPATCHED), and dispatches against that new deal. It can't lock in a
-// stale price. The on-spec repeat (founder rules on) is SK1c's.
+// A SALE dispatch (ADR 0022 decision 6, "Repeating a sale"): a deal is
+// single-use, so the copy never reuses its source's deal.
+//   - Founder rules on: it goes on spec (`dealId: null`) with the source's buyer,
+//     cargo, route and driver, through DISPATCH_DELIVERY's own handler.
+//   - Founder rules off (issue #192): it re-agrees with the same buyer at its
+//     current quote, inside the dispatch's own DISPATCH transaction (DEAL_AGREED,
+//     then DELIVERY_DISPATCHED), and dispatches against that new deal. It can't
+//     lock in a stale price.
 //
 // No dispatch-time `validate`: everything is judged when the repeat applies.
 
 import {
   idempotencyKey,
   type CommandId,
+  type DispatchDeliveryCommand,
   type GameState,
   type RejectionReason,
   type RepeatableCommand,
@@ -43,10 +49,11 @@ function isRepeatable(command: { readonly type: string }): command is Repeatable
 
 /**
  * The underlying command a repeat of `sourceCommandId` would copy, or null when
- * the source (or any link of its chain) is unknown, of a type outside
- * RepeatableCommand, or wasn't applied.
+ * the source (or any link of its chain) is unknown, not the founder's, of a type
+ * outside RepeatableCommand, or wasn't applied. Reads only the command log and
+ * the books, so it takes the world or the issuer's view alike.
  */
-export function resolveRepeatSource(state: GameState, sourceCommandId: CommandId): RepeatableCommand | null {
+export function resolveRepeatSource(state: Pick<GameState, "commandLog" | "ledger">, sourceCommandId: CommandId): RepeatableCommand | null {
   const log = state.commandLog;
   const links: CommandId[] = [];
   let id = sourceCommandId;
@@ -54,7 +61,7 @@ export function resolveRepeatSource(state: GameState, sourceCommandId: CommandId
   // than the log; the bound only guards against a malformed state.
   for (let step = 0; step <= log.length; step++) {
     const entry = log.find((e) => e.id === id);
-    if (!entry) return null;
+    if (!entry || entry.issuer.kind !== "FOUNDER") return null;
     links.push(entry.id);
     const command = entry.command;
     if (command.type === "REPEAT_OPERATION") {
@@ -71,16 +78,26 @@ export function resolveRepeatSource(state: GameState, sourceCommandId: CommandId
   return null;
 }
 
+/**
+ * A repeated SALE with founder rules on (ADR 0022 decision 6): the source's
+ * dispatch on spec, with its buyer, cargo, route and driver, and no deal.
+ */
+export function onSpecCopy(source: DispatchDeliveryCommand): DispatchDeliveryCommand {
+  if (source.purpose.kind !== "SALE") throw new RangeError(`onSpecCopy: a ${source.purpose.kind} dispatch isn't a sale`);
+  return { ...source, purpose: { kind: "SALE", buyerId: source.purpose.buyerId, dealId: null } };
+}
+
 /** A RegisterSystem (game/systems.ts). It posts nothing itself: the copy goes through its own command's handler. */
 export function registerRepeat(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): void {
   registry.onCommand("REPEAT_OPERATION", {
     apply: (state, command, ctx) => {
       const source = resolveRepeatSource(state, command.sourceCommandId);
       if (!source) return { status: "rejected", reason: notRepeatable(command.sourceCommandId) };
-      // A deal is single-use, so a repeated sale never reuses its source's deal. With
-      // founder rules off it re-agrees at the buyer's current quote, in the dispatch's
-      // own transaction (ADR 0022 decision 6; issue #192). The on-spec repeat is SK1c's.
+      // A deal is single-use, so a repeated sale never reuses its source's deal
+      // (ADR 0022 decision 6): on spec with founder rules on; re-agreed at the
+      // buyer's current quote with them off (issue #192).
       if (source.type === "DISPATCH_DELIVERY" && source.purpose.kind === "SALE") {
+        if (rules.founderRules) return registry.commandHandler("DISPATCH_DELIVERY").apply(state, onSpecCopy(source), ctx);
         return dispatchRequotedSale(state, source, ctx, data, coordinator, rules);
       }
       const handler = registry.commandHandler(source.type);

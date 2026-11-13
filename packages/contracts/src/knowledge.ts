@@ -537,6 +537,8 @@ export const TRANSACTION_PRODUCERS = {
   "DISPATCH:CLEAR": { trigger: "WORLD", legs: ["NO_ENTRIES"] },
   "DISPATCH:DELAY": { trigger: "WORLD", legs: ["NO_ENTRIES"] },
   "DISPATCH:FELL_THROUGH": { trigger: "WORLD", legs: ["NO_ENTRIES"] },
+  /** A sale on spec the buyer took nothing of (ADR 0022 decision 6): no entries, so never in the books. */
+  "DISPATCH:SPEC_SETTLED": { trigger: "WORLD", legs: ["NO_ENTRIES"] },
   "PROGRESSION:TIER": { trigger: "WORLD", legs: ["NO_ENTRIES"] },
   "PROGRESSION:VICTORY": { trigger: "WORLD", legs: ["NO_ENTRIES"] },
   "PROGRESSION:FIRST_DELIVERY": { trigger: "WORLD", legs: ["NO_ENTRIES"] },
