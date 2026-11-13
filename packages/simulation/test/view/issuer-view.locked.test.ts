@@ -629,7 +629,16 @@ const fixedTwins = (sim: KernelSimulation): readonly Twin[] => FIXED_PLANS.map((
 type Verdict = { readonly status: "applied" } | { readonly status: "rejected"; readonly reason: RejectionReason };
 
 /** Never returned with founder rules on (header). */
-const NEVER_UNDER_FOUNDER_RULES: ReadonlySet<RejectionCode> = new Set<RejectionCode>(["NO_WAY_TO_REACH", "VEHICLE_UNAVAILABLE"]);
+const NEVER_UNDER_FOUNDER_RULES: ReadonlySet<RejectionCode> = new Set<RejectionCode>([
+  "NO_WAY_TO_REACH",
+  "VEHICLE_UNAVAILABLE",
+  // PH1's codes (ADR 0027 decision 16): unreachable while PH1's handlers are no-ops. C1 (#179) pins them.
+  "NO_PHONE_HERE",
+  "NO_PHONE_THERE",
+  "PHONE_ALREADY_INSTALLED",
+  "PHONE_USE_NOT_GRANTED",
+  "NO_ROOMS_HERE",
+]);
 
 const VALIDATORS = { on: orderValidators(GAME_DATA, RULES_ON), off: orderValidators(GAME_DATA, RULES_OFF) };
 
@@ -1511,6 +1520,12 @@ const COVERAGE: Readonly<Record<RejectionCode, Coverage>> = {
   NO_PATH: { by: "differential", why: "needs every road to a place known closed" },
   INVALID_REST_LENGTH: { by: "cases" },
   NOT_RESTING: { by: "cases" },
+  // PH1's five codes (ADR 0027 decision 16). C1 (#179) pins them once the phone handlers stop being no-ops.
+  NO_PHONE_HERE: { by: "never", why: "PH1's handlers are no-ops; C1 (#179) pins it" },
+  NO_PHONE_THERE: { by: "never", why: "PH1's handlers are no-ops; C1 (#179) pins it" },
+  PHONE_ALREADY_INSTALLED: { by: "never", why: "PH1's handlers are no-ops; C1 (#179) pins it" },
+  PHONE_USE_NOT_GRANTED: { by: "never", why: "PH1's handlers are no-ops; C1 (#179) pins it" },
+  NO_ROOMS_HERE: { by: "never", why: "PH1's handlers are no-ops; C1 (#179) pins it" },
 };
 
 describe("decision 9: per RejectionCode, the verdict reads only the founder's view", () => {

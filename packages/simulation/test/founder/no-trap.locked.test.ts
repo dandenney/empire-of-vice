@@ -478,7 +478,10 @@ describe("no traps: focused cases (ADR 0023 decisions 2a, 4, 7, 8)", () => {
   it("driving a delivery: busy loading, away on the round trip, accepted the tick after the truck is home", () => {
     const sim = stockedGame();
     // A sale carries out a held deal (ADR 0022 decision 6; on spec is SK1c's):
-    // agree one case at the Crossroads at today's quote, then dispatch it.
+    // walk to the Crossroads (AGREE_DEAL needs the founder present at the buyer,
+    // ADR 0022 decision 3), agree one case there at today's quote during its
+    // hours, walk home, then dispatch the held deal by its id.
+    walkTo(sim, CROSSROADS, 2 * TICKS_PER_DAY);
     advanceUntil(sim, (s) => isOpen(CROSSROADS, s.tick + 1) && isFree(s), TICKS_PER_DAY, "the Crossroads opens");
     const agree = (price: number): CommandResult =>
       sim.dispatch({
@@ -490,6 +493,10 @@ describe("no traps: focused cases (ADR 0023 decisions 2a, 4, 7, 8)", () => {
     advanceUntil(sim, isFree, TICKS_PER_DAY, "agreeing ends");
     const deal = sim.state.heldDeals.at(-1)!;
     expect(deal).toMatchObject({ buyerId: CROSSROADS_ROADHOUSE, quantity: 1, status: "HELD" });
+    walkTo(sim, HOLLOW_CREEK, 2 * TICKS_PER_DAY);
+    // Still held when the dispatch applies (DEAL_HOLD_TICKS).
+    expect(sim.state.heldDeals.find((d) => d.id === deal.id)).toMatchObject({ status: "HELD" });
+    expect(sim.state.tick + 1).toBeLessThan(deal.expiresAt);
     const t = sim.state.tick + 1;
     const load = activityTicks("LOAD_TRUCK", sim.state, t);
     expectApplied(
@@ -668,13 +675,31 @@ const startArb: fc.Arbitrary<Start> = fc.oneof(
 );
 
 /**
- * AGREE_DEAL at the buyer's quote once they're open and the founder is free,
- * then DISPATCH_DELIVERY of that deal by its id (ADR 0022 decision 6). Either
- * step may be rejected (closed all day, reputation, stock, the truck away);
- * the sale is then dropped, as a player would.
+ * Walk the founder to `destination` once free, if not there already. Returns
+ * whether they're there and free; false (the sale is dropped) if the walk is
+ * refused or doesn't finish within `maxTicks`.
+ */
+function tryWalkTo(sim: KernelSimulation, destination: LocationId, maxTicks: number): boolean {
+  for (let i = 0; i < maxTicks && !isFree(sim.state); i++) sim.advance(1);
+  if (!isFree(sim.state)) return false;
+  if (presentAt(sim.state, destination)) return true;
+  const walked = sim.dispatch({ command: { type: "TRAVEL", destinationLocationId: destination, transport: { kind: "FOOT" }, via: null } });
+  if (walked.status !== "applied") return false;
+  for (let i = 0; i < maxTicks && !(presentAt(sim.state, destination) && isFree(sim.state)); i++) sim.advance(1);
+  return presentAt(sim.state, destination) && isFree(sim.state);
+}
+
+/**
+ * Walk to the buyer (AGREE_DEAL needs the founder present there, ADR 0022
+ * decision 3), AGREE_DEAL at the buyer's quote once they're open and the
+ * founder is free, walk home to the distillery, then DISPATCH_DELIVERY of
+ * that deal by its id (ADR 0022 decision 6). Any step may be refused (a walk
+ * refused, closed all day, reputation, stock, the truck away, the deal
+ * expired); the sale is then dropped, as a player would.
  */
 function sellOnDeal(sim: KernelSimulation, sale: Extract<Action, { kind: "sale" }>): void {
   const locationId = BUYERS.find((b) => b.id === sale.buyerId)!.locationId;
+  if (!tryWalkTo(sim, locationId, 2 * TICKS_PER_DAY)) return;
   for (let i = 0; i < TICKS_PER_DAY && !(isOpen(locationId, sim.state.tick + 1) && isFree(sim.state)); i++) sim.advance(1);
   const agree = (price: Money): CommandResult =>
     sim.dispatch({
@@ -685,7 +710,7 @@ function sellOnDeal(sim: KernelSimulation, sale: Extract<Action, { kind: "sale" 
   if (agreed.status === "rejected" && agreed.reason.code === "QUOTE_CHANGED") agreed = agree(agreed.reason.current);
   if (agreed.status !== "applied") return;
   const deal = sim.state.heldDeals.at(-1)!;
-  for (let i = 0; i < TICKS_PER_DAY && !isFree(sim.state); i++) sim.advance(1);
+  if (!tryWalkTo(sim, HOLLOW_CREEK, 2 * TICKS_PER_DAY)) return;
   sim.dispatch({
     command: {
       type: "DISPATCH_DELIVERY",
