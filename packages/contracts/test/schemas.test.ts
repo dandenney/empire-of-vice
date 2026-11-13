@@ -26,6 +26,28 @@ import {
   type RejectionReason,
   type SaveFile,
   type SaveGame,
+  activityItemSchema,
+  catchUpLineSchema,
+  catchUpSchema,
+  knowledgeRecordSchema,
+  knowledgeSourceSchema,
+  knowledgeStateSchema,
+  knowledgeSubjectSchema,
+  knowledgeValueSchema,
+  newsItemSchema,
+  playerCommandResultSchema,
+  playerSnapshotSchema,
+  type ActivityItem,
+  type CatchUp,
+  type CatchUpLine,
+  type KnowledgeRecord,
+  type KnowledgeSource,
+  type KnowledgeState,
+  type KnowledgeSubject,
+  type KnowledgeValue,
+  type NewsItem,
+  type PlayerCommandResult,
+  type PlayerSnapshot,
 } from "../src/index.ts";
 
 /** Strips readonly all the way down, so a schema's (mutable) output can be compared to a readonly contract type. */
@@ -44,6 +66,18 @@ describe("schemas match the contract types exactly", () => {
     expectTypeOf<z.infer<typeof gameStateSchema>>().toEqualTypeOf<DeepMutable<GameState>>();
     expectTypeOf<z.infer<typeof saveGameSchema>>().toEqualTypeOf<DeepMutable<SaveGame>>();
     expectTypeOf<z.infer<typeof saveFileSchema>>().toEqualTypeOf<DeepMutable<SaveFile>>();
+    // Knowledge and the player snapshot (ADR 0021 decision 11).
+    expectTypeOf<z.infer<typeof knowledgeSubjectSchema>>().toEqualTypeOf<DeepMutable<KnowledgeSubject>>();
+    expectTypeOf<z.infer<typeof knowledgeValueSchema>>().toEqualTypeOf<DeepMutable<KnowledgeValue>>();
+    expectTypeOf<z.infer<typeof knowledgeSourceSchema>>().toEqualTypeOf<DeepMutable<KnowledgeSource>>();
+    expectTypeOf<z.infer<typeof knowledgeRecordSchema>>().toEqualTypeOf<DeepMutable<KnowledgeRecord>>();
+    expectTypeOf<z.infer<typeof newsItemSchema>>().toEqualTypeOf<DeepMutable<NewsItem>>();
+    expectTypeOf<z.infer<typeof catchUpLineSchema>>().toEqualTypeOf<DeepMutable<CatchUpLine>>();
+    expectTypeOf<z.infer<typeof catchUpSchema>>().toEqualTypeOf<DeepMutable<CatchUp>>();
+    expectTypeOf<z.infer<typeof activityItemSchema>>().toEqualTypeOf<DeepMutable<ActivityItem>>();
+    expectTypeOf<z.infer<typeof knowledgeStateSchema>>().toEqualTypeOf<DeepMutable<KnowledgeState>>();
+    expectTypeOf<z.infer<typeof playerCommandResultSchema>>().toEqualTypeOf<DeepMutable<PlayerCommandResult>>();
+    expectTypeOf<z.infer<typeof playerSnapshotSchema>>().toEqualTypeOf<DeepMutable<PlayerSnapshot>>();
   });
 
   it("and the comparison really detects drift", () => {
@@ -51,6 +85,8 @@ describe("schemas match the contract types exactly", () => {
     expectTypeOf<z.infer<typeof gameStateSchema>>().not.toEqualTypeOf<DeepMutable<Omit<GameState, "seed">>>();
     expectTypeOf<z.infer<typeof gameStateSchema>>().not.toEqualTypeOf<DeepMutable<GameState & { extra: number }>>();
     expectTypeOf<z.infer<typeof gameCommandSchema>>().not.toEqualTypeOf<DeepMutable<Exclude<GameCommand, { type: "SET_WORKFORCE" }>>>();
+    expectTypeOf<z.infer<typeof playerSnapshotSchema>>().not.toEqualTypeOf<DeepMutable<Omit<PlayerSnapshot, "here">>>();
+    expectTypeOf<z.infer<typeof knowledgeValueSchema>>().not.toEqualTypeOf<DeepMutable<Exclude<KnowledgeValue, { kind: "STANDING" }>>>();
     // Brands survive: schema output is Money, not a plain number.
     expectTypeOf<z.infer<typeof saveGameSchema>["state"]["materialPools"][number]["totalCost"]>().toEqualTypeOf<Money>();
     expectTypeOf<Money>().not.toEqualTypeOf<number>();
@@ -135,7 +171,7 @@ describe("saves", () => {
   });
 
   it("rejects a save from another version, with readable issues", () => {
-    const result = saveGameSchema.safeParse({ ...roundTrip(day0Save) as object, schemaVersion: 2 });
+    const result = saveGameSchema.safeParse({ ...roundTrip(day0Save) as object, schemaVersion: 1 });
     expect(result.success).toBe(false);
     if (!result.success) expect(formatIssues(result.error)).toContainEqual(expect.stringContaining("schemaVersion"));
   });

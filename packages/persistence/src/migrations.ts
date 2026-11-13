@@ -7,12 +7,38 @@
 // game-data. The result is validated against the current schema by the caller
 // (save-file.ts), never trusted.
 //
-// Version 1 is the first version, so the chain is empty.
+// Each step writes its new fields as frozen literals, never from current
+// contract constants, so a later change to those constants can't change what an
+// old save migrates to.
 
 import { SAVE_SCHEMA_VERSION, type SaveLoadError, type SaveMigration } from "@eov/contracts";
 
+/**
+ * v1 → v2 (K1, ADR 0021 decision 10): `GameState.knowledge`, empty. Records are
+ * copies of world projections and migrations never read game-data, so nothing
+ * can be rebuilt here. The live view shows the founder's place at once, and the
+ * rest of the world starts out unknown. With no pending books, the whole M001
+ * ledger counts as known, which fits: M001 players saw everything.
+ */
+export const migrateV1ToV2: SaveMigration = {
+  fromVersion: 1,
+  toVersion: 2,
+  migrate: (save) => {
+    const state = save["state"];
+    if (typeof state !== "object" || state === null || Array.isArray(state)) throw new Error("save.state is not an object");
+    if ("knowledge" in state) throw new Error("save.state already has knowledge");
+    return {
+      ...save,
+      state: {
+        ...state,
+        knowledge: { records: [], pendingNews: [], pendingBooks: [], activity: [], lastCatchUp: null },
+      },
+    };
+  },
+};
+
 /** Every migration, oldest first. Add one per SAVE_SCHEMA_VERSION bump. */
-export const SAVE_MIGRATIONS: readonly SaveMigration[] = [];
+export const SAVE_MIGRATIONS: readonly SaveMigration[] = [migrateV1ToV2];
 
 export type MigrationResult =
   | { readonly ok: true; readonly save: Record<string, unknown> }

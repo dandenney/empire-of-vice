@@ -26,6 +26,7 @@ export * from "./buyers.ts";
 export * from "./contracts.ts";
 export * from "./equipment.ts";
 export * from "./facilities.ts";
+export * from "./knowledge.ts";
 export * from "./map.ts";
 export * from "./markets.ts";
 export * from "./pacing.ts";

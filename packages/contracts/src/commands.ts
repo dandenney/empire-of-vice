@@ -206,6 +206,17 @@ export type CommandResult =
   /** Rejected. Nothing changed. */
   | { readonly status: "rejected"; readonly commandId: CommandId; readonly reason: RejectionReason };
 
+/**
+ * What the worker returns to the game UI for a command (ADR 0021 decision 2): the
+ * status, the command ID and, if rejected, the reason. No `eventIds`: event IDs
+ * come from one global counter, so their numbers depend on activity the founder
+ * hasn't observed (decision 9).
+ */
+export type PlayerCommandResult =
+  | { readonly status: "applied"; readonly commandId: CommandId; readonly tick: Tick }
+  | { readonly status: "queued"; readonly commandId: CommandId; readonly scheduledTick: Tick }
+  | { readonly status: "rejected"; readonly commandId: CommandId; readonly reason: RejectionReason };
+
 // ---------------------------------------------------------------------------
 // Rejection reasons
 // ---------------------------------------------------------------------------

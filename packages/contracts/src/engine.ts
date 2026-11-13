@@ -4,6 +4,7 @@
 
 import type { CommandRequest, CommandResult } from "./commands.ts";
 import type { GameEvent } from "./events.ts";
+import type { PlayerSnapshot } from "./player-snapshot.ts";
 import type { SaveGame } from "./save.ts";
 import type { GameSnapshot } from "./snapshot.ts";
 import type { GameState } from "./state.ts";
@@ -13,8 +14,17 @@ export interface Simulation {
   dispatch(request: CommandRequest): CommandResult;
   /** Processes `ticks` ticks in SIM-001 order. The caller (scheduler or lab) decides how many. */
   advance(ticks: number): void;
-  /** The read-only projection for the UI (ADR 0007). */
+  /**
+   * The world snapshot (ADR 0007): a projection of the whole world, for the lab,
+   * tests and a dev-only debug view. Not for the game UI once it reads
+   * `playerSnapshot()` (ADR 0021 decision 2).
+   */
   snapshot(): GameSnapshot;
+  /**
+   * The player snapshot (ADR 0021 decision 8): built only from knowledge, the
+   * always-known state and the live view of the founder's place. Changes no state.
+   */
+  playerSnapshot(): PlayerSnapshot;
   /** Everything needed to resume exactly (ADR 0008). */
   serialize(): SaveGame;
   /** Hash of the canonical serialization of the current state. Same seed + same commands = same hash. */
