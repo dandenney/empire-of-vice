@@ -53,6 +53,7 @@
 // founder is RESTING where they were, until the requested tick.
 
 import {
+  asId,
   cents,
   minuteOfDay,
   TICKS_PER_DAY,
@@ -63,6 +64,7 @@ import {
   type GameCommand,
   type GameState,
   type LocationId,
+  type Money,
   type RouteLeg,
   type Tick,
 } from "@eov/contracts";
@@ -72,6 +74,7 @@ import {
   BUYERS,
   CORN,
   COUNTY_ROAD,
+  CROSSROADS,
   DISTILLERY_MAIN,
   EQUIPMENT,
   FIRST_SHIPMENT_SCENARIO,
@@ -474,6 +477,19 @@ describe("no traps: focused cases (ADR 0023 decisions 2a, 4, 7, 8)", () => {
 
   it("driving a delivery: busy loading, away on the round trip, accepted the tick after the truck is home", () => {
     const sim = stockedGame();
+    // A sale carries out a held deal (ADR 0022 decision 6; on spec is SK1c's):
+    // agree one case at the Crossroads at today's quote, then dispatch it.
+    advanceUntil(sim, (s) => isOpen(CROSSROADS, s.tick + 1) && isFree(s), TICKS_PER_DAY, "the Crossroads opens");
+    const agree = (price: number): CommandResult =>
+      sim.dispatch({
+        command: { type: "AGREE_DEAL", buyerId: CROSSROADS_ROADHOUSE, productId: MOONSHINE, quality: "basic", quantity: 1, agreedUnitPrice: cents(price) },
+      });
+    let agreed = agree(1);
+    if (agreed.status === "rejected" && agreed.reason.code === "QUOTE_CHANGED") agreed = agree(agreed.reason.current);
+    expectApplied(agreed, "agree a deal at the Crossroads");
+    advanceUntil(sim, isFree, TICKS_PER_DAY, "agreeing ends");
+    const deal = sim.state.heldDeals.at(-1)!;
+    expect(deal).toMatchObject({ buyerId: CROSSROADS_ROADHOUSE, quantity: 1, status: "HELD" });
     const t = sim.state.tick + 1;
     const load = activityTicks("LOAD_TRUCK", sim.state, t);
     expectApplied(
@@ -482,7 +498,7 @@ describe("no traps: focused cases (ADR 0023 decisions 2a, 4, 7, 8)", () => {
           type: "DISPATCH_DELIVERY",
           vehicleId: MODEL_TT_TRUCK,
           cargo: [{ productId: MOONSHINE, quality: "basic", quantity: 1 }],
-          purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: null },
+          purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: deal.id },
           routeId: STATE_HIGHWAY,
           driver: { kind: "FOUNDER" },
         },
@@ -518,6 +534,7 @@ type When = { readonly kind: "eager" } | { readonly kind: "queued"; readonly off
 type Action =
   | { readonly kind: "advance"; readonly ticks: number }
   | { readonly kind: "settle" }
+  | { readonly kind: "sale"; readonly buyerId: (typeof BUYER_IDS)[number]; readonly quantity: number; readonly routeId: RouteLeg["routeId"] | null }
   | { readonly kind: "command"; readonly when: When; readonly build: (s: GameState, applyTick: number) => GameCommand | null };
 
 const whenArb: fc.Arbitrary<When> = fc.oneof(
@@ -554,30 +571,52 @@ const commandArb: fc.Arbitrary<(s: GameState, applyTick: number) => GameCommand 
   fc
     .record({ recipeId: fc.constantFrom(BASIC_MOONSHINE_RECIPE, STANDARD_MOONSHINE_RECIPE), quantity: fc.integer({ min: 1, max: 3 }) })
     .map(({ recipeId, quantity }) => (): GameCommand => ({ type: "START_PRODUCTION", facilityId: DISTILLERY_MAIN, recipeId, quantity })),
+  // DISPATCH_DELIVERY of a held deal (ADR 0022 decision 6): mostly one the
+  // founder holds, carried out as agreed; sometimes any deal on record or one
+  // that was never agreed, which is rejected. (A sale on spec, `dealId: null`,
+  // is SK1c's and rejected until then.)
   fc
     .record({
+      pick: fc.nat(),
+      deal: fc.oneof(
+        { weight: 4, arbitrary: fc.constant("held" as const) },
+        { weight: 1, arbitrary: fc.constant("any" as const) },
+        { weight: 1, arbitrary: fc.constant("unknown" as const) },
+      ),
       buyerId: fc.constantFrom(...BUYER_IDS),
       quantity: fc.integer({ min: 1, max: 2 }),
       routeId: fc.option(fc.constantFrom(...ROUTES.map((r) => r.id)), { nil: null }),
     })
-    .map(({ buyerId, quantity, routeId }) => (): GameCommand => ({
-      type: "DISPATCH_DELIVERY",
-      vehicleId: MODEL_TT_TRUCK,
-      cargo: [{ productId: MOONSHINE, quality: "basic", quantity }],
-      purpose: { kind: "SALE", buyerId, dealId: null },
-      routeId,
-      driver: { kind: "FOUNDER" },
-    })),
+    .map(({ pick, deal, buyerId, quantity, routeId }) => (s: GameState): GameCommand => {
+      const pool = deal === "held" ? s.heldDeals.filter((d) => d.status === "HELD") : deal === "any" ? s.heldDeals : [];
+      const chosen = pool[pick % Math.max(1, pool.length)];
+      return {
+        type: "DISPATCH_DELIVERY",
+        vehicleId: MODEL_TT_TRUCK,
+        cargo: [{ productId: MOONSHINE, quality: chosen?.quality ?? "basic", quantity: chosen?.quantity ?? quantity }],
+        purpose: { kind: "SALE", buyerId: chosen?.buyerId ?? buyerId, dealId: chosen?.id ?? asId("Deal", "deal-never-agreed") },
+        routeId,
+        driver: { kind: "FOUNDER" },
+      };
+    }),
+  // AGREE_DEAL: mostly at the buyer's current quote, so deals get held; sometimes at an arbitrary price.
   fc
-    .record({ buyerId: fc.constantFrom(...BUYER_IDS), quantity: fc.integer({ min: 1, max: 3 }), price: fc.integer({ min: 100, max: 3_000 }) })
-    .map(({ buyerId, quantity, price }) => (): GameCommand => ({
-      type: "AGREE_DEAL",
-      buyerId,
-      productId: MOONSHINE,
-      quality: "basic",
-      quantity,
-      agreedUnitPrice: cents(price),
-    })),
+    .record({
+      buyerId: fc.constantFrom(...BUYER_IDS),
+      quantity: fc.integer({ min: 1, max: 3 }),
+      price: fc.option(fc.integer({ min: 100, max: 3_000 }), { nil: null, freq: 2 }),
+    })
+    .map(({ buyerId, quantity, price }) => (s: GameState): GameCommand => {
+      const quote = s.buyers.find((b) => b.id === buyerId)?.wants.find((w) => w.productId === MOONSHINE)?.unitPrice;
+      return {
+        type: "AGREE_DEAL",
+        buyerId,
+        productId: MOONSHINE,
+        quality: "basic",
+        quantity,
+        agreedUnitPrice: price === null ? (quote ?? cents(1)) : cents(price),
+      };
+    }),
   fc.nat().map((pick) => (s: GameState): GameCommand | null => {
     const offer = s.contractOffers[pick % Math.max(1, s.contractOffers.length)];
     return offer ? { type: "ACCEPT_CONTRACT", contractOfferId: offer.id } : null;
@@ -599,6 +638,17 @@ const actionArb: fc.Arbitrary<Action> = fc.oneof(
   { weight: 2, arbitrary: fc.integer({ min: 0, max: 720 }).map((ticks) => ({ kind: "advance", ticks }) as const) },
   { weight: 1, arbitrary: fc.integer({ min: 720, max: 2 * TICKS_PER_DAY }).map((ticks) => ({ kind: "advance", ticks }) as const) },
   { weight: 1, arbitrary: fc.constant({ kind: "settle" } as const) },
+  // A sale the way the player makes one: agree a deal at the quote, then drive it out, so deliveries actually leave.
+  {
+    weight: 2,
+    arbitrary: fc
+      .record({
+        buyerId: fc.constantFrom(...BUYER_IDS),
+        quantity: fc.integer({ min: 1, max: 2 }),
+        routeId: fc.option(fc.constantFrom(...ROUTES.map((r) => r.id)), { nil: null }),
+      })
+      .map((sale) => ({ kind: "sale", ...sale }) as const),
+  },
   { weight: 6, arbitrary: fc.record({ when: whenArb, build: commandArb }).map(({ when, build }) => ({ kind: "command", when, build }) as const) },
 );
 
@@ -617,12 +667,45 @@ const startArb: fc.Arbitrary<Start> = fc.oneof(
   fc.constant({ kind: "stocked" } as const),
 );
 
+/**
+ * AGREE_DEAL at the buyer's quote once they're open and the founder is free,
+ * then DISPATCH_DELIVERY of that deal by its id (ADR 0022 decision 6). Either
+ * step may be rejected (closed all day, reputation, stock, the truck away);
+ * the sale is then dropped, as a player would.
+ */
+function sellOnDeal(sim: KernelSimulation, sale: Extract<Action, { kind: "sale" }>): void {
+  const locationId = BUYERS.find((b) => b.id === sale.buyerId)!.locationId;
+  for (let i = 0; i < TICKS_PER_DAY && !(isOpen(locationId, sim.state.tick + 1) && isFree(sim.state)); i++) sim.advance(1);
+  const agree = (price: Money): CommandResult =>
+    sim.dispatch({
+      command: { type: "AGREE_DEAL", buyerId: sale.buyerId, productId: MOONSHINE, quality: "basic", quantity: sale.quantity, agreedUnitPrice: price },
+    });
+  const quote = sim.state.buyers.find((b) => b.id === sale.buyerId)?.wants.find((w) => w.productId === MOONSHINE)?.unitPrice ?? cents(1);
+  let agreed = agree(quote);
+  if (agreed.status === "rejected" && agreed.reason.code === "QUOTE_CHANGED") agreed = agree(agreed.reason.current);
+  if (agreed.status !== "applied") return;
+  const deal = sim.state.heldDeals.at(-1)!;
+  for (let i = 0; i < TICKS_PER_DAY && !isFree(sim.state); i++) sim.advance(1);
+  sim.dispatch({
+    command: {
+      type: "DISPATCH_DELIVERY",
+      vehicleId: MODEL_TT_TRUCK,
+      cargo: [{ productId: deal.productId, quality: deal.quality, quantity: deal.quantity }],
+      purpose: { kind: "SALE", buyerId: deal.buyerId, dealId: deal.id },
+      routeId: sale.routeId,
+      driver: { kind: "FOUNDER" },
+    },
+  });
+}
+
 function play(start: Start, actions: readonly Action[]): KernelSimulation {
   const sim = start.kind === "stocked" ? stockedGame() : newGame({ scenario: { ...FOUNDER_SCENARIO, scheduledEvents: start.closures } });
   for (const action of actions) {
     if (action.kind === "advance") sim.advance(action.ticks);
     else if (action.kind === "settle") {
       for (let i = 0; i < 2 * B && !isFree(sim.state); i++) sim.advance(1);
+    } else if (action.kind === "sale") {
+      sellOnDeal(sim, action);
     } else {
       const applyTick = action.when.kind === "eager" ? sim.state.tick + 1 : sim.state.tick + action.when.offset;
       const command = action.build(sim.state, applyTick);
