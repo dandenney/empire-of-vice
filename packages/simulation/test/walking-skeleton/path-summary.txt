@@ -1,0 +1,423 @@
+== asleep at the start
+  t=0 day 0 1920-01-17 00:00; here: -
+  founder: RESTING at hollow-creek t=0..360
+  purse: cash 25000; known net worth 105000 as of -; books 1 rows
+  deals: none
+  activity: 0 items; catch-up: none
+  known (0):
+
+== awake at home
+  t=360 day 0 1920-01-17 06:00; here: hollow-creek
+  founder: PRESENT at hollow-creek, free
+  purse: cash 25000; known net worth 105000 as of 360; books 1 rows
+  deals: none
+  activity: 1 items, last CATCH_UP; catch-up: hollow-creek t=360 since -, 11 lines, 0 news
+  known (11):
+    places[hollow-creek].facility.operations @t=360 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=360 IN_PERSON hollow-creek
+    routes[county-road].condition @t=360 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=360 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=360 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=360 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=360 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=360 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=360 IN_PERSON hollow-creek
+    standing @t=360 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=360 IN_PERSON hollow-creek
+
+== walk to the feed store: set out
+  t=360 day 0 1920-01-17 06:00; here: -
+  founder: TRAVELLING FOOT to millers-feed, leg 1/1 on feed-store-road t=361..541
+  purse: cash 25000; known net worth 105000 as of 361; books 1 rows
+  deals: none
+  activity: 2 items, last COMMAND; catch-up: none
+  known (11):
+    places[hollow-creek].facility.operations @t=361 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=361 IN_PERSON hollow-creek
+    routes[county-road].condition @t=361 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=360 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=361 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=361 IN_PERSON hollow-creek
+    standing @t=361 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=361 IN_PERSON hollow-creek
+
+== at the feed store
+  t=541 day 0 1920-01-17 09:01; here: millers-feed
+  founder: PRESENT at millers-feed, free
+  purse: cash 25000; known net worth 105000 as of 361; books 1 rows
+  deals: none
+  activity: 3 items, last CATCH_UP; catch-up: millers-feed t=541 since 361, 2 lines, 0 news
+  known (13):
+    market @t=541 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=361 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=361 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=541 IN_PERSON millers-feed
+    routes[county-road].condition @t=361 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=541 IN_PERSON millers-feed
+    routes[kessler-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=361 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=361 IN_PERSON hollow-creek
+    standing @t=541 IN_PERSON millers-feed
+    vehicles[model-tt-truck].whereabouts @t=361 IN_PERSON hollow-creek
+
+== the feed store is open
+  t=541 day 0 1920-01-17 09:01; here: millers-feed
+  founder: PRESENT at millers-feed, free
+  purse: cash 25000; known net worth 105000 as of 361; books 1 rows
+  deals: none
+  activity: 3 items, last CATCH_UP; catch-up: millers-feed t=541 since 361, 2 lines, 0 news
+  known (13):
+    market @t=541 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=361 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=361 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=541 IN_PERSON millers-feed
+    routes[county-road].condition @t=361 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=541 IN_PERSON millers-feed
+    routes[kessler-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=361 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=361 IN_PERSON hollow-creek
+    standing @t=541 IN_PERSON millers-feed
+    vehicles[model-tt-truck].whereabouts @t=361 IN_PERSON hollow-creek
+
+== buy corn: busy
+  t=541 day 0 1920-01-17 09:01; here: millers-feed
+  founder: PRESENT at millers-feed, busy BUY_MATERIALS until t=572
+  purse: cash 24500; known net worth 105000 as of 361; books 2 rows
+  deals: none
+  activity: 4 items, last COMMAND; catch-up: millers-feed t=541 since 361, 2 lines, 0 news
+  known (13):
+    market @t=541 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=361 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=361 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=541 IN_PERSON millers-feed
+    routes[county-road].condition @t=361 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=541 IN_PERSON millers-feed
+    routes[kessler-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=361 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=361 IN_PERSON hollow-creek
+    standing @t=541 IN_PERSON millers-feed
+    vehicles[model-tt-truck].whereabouts @t=361 IN_PERSON hollow-creek
+
+== buy corn: done
+  t=572 day 0 1920-01-17 09:32; here: millers-feed
+  founder: PRESENT at millers-feed, free
+  purse: cash 24500; known net worth 105000 as of 361; books 2 rows
+  deals: none
+  activity: 4 items, last COMMAND; catch-up: millers-feed t=541 since 361, 2 lines, 0 news
+  known (13):
+    market @t=572 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=361 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=361 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=572 IN_PERSON millers-feed
+    routes[county-road].condition @t=361 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=572 IN_PERSON millers-feed
+    routes[kessler-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=361 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=361 IN_PERSON hollow-creek
+    standing @t=572 IN_PERSON millers-feed
+    vehicles[model-tt-truck].whereabouts @t=361 IN_PERSON hollow-creek
+
+== buy sugar: busy
+  t=572 day 0 1920-01-17 09:32; here: millers-feed
+  founder: PRESENT at millers-feed, busy BUY_MATERIALS until t=603
+  purse: cash 24300; known net worth 105000 as of 361; books 3 rows
+  deals: none
+  activity: 5 items, last COMMAND; catch-up: millers-feed t=541 since 361, 2 lines, 0 news
+  known (13):
+    market @t=572 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=361 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=361 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=572 IN_PERSON millers-feed
+    routes[county-road].condition @t=361 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=572 IN_PERSON millers-feed
+    routes[kessler-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=361 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=361 IN_PERSON hollow-creek
+    standing @t=572 IN_PERSON millers-feed
+    vehicles[model-tt-truck].whereabouts @t=361 IN_PERSON hollow-creek
+
+== buy sugar: done
+  t=603 day 0 1920-01-17 10:03; here: millers-feed
+  founder: PRESENT at millers-feed, free
+  purse: cash 24300; known net worth 105000 as of 361; books 3 rows
+  deals: none
+  activity: 5 items, last COMMAND; catch-up: millers-feed t=541 since 361, 2 lines, 0 news
+  known (13):
+    market @t=603 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=361 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=361 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=603 IN_PERSON millers-feed
+    routes[county-road].condition @t=361 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=603 IN_PERSON millers-feed
+    routes[kessler-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=361 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=361 IN_PERSON hollow-creek
+    standing @t=603 IN_PERSON millers-feed
+    vehicles[model-tt-truck].whereabouts @t=361 IN_PERSON hollow-creek
+
+== walk back to the still: set out
+  t=603 day 0 1920-01-17 10:03; here: -
+  founder: TRAVELLING FOOT to hollow-creek, leg 1/1 on feed-store-road t=604..784
+  purse: cash 24300; known net worth 105000 as of 361; books 3 rows
+  deals: none
+  activity: 6 items, last COMMAND; catch-up: none
+  known (13):
+    market @t=604 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=361 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=361 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=604 IN_PERSON millers-feed
+    routes[county-road].condition @t=361 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=603 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=361 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=361 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=361 IN_PERSON hollow-creek
+    standing @t=604 IN_PERSON millers-feed
+    vehicles[model-tt-truck].whereabouts @t=361 IN_PERSON hollow-creek
+
+== back at the still
+  t=784 day 0 1920-01-17 13:04; here: hollow-creek
+  founder: PRESENT at hollow-creek, free
+  purse: cash 24300; known net worth 105000 as of 784; books 3 rows
+  deals: none
+  activity: 7 items, last CATCH_UP; catch-up: hollow-creek t=784 since 361, 1 lines, 0 news
+  known (13):
+    market @t=604 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=784 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=784 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=604 IN_PERSON millers-feed
+    routes[county-road].condition @t=784 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=784 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=784 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=784 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=784 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=784 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=784 IN_PERSON hollow-creek
+    standing @t=784 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=784 IN_PERSON hollow-creek
+
+== start a batch: busy
+  t=784 day 0 1920-01-17 13:04; here: hollow-creek
+  founder: PRESENT at hollow-creek, busy START_BATCH until t=815
+  purse: cash 23900; known net worth 105000 as of 784; books 4 rows
+  deals: none
+  activity: 8 items, last COMMAND; catch-up: hollow-creek t=784 since 361, 1 lines, 0 news
+  known (13):
+    market @t=604 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=784 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=784 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=604 IN_PERSON millers-feed
+    routes[county-road].condition @t=784 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=784 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=784 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=784 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=784 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=784 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=784 IN_PERSON hollow-creek
+    standing @t=784 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=784 IN_PERSON hollow-creek
+
+== the batch is running
+  t=815 day 0 1920-01-17 13:35; here: hollow-creek
+  founder: PRESENT at hollow-creek, free
+  purse: cash 23900; known net worth 105000 as of 815; books 4 rows
+  deals: none
+  activity: 8 items, last COMMAND; catch-up: hollow-creek t=784 since 361, 1 lines, 0 news
+  known (13):
+    market @t=604 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=815 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=815 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=604 IN_PERSON millers-feed
+    routes[county-road].condition @t=815 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=815 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=815 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=815 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=815 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=815 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=815 IN_PERSON hollow-creek
+    standing @t=815 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=815 IN_PERSON hollow-creek
+
+== the batch is done
+  t=1247 day 0 1920-01-17 20:47; here: hollow-creek
+  founder: PRESENT at hollow-creek, free
+  purse: cash 23900; known net worth 105000 as of 1247; books 5 rows
+  deals: none
+  activity: 8 items, last COMMAND; catch-up: hollow-creek t=784 since 361, 1 lines, 0 news
+  known (13):
+    market @t=604 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=1247 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=1247 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=604 IN_PERSON millers-feed
+    routes[county-road].condition @t=1247 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=1247 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=1247 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=1247 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=1247 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=1247 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=1247 IN_PERSON hollow-creek
+    standing @t=1247 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=1247 IN_PERSON hollow-creek
+
+== load the truck: busy
+  t=1247 day 0 1920-01-17 20:47; here: hollow-creek
+  founder: PRESENT at hollow-creek, busy LOAD_TRUCK until t=1278
+  purse: cash 23900; known net worth 105000 as of 1247; books 6 rows
+  deals: none
+  activity: 9 items, last COMMAND; catch-up: hollow-creek t=784 since 361, 1 lines, 0 news
+  known (13):
+    market @t=604 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=1247 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=1247 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=604 IN_PERSON millers-feed
+    routes[county-road].condition @t=1247 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=1247 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=1247 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=1247 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=1247 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=1247 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=1247 IN_PERSON hollow-creek
+    standing @t=1247 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=1247 IN_PERSON hollow-creek
+
+== riding out
+  t=1278 day 0 1920-01-17 21:18; here: -
+  founder: ON_DELIVERY with model-tt-truck
+  purse: cash 23900; known net worth 105000 as of 1278; books 6 rows
+  deals: none
+  activity: 9 items, last COMMAND; catch-up: none
+  known (13):
+    market @t=604 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=1278 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=1278 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=604 IN_PERSON millers-feed
+    routes[county-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=1278 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=1278 IN_PERSON hollow-creek
+    standing @t=1278 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=1278 IN_PERSON hollow-creek
+
+== at the buyer (the stop)
+  t=1398 day 0 1920-01-17 23:18; here: -
+  founder: ON_DELIVERY with model-tt-truck, stopped at crossroads t=1398
+  purse: cash 27020; known net worth 107020 as of 1278; books 7 rows
+  deals: none
+  activity: 10 items, last CATCH_UP; catch-up: crossroads t=1398 since 1278, 1 lines, 0 news
+  known (13):
+    market @t=604 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=1278 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=1278 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=604 IN_PERSON millers-feed
+    routes[county-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=1398 IN_PERSON crossroads
+    routes[feed-store-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=1278 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=1398 IN_PERSON crossroads
+    standing @t=1278 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=1398 IN_PERSON crossroads
+
+== riding home
+  t=1399 day 0 1920-01-17 23:19; here: -
+  founder: ON_DELIVERY with model-tt-truck, stopped at crossroads t=1398
+  purse: cash 27020; known net worth 107020 as of 1278; books 7 rows
+  deals: none
+  activity: 10 items, last CATCH_UP; catch-up: crossroads t=1398 since 1278, 1 lines, 0 news
+  known (13):
+    market @t=604 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=1278 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=1278 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=604 IN_PERSON millers-feed
+    routes[county-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=1398 IN_PERSON crossroads
+    routes[feed-store-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=1278 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=1278 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=1399 IN_PERSON hollow-creek
+    standing @t=1278 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=1398 IN_PERSON crossroads
+
+== home
+  t=1518 day 1 1920-01-18 01:18; here: hollow-creek
+  founder: PRESENT at hollow-creek, free (tired)
+  purse: cash 26170; known net worth 106170 as of 1518; books 10 rows
+  deals: none
+  activity: 11 items, last CATCH_UP; catch-up: hollow-creek t=1518 since 1278, 1 lines, 0 news
+  known (13):
+    market @t=604 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=1518 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=1518 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=604 IN_PERSON millers-feed
+    routes[county-road].condition @t=1518 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=1518 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=1518 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=1518 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=1518 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=1518 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=1518 IN_PERSON hollow-creek
+    standing @t=1518 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=1518 IN_PERSON hollow-creek
+
+== asleep
+  t=1518 day 1 1920-01-18 01:18; here: -
+  founder: RESTING at hollow-creek t=1519..1800
+  purse: cash 26170; known net worth 106170 as of 1519; books 10 rows
+  deals: none
+  activity: 12 items, last COMMAND; catch-up: none
+  known (13):
+    market @t=604 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=1519 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=1519 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=604 IN_PERSON millers-feed
+    routes[county-road].condition @t=1519 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=1519 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=1519 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=1519 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=1519 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=1519 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=1519 IN_PERSON hollow-creek
+    standing @t=1519 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=1519 IN_PERSON hollow-creek
+
+== awake the next morning
+  t=1800 day 1 1920-01-18 06:00; here: hollow-creek
+  founder: PRESENT at hollow-creek, free
+  purse: cash 26170; known net worth 106170 as of 1800; books 10 rows
+  deals: none
+  activity: 13 items, last CATCH_UP; catch-up: hollow-creek t=1800 since 1519, 0 lines, 0 news
+  known (13):
+    market @t=604 IN_PERSON millers-feed
+    places[hollow-creek].facility.operations @t=1800 IN_PERSON hollow-creek
+    places[hollow-creek].facility.stock @t=1800 IN_PERSON hollow-creek
+    places[millers-feed].supplier.offer @t=604 IN_PERSON millers-feed
+    routes[county-road].condition @t=1800 IN_PERSON hollow-creek
+    routes[crossroads-back-road].condition @t=1800 IN_PERSON hollow-creek
+    routes[feed-store-road].condition @t=1800 IN_PERSON hollow-creek
+    routes[kessler-back-road].condition @t=1800 IN_PERSON hollow-creek
+    routes[lake-shore-drive].condition @t=1800 IN_PERSON hollow-creek
+    routes[lakeview-back-road].condition @t=1800 IN_PERSON hollow-creek
+    routes[state-highway].condition @t=1800 IN_PERSON hollow-creek
+    standing @t=1800 IN_PERSON hollow-creek
+    vehicles[model-tt-truck].whereabouts @t=1800 IN_PERSON hollow-creek
