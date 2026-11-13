@@ -83,21 +83,21 @@ function equipmentGates(view: IssuerView, data: GameData, facilityId: FacilityId
 }
 
 /** PURCHASE_EQUIPMENT: gates 1–2, then M001's checks against the facility as seen. Tier gating reads STANDING there (ADR 0022 decision 8). */
-export function purchaseEquipmentValidator(data: GameData, rules: GameRules): OrderValidator<"PURCHASE_EQUIPMENT"> {
+export function purchaseEquipmentValidator(data: GameData): OrderValidator<"PURCHASE_EQUIPMENT"> {
   return (view, command) =>
-    (rules.founderRules ? equipmentGates(view, data, command.facilityId, command.equipmentId, "BUY_EQUIPMENT") : null) ??
+    (view.founderRules ? equipmentGates(view, data, command.facilityId, command.equipmentId, "BUY_EQUIPMENT") : null) ??
     purchaseRejection(view.world, command, data);
 }
 
 /** SELL_EQUIPMENT: gates 1–2, then M001's checks against the facility as seen. */
-export function sellEquipmentValidator(data: GameData, rules: GameRules): OrderValidator<"SELL_EQUIPMENT"> {
+export function sellEquipmentValidator(data: GameData): OrderValidator<"SELL_EQUIPMENT"> {
   return (view, command) =>
-    (rules.founderRules ? equipmentGates(view, data, command.facilityId, command.equipmentId, "SELL_EQUIPMENT") : null) ??
+    (view.founderRules ? equipmentGates(view, data, command.facilityId, command.equipmentId, "SELL_EQUIPMENT") : null) ??
     saleRejection(view.world, command, data);
 }
 
 export function purchaseEquipmentHandler(data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): CommandHandler<"PURCHASE_EQUIPMENT"> {
-  const validate = purchaseEquipmentValidator(data, rules);
+  const validate = purchaseEquipmentValidator(data);
   return {
     apply: (state, command, ctx) => {
       // Checked before the transaction begins: ownership has to be judged
@@ -155,7 +155,7 @@ function saleRejection(state: WorldSlice, command: SellEquipmentCommand, data: G
 
 export function sellEquipmentHandler(data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): CommandHandler<"SELL_EQUIPMENT"> {
   validateResaleRatio(data);
-  const validate = sellEquipmentValidator(data, rules);
+  const validate = sellEquipmentValidator(data);
   return {
     apply: (state, command, ctx) => {
       const rejection = judgeOrder(validate, state, data, rules, command, ctx.tick);

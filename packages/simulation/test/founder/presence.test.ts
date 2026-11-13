@@ -50,6 +50,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { createGameRegistry, newGame, type KernelSimulation } from "../../src/index.ts";
 import { activityTicks, awakeSinceAfterRest, isOpenAt, opensAt, scaleUp } from "../../src/founder/time.ts";
+import { facilityJobDuration } from "../../src/production/capacity.ts";
 
 const SCENARIO: ScenarioDefinition = { ...FIRST_SHIPMENT_SCENARIO, scheduledEvents: [], founderRules: true, realMsPerGameHourAt1x: 20_000 };
 const route = (id: string) => GAME_DATA.routes.find((r) => r.id === id)!;
@@ -407,6 +408,8 @@ describe("a batch's clock starts when it's set up (decision 4, #200 follow-up 1)
     const job = sim.state.productionJobs.at(-1)!;
     expect(w.busy.until).toBeGreaterThan(t);
     expect(job.startedAt).toBe(w.busy.until);
+    const recipe = GAME_DATA.recipes.find((r) => r.id === BASIC_MOONSHINE_RECIPE)!;
+    expect(job.completesAt - job.startedAt, "completesAt counts from the end of setting up").toBe(facilityJobDuration(sim.state, GAME_DATA, DISTILLERY_MAIN, recipe, 1));
   });
 });
 

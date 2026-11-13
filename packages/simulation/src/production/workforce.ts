@@ -62,9 +62,9 @@ function countRejection(workerCount: number): RejectionReason | null {
  * below the running batch's crew is a check of what's seen there, not of the
  * command's shape, so FOUNDER_BUSY comes first (orchestrator reading 7 on #200).
  */
-export function setWorkforceValidator(data: GameData, rules: GameRules): OrderValidator<"SET_WORKFORCE"> {
+export function setWorkforceValidator(data: GameData): OrderValidator<"SET_WORKFORCE"> {
   return (view, command) => {
-    if (rules.founderRules) {
+    if (view.founderRules) {
       const { facilityId, workerCount } = command;
       const invalid = countRejection(workerCount);
       if (invalid) return invalid;
@@ -78,7 +78,7 @@ export function setWorkforceValidator(data: GameData, rules: GameRules): OrderVa
 }
 
 export function setWorkforceHandler(data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): CommandHandler<"SET_WORKFORCE"> {
-  const validateOrder = setWorkforceValidator(data, rules);
+  const validateOrder = setWorkforceValidator(data);
   return {
     // Dispatch time, for a command queued for a later tick: only the count's shape.
     validate: (_state, command) => countRejection(command.workerCount),

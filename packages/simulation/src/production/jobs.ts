@@ -129,9 +129,9 @@ function startTick(view: Pick<IssuerView, "founderRules" | "at"> & { readonly wo
  * crew-aware quantity bound first (it reads the crew, so it's judged where the
  * crew can be seen).
  */
-export function startProductionValidator(data: GameData, rules: GameRules): OrderValidator<"START_PRODUCTION"> {
+export function startProductionValidator(data: GameData): OrderValidator<"START_PRODUCTION"> {
   return (view, command) => {
-    if (rules.founderRules) {
+    if (view.founderRules) {
       const { facilityId, recipeId, quantity } = command;
       const invalid = quantityRejection(quantity, undefined, () => quantity);
       if (invalid) return invalid;
@@ -146,7 +146,7 @@ export function startProductionValidator(data: GameData, rules: GameRules): Orde
 }
 
 export function startProductionHandler(data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): CommandHandler<"START_PRODUCTION"> {
-  const validateStart = startProductionValidator(data, rules);
+  const validateStart = startProductionValidator(data);
   return {
     // Dispatch time, for a command queued for a later tick: only the quantity
     // rules. It starts no earlier than the next tick, so a quantity that

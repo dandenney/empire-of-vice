@@ -9,7 +9,6 @@
 
 import { idempotencyKey, type CommandId, type RepeatableCommand } from "@eov/contracts";
 import type { GameData } from "@eov/game-data";
-import type { GameRules } from "../kernel/rules.ts";
 import { requotedSaleRejection } from "../logistics/logistics.ts";
 import type { OrderValidator } from "../view/order.ts";
 import type { WorldSlice } from "../view/world.ts";
@@ -55,7 +54,7 @@ export type RepeatableValidators = { readonly [T in RepeatableCommand["type"]]: 
  * repeated SALE re-agrees at the buyer's current quote (founder rules off; on
  * spec with them on is SK1c-2's, #226).
  */
-export function repeatOperationValidator(data: GameData, _rules: GameRules, validators: RepeatableValidators): OrderValidator<"REPEAT_OPERATION"> {
+export function repeatOperationValidator(data: GameData, validators: RepeatableValidators): OrderValidator<"REPEAT_OPERATION"> {
   return (view, command) => {
     const source = repeatSourceIn(view.world, command.sourceCommandId);
     if (!source) return { code: "NOT_REPEATABLE", sourceCommandId: command.sourceCommandId };

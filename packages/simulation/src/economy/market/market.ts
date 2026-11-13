@@ -695,7 +695,7 @@ export function registerMarket(registry: SystemRegistry, data: GameData, coordin
 
   // AGREE_DEAL (ADR 0022 decision 6): one entry-free DAILY_SETTLEMENT transaction
   // keyed by the new deal, carrying DEAL_AGREED. Judged by its order validator first.
-  const validateAgree = agreeDealValidator(data, rules);
+  const validateAgree = agreeDealValidator(data);
   registry.onCommand("AGREE_DEAL", {
     validate: (_state, command) => quantityRejection(command.quantity),
     apply: (state, command, ctx) => {
@@ -757,7 +757,7 @@ export function registerMarket(registry: SystemRegistry, data: GameData, coordin
     return result.state;
   });
 
-  const validatePurchase = purchaseMaterialsValidator(data, rules);
+  const validatePurchase = purchaseMaterialsValidator(data);
   registry.onCommand("PURCHASE_MATERIALS", {
     validate: (_state, command) => quantityRejection(command.quantity),
     apply: (state, command, ctx) => {
@@ -830,9 +830,9 @@ function purchaseRejection(world: WorldSlice, command: CommandOfType<"PURCHASE_M
  * go to the named facility, which isn't checked (M001 doesn't check material
  * storage).
  */
-export function purchaseMaterialsValidator(data: GameData, rules: GameRules): OrderValidator<"PURCHASE_MATERIALS"> {
+export function purchaseMaterialsValidator(data: GameData): OrderValidator<"PURCHASE_MATERIALS"> {
   return (view, command) => {
-    if (rules.founderRules) {
+    if (view.founderRules) {
       const { quantity, supplierId, facilityId } = command;
       const invalid = quantityRejection(quantity);
       if (invalid) return invalid;
@@ -852,12 +852,12 @@ export function purchaseMaterialsValidator(data: GameData, rules: GameRules): Or
  * open; then `quoteDeal`'s checks against the live view: reputation, the want,
  * the quote, and liquidity (demand and budget).
  */
-export function agreeDealValidator(data: GameData, rules: GameRules): OrderValidator<"AGREE_DEAL"> {
+export function agreeDealValidator(data: GameData): OrderValidator<"AGREE_DEAL"> {
   return (view, command) => {
     const { buyerId, productId, quality, quantity, agreedUnitPrice } = command;
     const invalid = quantityRejection(quantity);
     if (invalid) return invalid;
-    if (rules.founderRules) {
+    if (view.founderRules) {
       const def = buyerDefinition(data, buyerId);
       if (!def || !view.world.buyers.some((b) => b.id === buyerId)) return { code: "UNKNOWN_ENTITY", kind: "Buyer", id: buyerId };
       const absent = presenceRejection(view, { locationId: def.locationId, activity: "AGREE_DEAL", party: true });

@@ -45,10 +45,10 @@ function facilityRejection(world: Pick<WorldSlice, "facilities">, facilityId: Fa
  * (owned), the founder present there (instant, so busy is fine), then the
  * reservation active in that facility's live view.
  */
-export function releaseReservationValidator(data: GameData, rules: GameRules): OrderValidator<"RELEASE_RESERVATION"> {
+export function releaseReservationValidator(data: GameData): OrderValidator<"RELEASE_RESERVATION"> {
   return (view, command) => {
     const { reservationId, facilityId } = command;
-    if (rules.founderRules) {
+    if (view.founderRules) {
       const def = data.facilities.find((f) => f.id === facilityId);
       if (!def) return { code: "UNKNOWN_ENTITY", kind: "Facility", id: facilityId };
       const unknown = facilityRejection(view.world, facilityId);
@@ -61,7 +61,7 @@ export function releaseReservationValidator(data: GameData, rules: GameRules): O
 }
 
 export function registerInventory(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): void {
-  const validateRelease = releaseReservationValidator(data, rules);
+  const validateRelease = releaseReservationValidator(data);
   registry.onCommand("RELEASE_RESERVATION", {
     // `validate` runs at dispatch time only, for commands queued for a later
     // tick (ADR 0004); the reservation may be released or consumed before then,

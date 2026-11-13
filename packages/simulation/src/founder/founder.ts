@@ -123,9 +123,9 @@ function planTravel(view: IssuerView, command: TravelCommand, data: GameData): T
 }
 
 /** TRAVEL's order validator: decision 3a's checks; with founder rules off, an accepted no-op (decision 9). */
-export function travelValidator(data: GameData, rules: GameRules): OrderValidator<"TRAVEL"> {
+export function travelValidator(data: GameData): OrderValidator<"TRAVEL"> {
   return (view, command) => {
-    if (!rules.founderRules) return null;
+    if (!view.founderRules) return null;
     const plan = planTravel(view, command, data);
     return "code" in plan ? plan : null;
   };
@@ -167,9 +167,9 @@ function applyTravel(state: GameState, command: TravelCommand, ctx: CommandConte
 // ---------------------------------------------------------------------------
 
 /** REST's checks (decision 3a): INVALID_REST_LENGTH (shape), then FOUNDER_AWAY and FOUNDER_BUSY. */
-export function restValidator(rules: GameRules): OrderValidator<"REST"> {
+export function restValidator(): OrderValidator<"REST"> {
   return (view, command) => {
-    if (!rules.founderRules) return null;
+    if (!view.founderRules) return null;
     const min = addTicks(view.at, MIN_REST_TICKS);
     const max = addTicks(view.at, MAX_REST_TICKS);
     const until = command.untilTick;
@@ -181,13 +181,13 @@ export function restValidator(rules: GameRules): OrderValidator<"REST"> {
 }
 
 /** WAKE's check (decision 3a): NOT_RESTING. */
-export function wakeValidator(rules: GameRules): OrderValidator<"WAKE"> {
-  return (view) => (!rules.founderRules || view.world.founder.whereabouts.kind === "RESTING" ? null : { code: "NOT_RESTING" });
+export function wakeValidator(): OrderValidator<"WAKE"> {
+  return (view) => (!view.founderRules || view.world.founder.whereabouts.kind === "RESTING" ? null : { code: "NOT_RESTING" });
 }
 
 function applyRest(state: GameState, command: RestCommand, ctx: CommandContext, data: GameData, rules: GameRules): CommandOutcome {
   const t = ctx.tick;
-  const rejection = judgeOrder(restValidator(rules), state, data, rules, command, t);
+  const rejection = judgeOrder(restValidator(), state, data, rules, command, t);
   if (rejection) return rejected(rejection);
   const w = state.founder.whereabouts;
   if (w.kind !== "PRESENT") throw new RangeError("unreachable: the founder is present here");
@@ -209,7 +209,7 @@ function wake(state: GameState, t: Tick, early: boolean, causedBy: CommandContex
 }
 
 function applyWake(state: GameState, command: WakeCommand, ctx: CommandContext, data: GameData, rules: GameRules): CommandOutcome {
-  const rejection = judgeOrder(wakeValidator(rules), state, data, rules, command, ctx.tick);
+  const rejection = judgeOrder(wakeValidator(), state, data, rules, command, ctx.tick);
   if (rejection) return rejected(rejection);
   return { status: "applied", state: wake(state, ctx.tick, true, ctx.envelope.id) };
 }

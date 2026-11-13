@@ -186,10 +186,10 @@ function settleDue(state: GameState, coordinator: TransactionCoordinator, ctx: T
  * checks against the live view: the offer still on the table, LOCKED, and
  * REPUTATION_TOO_LOW.
  */
-export function acceptContractValidator(data: GameData, rules: GameRules): OrderValidator<"ACCEPT_CONTRACT"> {
+export function acceptContractValidator(data: GameData): OrderValidator<"ACCEPT_CONTRACT"> {
   return (view, command) => {
     const { contractOfferId } = command;
-    if (rules.founderRules) {
+    if (view.founderRules) {
       const known = view.world.knownOffers.find((o) => o.id === contractOfferId);
       const buyer = known ? data.buyers.find((b) => b.id === known.buyerId) : undefined;
       if (!buyer) return { code: "OFFER_UNAVAILABLE", contractOfferId };
@@ -201,7 +201,7 @@ export function acceptContractValidator(data: GameData, rules: GameRules): Order
 }
 
 export function registerContracts(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): void {
-  const validateAccept = acceptContractValidator(data, rules);
+  const validateAccept = acceptContractValidator(data);
   registry.onCommand("ACCEPT_CONTRACT", {
     apply: (state, command, ctx) => {
       const { contractOfferId } = command;

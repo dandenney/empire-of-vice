@@ -600,7 +600,8 @@ function fallThrough(
  * An outbound leg is due. On a risky route that hasn't been delayed yet, draw
  * the disruption first (decision 3); a delay or seizure ends this tick's work for
  * the trip. Then a sale past its deal deadline falls through (decision 4), and
- * anything else arrives.
+ * anything else arrives: with founder rules on, an installment for a contract
+ * that has closed since falls through (`contractClosed`).
  */
 function resolveOutbound(
   state: GameState,
@@ -608,6 +609,7 @@ function resolveOutbound(
   data: GameData,
   coordinator: TransactionCoordinator,
   ctx: TickContext,
+  rules: GameRules,
 ): GameState {
   const trip = vehicle.trip!;
   const delivery = state.deliveries.find((d) => d.id === trip.deliveryId);
@@ -626,9 +628,49 @@ function resolveOutbound(
   if (delivery.purpose.kind === "SALE" && delivery.dealDeadline !== null && ctx.tick > delivery.dealDeadline) {
     return fallThrough(s, vehicle, delivery, route, data, coordinator, ctx);
   }
-  return delivery.purpose.kind === "CONTRACT_INSTALLMENT"
-    ? arriveForContract(s, vehicle, delivery, data, coordinator, ctx)
-    : arriveForSale(s, vehicle, delivery, data, coordinator, ctx);
+  if (delivery.purpose.kind === "CONTRACT_INSTALLMENT") {
+    const contractId = delivery.purpose.contractId;
+    // With founder rules on an installment is dispatched on known progress, so the
+    // contract may have closed unseen since (ADR 0022 decision 6). With them off,
+    // dispatch read the world, and M001's arrival stands.
+    if (rules.founderRules && s.contracts.find((c) => c.id === contractId)?.status !== "ACTIVE") {
+      return contractClosed(s, vehicle, delivery, route, coordinator, ctx);
+    }
+    return arriveForContract(s, vehicle, delivery, data, coordinator, ctx);
+  }
+  return arriveForSale(s, vehicle, delivery, data, coordinator, ctx);
+}
+
+/**
+ * An installment arrives at a contract that has completed in the meantime (ADR
+ * 0022 decision 6): nothing is sold. As a fall-through, in a no-entry
+ * `DISPATCH:<id>:FELL_THROUGH` transaction: the delivery FAILED with its cargo
+ * still aboard, the truck turned home, and DEAL_FELL_THROUGH { reason:
+ * "CONTRACT_CLOSED" }. VEHICLE_RETURN unloads the cargo unreserved at home.
+ */
+function contractClosed(
+  state: GameState,
+  vehicle: VehicleState,
+  delivery: DeliveryState,
+  route: RouteDefinition,
+  coordinator: TransactionCoordinator,
+  ctx: TickContext,
+): GameState {
+  if (delivery.purpose.kind !== "CONTRACT_INSTALLMENT") throw new RangeError(`Delivery ${delivery.id} isn't a contract installment`);
+  const contractId = delivery.purpose.contractId;
+  const contract = state.contracts.find((c) => c.id === contractId);
+  if (!contract) throw new RangeError(`Delivery ${delivery.id} is for unknown contract ${contractId}`);
+  const tx = coordinator.begin(state, {
+    kind: "DISPATCH",
+    idempotencyKey: idempotencyKey("DISPATCH", delivery.id, "FELL_THROUGH"),
+    tick: ctx.tick,
+    causedBy: null,
+  });
+  if (tx.status === "duplicate") return state;
+  tx.update((s) => withDelivery(s, delivery.id, "FAILED"));
+  tx.update((s) => withVehicle(s, vehicle.id, homewardTrip(delivery, route, ctx)));
+  tx.emit({ type: "DEAL_FELL_THROUGH", deliveryId: delivery.id, buyerId: contract.buyerId, reason: "CONTRACT_CLOSED" });
+  return commitOrThrow(tx, `Arrival of ${delivery.id} at closed contract ${contractId}`);
 }
 
 /**
@@ -1028,7 +1070,7 @@ export function registerLogistics(
     for (const vehicle of state.vehicles) {
       const trip = vehicle.trip;
       if (!trip || trip.arrivesAt > ctx.tick) continue;
-      s = trip.leg === "RETURN" ? returnHome(s, vehicle, data, coordinator, ctx, rules) : resolveOutbound(s, vehicle, data, coordinator, ctx);
+      s = trip.leg === "RETURN" ? returnHome(s, vehicle, data, coordinator, ctx, rules) : resolveOutbound(s, vehicle, data, coordinator, ctx, rules);
     }
     return s;
   });

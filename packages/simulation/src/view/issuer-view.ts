@@ -5,8 +5,8 @@
 // view (ADR 0021 decisions 3–5, ADR 0023 decisions 2 and 6). Its `world` is the
 // world masked to exactly that:
 //
-// - Always known: the clock, the founder, the purse and the books (`ledger`),
-//   the founder's own commands (`commandLog`), their agreements (HELD deals, the
+// - Always known: the clock, the founder, the purse and the books as known
+//   (`ledger`, without pending books, ADR 0021 decision 6), the founder's own commands (`commandLog`), their agreements (HELD deals, the
 //   contracts they accepted, the facilities and vehicles they own), the routes
 //   and places that exist, and the knowledge records.
 // - The live view, at the place the founder is PRESENT (only PRESENT counts for
@@ -141,6 +141,12 @@ function maskedWorld(state: GameState, data: GameData, here: LocationId | null, 
     for (const o of record.value.offers) knownOffers.push({ id: o.id, buyerId: o.buyerId });
   }
 
+  const reservations = state.reservations.filter((r) => r.facilityId === facilityHere);
+  const reservedHere = new Set<string>(reservations.map((r) => r.id));
+  // Books the founder hasn't learned yet (ADR 0021 decision 6 rule 3) aren't in their ledger. They never touch CASH.
+  const pending = new Set<string>(knowledge.pendingBooks.map((b) => b.transactionId));
+  const ledger = pending.size === 0 ? state.ledger : { ...state.ledger, transactions: state.ledger.transactions.filter((t) => !pending.has(t.id)) };
+
   const vehicles = state.vehicles.map((v): VehicleState => (here !== null && v.parkedAt === here ? v : { id: v.id, parkedAt: null, tripCount: 0, trip: null }));
   const trips: KnownTrip[] = [];
   for (const v of state.vehicles) {
@@ -154,11 +160,11 @@ function maskedWorld(state: GameState, data: GameData, here: LocationId | null, 
   return {
     tick: state.tick,
     founder: state.founder,
-    family: knownFamily(state, open),
+    family: knownFamily(state, data, open),
     facilities: state.facilities.map((f) => (f.id === facilityHere ? f : { id: f.id, equipment: [], workerCount: 0, phoneLine: f.phoneLine })),
     productPools: state.productPools.filter((p) => p.facilityId === facilityHere),
     materialPools: state.materialPools.filter((p) => p.facilityId === facilityHere),
-    reservations: state.reservations.filter((r) => r.facilityId === facilityHere),
+    reservations,
     productionJobs: state.productionJobs.filter((j) => j.facilityId === facilityHere),
     vehicles,
     // A HELD deal is an agreement, always known; what became of a dispatched one isn't (ADR 0022 decision 6).
@@ -166,9 +172,12 @@ function maskedWorld(state: GameState, data: GameData, here: LocationId | null, 
     buyers: state.buyers.map((b) => (b.id === buyerHere ? b : { id: b.id, budgetRemaining: 0 as typeof b.budgetRemaining, wants: [], commitments: [] })),
     suppliers: state.suppliers.map((s) => (s.id === supplierHere ? s : { id: s.id, stock: [] })),
     contractOffers,
-    contracts: state.contracts.map((c) => (c.buyerId === buyerHere ? c : knownContract(state, c))),
+    // At the buyer, a contract's progress is live; its reservations only as far as this place holds them.
+    contracts: state.contracts.map((c) =>
+      c.buyerId === buyerHere ? { ...c, reservationIds: c.reservationIds.filter((id) => reservedHere.has(id)) } : knownContract(state, c),
+    ),
     routes: state.routes.map((r) => (liveRoutes.has(r.id) ? r : knownRoute(state, r))),
-    ledger: state.ledger,
+    ledger,
     commandLog: state.commandLog,
     knowledge,
     knownOffers,
@@ -177,14 +186,17 @@ function maskedWorld(state: GameState, data: GameData, here: LocationId | null, 
 }
 
 /** STANDING: live where the founder is at an open place (or their own facility), else the record. */
-function knownFamily(state: GameState, visible: boolean): FamilyState {
+function knownFamily(state: GameState, data: GameData, visible: boolean): FamilyState {
   if (visible) return state.family;
   const record = findRecord(state.knowledge, { kind: "STANDING" })?.value;
   const standing = record?.kind === "STANDING" ? record : null;
+  // No record yet: the first tier, never the world's current one.
+  const firstTier = data.progression.tiers[0];
+  if (!standing && !firstTier) throw new RangeError("Game-data has no progression tiers");
   return {
     id: state.family.id,
     reputation: standing?.reputation ?? 0,
-    tierId: standing?.tierId ?? state.family.tierId,
+    tierId: standing?.tierId ?? firstTier!.id,
     unlocked: standing?.unlocked ?? [],
     firstQualifyingDeliveryMade: false,
     consecutiveFulfilledInstallments: 0,
