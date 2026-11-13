@@ -301,8 +301,30 @@ export const migrateV3ToV4: SaveMigration = {
   },
 };
 
+/**
+ * v4 → v5 (O1b, ADR 0022 decision 7): `ProductionJobState.conversionPrepaid`.
+ * A running job in an older save paid nothing at its start (its transaction is the
+ * entry-less `RESERVATION:<jobId>`), so it gets `null` and settles under the old
+ * pay-at-settlement rule: cash first, then WAGES_PAYABLE. The ledger has no
+ * PRODUCTION_IN_PROGRESS balance, which matches the new invariant (the balance
+ * equals the sum of non-null `conversionPrepaid`). Nothing else changes.
+ */
+export const migrateV4ToV5: SaveMigration = {
+  fromVersion: 4,
+  toVersion: 5,
+  migrate: (save) => {
+    const state = asObject(save["state"], "save.state");
+    const jobs = asArray(state["productionJobs"], "save.state.productionJobs").map((j, i) => {
+      const job = asObject(j, `save.state.productionJobs[${i}]`);
+      if ("conversionPrepaid" in job) throw new Error(`save.state.productionJobs[${i}] already has conversionPrepaid`);
+      return { ...job, conversionPrepaid: null };
+    });
+    return { ...save, state: { ...state, productionJobs: jobs } };
+  },
+};
+
 /** Every migration, oldest first. Add one per SAVE_SCHEMA_VERSION bump. */
-export const SAVE_MIGRATIONS: readonly SaveMigration[] = [migrateV1ToV2, migrateV2ToV3, migrateV3ToV4];
+export const SAVE_MIGRATIONS: readonly SaveMigration[] = [migrateV1ToV2, migrateV2ToV3, migrateV3ToV4, migrateV4ToV5];
 
 export type MigrationResult =
   | { readonly ok: true; readonly save: Record<string, unknown> }

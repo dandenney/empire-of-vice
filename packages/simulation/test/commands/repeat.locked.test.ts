@@ -14,6 +14,11 @@
 // runs at AGREE_DEAL. With founder rules off, a repeated SALE re-agrees at the
 // buyer's current quote and dispatches against that new deal (issue #192).
 //
+// Re-locked for ADR 0022 decision 7 (issue #197): START_PRODUCTION's transaction is
+// now `PRODUCTION_START:<jobId>` (kind PRODUCTION_START), replacing the entry-less
+// `RESERVATION:<jobId>`, and it pays the job's conversion cost from cash. A repeated
+// production run is keyed and caused the same way, and prepays like the original.
+//
 // Written ahead of the implementation by a separate test-writer agent
 // (factory.md §2, §7.3). Do not edit (CLAUDE.md rule 9).
 //
@@ -28,7 +33,7 @@
 // as: every event listed in the transaction's `eventIds` has that `causedBy`.
 //
 // Keys checked (from the handlers on main): MATERIAL_PURCHASE:<commandId>,
-// RESERVATION:<jobId>, DISPATCH:<deliveryId>.
+// PRODUCTION_START:<jobId> (ADR 0022 decision 7), DISPATCH:<deliveryId>.
 //
 // Settled-only. Not pinned here:
 //   - how the handler decides a source was applied (ADR 0020 decision 11 says
@@ -205,7 +210,7 @@ const cashOf = (state: GameState) => accountBalances(state.ledger.transactions).
 
 const keys = {
   purchase: (commandId: CommandId) => idempotencyKey("MATERIAL_PURCHASE", commandId),
-  reservation: (jobId: string) => idempotencyKey("RESERVATION", jobId),
+  productionStart: (jobId: string) => idempotencyKey("PRODUCTION_START", jobId),
   dispatch: (deliveryId: string) => idempotencyKey("DISPATCH", deliveryId),
 };
 
@@ -419,7 +424,7 @@ describe("REPEAT_OPERATION: applies a copy through the source command's handler"
     expect(g.sim.state.commandLog.at(-1)).toMatchObject({ id: repeatId, command: { type: "REPEAT_OPERATION", sourceCommandId: sourceId } });
   });
 
-  it("START_PRODUCTION: a new job with the same facility, recipe, and quantity, its RESERVATION keyed by the job and caused by the repeat", () => {
+  it("START_PRODUCTION: a new job with the same facility, recipe, and quantity, its PRODUCTION_START keyed by the job, caused by the repeat, and prepaying the conversion cost", () => {
     const g = start();
     buyInputs(g, 2);
     const sourceId = applied(g, produce(1));
@@ -427,6 +432,7 @@ describe("REPEAT_OPERATION: applies a copy through the source command's handler"
     to(g, first.completesAt);
     expect(g.sim.state.productionJobs).toEqual([]);
 
+    const cashBefore = cashOf(g.sim.state);
     const result = run(g, repeat(sourceId));
     if (result.status !== "applied") throw new Error(`Expected applied, got ${JSON.stringify(result)}`);
     const repeatId = result.commandId;
@@ -434,9 +440,21 @@ describe("REPEAT_OPERATION: applies a copy through the source command's handler"
     const job = g.sim.state.productionJobs[0]!;
     expect(job.id).not.toBe(first.id);
     expect(job).toMatchObject({ facilityId: DISTILLERY_MAIN, recipeId: BASIC_MOONSHINE_RECIPE, quantity: 1 });
+    expect(job.conversionPrepaid).toBe(first.conversionPrepaid);
+    expect(job.conversionPrepaid).toBeGreaterThan(0);
 
-    const tx = oneTx(g.sim.state, keys.reservation(job.id));
-    expect(tx.kind).toBe("RESERVATION");
+    expect(keyed(g.sim.state, idempotencyKey("RESERVATION", job.id))).toEqual([]);
+    const tx = oneTx(g.sim.state, keys.productionStart(job.id));
+    expect(tx.kind).toBe("PRODUCTION_START");
+    const prepaid = job.conversionPrepaid ?? 0;
+    expect(tx.entries).toEqual(
+      expect.arrayContaining([
+        { account: "PRODUCTION_IN_PROGRESS", side: "DEBIT", amount: prepaid },
+        { account: "CASH", side: "CREDIT", amount: prepaid },
+      ]),
+    );
+    expect(tx.entries).toHaveLength(2);
+    expect(cashOf(g.sim.state)).toBe(cashBefore - prepaid);
     expectCausedBy(g, tx, repeatId);
     expect(result.eventIds).toEqual(tx.eventIds);
     const [started] = eventsOfType(eventsOf(g, tx), "PRODUCTION_STARTED");

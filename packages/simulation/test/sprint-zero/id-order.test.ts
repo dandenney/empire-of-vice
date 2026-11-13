@@ -6,6 +6,7 @@ import {
   compareIds,
   DYNAMIC_ID_PREFIXES,
   tick,
+  ZERO_MONEY,
   type DeliveryState,
   type GameState,
   type ProductionJobState,
@@ -85,6 +86,8 @@ describe("ID order in state", () => {
       startedAt: tick(0),
       completesAt: tick(1_000_000),
       reservationIds: [],
+      // Nothing was posted for it, so it prepaid nothing (ADR 0022 decision 7's invariant).
+      conversionPrepaid: ZERO_MONEY,
     };
     const sim = withHigherIdAhead(base, (s) => ({
       ...s,

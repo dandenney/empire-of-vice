@@ -113,6 +113,7 @@ describe("snapshot projection", () => {
       rawMaterials: 0,
       finishedGoods: 0,
       goodsInTransit: 0,
+      productionInProgress: 0,
       receivables: 0,
       equipment: cents(30_000),
       vehicles: cents(40_000),

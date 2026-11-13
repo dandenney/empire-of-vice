@@ -57,17 +57,55 @@ function conversionPosting(debit: LedgerAccount, costs: ProductionCosts): readon
 }
 
 /**
- * A completed production run (the FIN-001 example): Dr FINISHED_GOODS
- * materials + conversion / Cr RAW_MATERIALS materials / Cr CASH what's affordable /
- * Cr WAGES_PAYABLE the rest. Capitalizes cost; recognizes no profit.
+ * A migrated job (`conversionPrepaid: null`, ADR 0022 decision 7) completing under the
+ * pre-M002 rule (the FIN-001 example): Dr FINISHED_GOODS materials + conversion /
+ * Cr RAW_MATERIALS materials / Cr CASH what's affordable / Cr WAGES_PAYABLE the rest.
+ * Capitalizes cost; recognizes no profit.
  */
 export function productionEntries(costs: ProductionCosts): readonly LedgerEntry[] {
   return conversionPosting("FINISHED_GOODS", costs);
 }
 
-/** A failed run: as `productionEntries`, but the cost is written off to LOSSES. */
+/** A failed migrated run: as `productionEntries`, but the cost is written off to LOSSES. */
 export function productionWriteOffEntries(costs: ProductionCosts): readonly LedgerEntry[] {
   return conversionPosting("LOSSES", costs);
+}
+
+/**
+ * Starting a production job (ADR 0022 decision 7): its conversion cost is paid from cash
+ * into the prepaid asset, Dr PRODUCTION_IN_PROGRESS / Cr CASH. Net worth doesn't change.
+ * A zero cost posts nothing.
+ */
+export function productionStartEntries(conversion: Money): readonly LedgerEntry[] {
+  return entries(["PRODUCTION_IN_PROGRESS", "DEBIT", conversion], ["CASH", "CREDIT", conversion]);
+}
+
+export interface PrepaidProductionCosts {
+  /** Cost of the materials consumed (weighted average, FIN-001). */
+  readonly materials: Money;
+  /** What the job paid at its start (`ProductionJobState.conversionPrepaid`). */
+  readonly prepaid: Money;
+}
+
+function prepaidPosting(debit: LedgerAccount, costs: PrepaidProductionCosts): readonly LedgerEntry[] {
+  return entries(
+    [debit, "DEBIT", addMoney(costs.materials, costs.prepaid)],
+    ["RAW_MATERIALS", "CREDIT", costs.materials],
+    ["PRODUCTION_IN_PROGRESS", "CREDIT", costs.prepaid],
+  );
+}
+
+/**
+ * A prepaid job completing (ADR 0022 decision 7): Dr FINISHED_GOODS materials + prepaid /
+ * Cr RAW_MATERIALS materials / Cr PRODUCTION_IN_PROGRESS prepaid. No cash moves.
+ */
+export function prepaidProductionEntries(costs: PrepaidProductionCosts): readonly LedgerEntry[] {
+  return prepaidPosting("FINISHED_GOODS", costs);
+}
+
+/** A prepaid job failing: as `prepaidProductionEntries`, but the cost is written off to LOSSES. */
+export function prepaidProductionWriteOffEntries(costs: PrepaidProductionCosts): readonly LedgerEntry[] {
+  return prepaidPosting("LOSSES", costs);
 }
 
 /** Loading goods on a truck: Dr GOODS_IN_TRANSIT / Cr FINISHED_GOODS. */
