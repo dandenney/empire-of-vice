@@ -79,6 +79,11 @@ export interface ScenarioFacility {
 export interface ScenarioDefinition {
   readonly id: ScenarioId;
   readonly name: string;
+  /**
+   * Player-facing one-line description of the scenario (#232). Absent means none
+   * (M001's First Shipment has none). `notes` stays developer-only.
+   */
+  readonly description?: string;
   readonly notes: string;
   readonly seed: number;
   /** Tick 0 is 00:00 on this day. */
@@ -198,6 +203,7 @@ export function parseScenario(raw: unknown): ScenarioDefinition {
   return {
     id: asId("Scenario", str(s["id"], "id")),
     name: str(s["name"], "name"),
+    ...(s["description"] === undefined ? {} : { description: str(s["description"], "description") }),
     notes: str(s["notes"], "notes"),
     seed: int(s["seed"], "seed", Number.MIN_SAFE_INTEGER),
     startDate: {

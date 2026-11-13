@@ -1,7 +1,8 @@
 {
   "id": "the-first-hire",
   "name": "The First Hire",
-  "notes": "M002 scenario (milestone 002; GDD Part II §16–§21; ADR 0023). The id, name and these notes are PLACEHOLDER pending the story decision on #232. Every number here is a PLACEHOLDER for R1 (#176) to tune: the seed, the start date, the cash and building value, the one worker who stands in for the founder at the still (a crewed still won't run with nobody staffing it), and the buyer list. The founder starts alone and asleep at Hollow Creek with no phone of their own (no facility phone line), founder rules on, at 20 000 ms per game hour (M001: 5 000). No scheduled events: the rival closure is M001's. The M001 foreman's wage is still charged under ADR 0017's leaders rule until EM1/E1 (#210, #180) build ADR 0025's.",
+  "description": "You're running Hollow Creek alone. Buy supplies, work the still, make deliveries, and earn enough to put your first employee on the payroll.",
+  "notes": "M002 scenario (milestone 002; GDD Part II §16–§21; ADR 0023). The id, name and description are approved (#232); these notes are developer-only. Every number here is a PLACEHOLDER for R1 (#176) to tune: the seed, the start date, the cash and building value, the one worker who stands in for the founder at the still (a crewed still won't run with nobody staffing it), and the buyer list. The founder starts alone and asleep at Hollow Creek with no phone of their own (no facility phone line), founder rules on, at 20 000 ms per game hour (M001: 5 000). No scheduled events: the rival closure is M001's. The M001 foreman's wage is still charged under ADR 0017's leaders rule until EM1/E1 (#210, #180) build ADR 0025's.",
   "seed": 1920,
   "startDate": { "year": 1920, "month": 1, "day": 17 },
   "openingBalance": { "cash": 25000, "buildings": 10000 },
