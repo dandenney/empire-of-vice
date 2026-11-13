@@ -141,9 +141,14 @@
 //   versus a deal mismatch; RELEASE_RESERVATION away from the facility), a case
 //   accepts any of the candidate codes and the differential still requires both
 //   worlds to agree exactly.
-// - Repeating a SALE dispatch with founder rules on is SK1c-2's (#226, on-spec
-//   repeat), and `commands/repeat.ts` isn't SK1c-1's file, so flag-on probes
-//   never repeat a sale. With the flag off they do.
+// - Re-locked for SK1c-2 (#226): a sale on spec (`purpose.dealId: null`) is a
+//   legal dispatch (ADR 0022 decision 6). Nothing is checked against the buyer
+//   at dispatch, so its verdict reads only the founder's own place (the truck,
+//   the stock, the route), and O1a's stopgap INVALID_QUANTITY on `dealId: null`
+//   is gone. A repeated SALE goes on spec (ADR 0022 decision 6, "Repeating a
+//   sale"), so flag-on probes repeat sales too. The `soldHome` station (home
+//   again after a deal's run) pins both as applied, and a focused example
+//   checks that neither reads the buyer nor makes a deal.
 // - NO_WAY_TO_REACH can't arise in M002 before phones and employees (decision
 //   4: the communication gate is "present in person"), and VEHICLE_UNAVAILABLE
 //   is flag-off only (decision 9); with the flag on, neither may ever be
@@ -559,6 +564,8 @@ function perturbHidden(s: GameState, plan: HiddenPlan): GameState {
 
   return {
     ...s,
+    // The game seed: hidden plumbing that per-trip draws read (ADR 0022 decision 8).
+    seed: s.seed + (plan.rngSeeds[0] ?? 1),
     rng,
     eventJournal: journal,
     scheduledEvents,
@@ -703,18 +710,7 @@ const BOGUS = {
   command: `${DYNAMIC_ID_PREFIXES.Command}-90001` as CommandId,
 };
 
-/** Whether repeating `id` would repeat a SALE dispatch (SK1c-2's with founder rules on). */
-function repeatsASale(s: GameState, id: CommandId): boolean {
-  for (let step = 0; step <= s.commandLog.length; step++) {
-    const entry = s.commandLog.find((e) => e.id === id);
-    if (!entry) return false;
-    if (entry.command.type !== "REPEAT_OPERATION") return entry.command.type === "DISPATCH_DELIVERY" && entry.command.purpose.kind === "SALE";
-    id = entry.command.sourceCommandId;
-  }
-  return false;
-}
-
-function probeCatalog(s: GameState, rules: Rules = RULES_ON): readonly GameCommand[] {
+function probeCatalog(s: GameState): readonly GameCommand[] {
   const out: GameCommand[] = [];
   const at = applyTick(s);
   for (const materialId of [CORN, SUGAR]) {
@@ -781,9 +777,7 @@ function probeCatalog(s: GameState, rules: Rules = RULES_ON): readonly GameComma
     if (r.facilityId !== DISTILLERY_MAIN) out.push({ type: "RELEASE_RESERVATION", facilityId: DISTILLERY_MAIN, reservationId: r.id });
   }
   out.push({ type: "RELEASE_RESERVATION", facilityId: DISTILLERY_MAIN, reservationId: BOGUS.reservation });
-  for (const entry of s.commandLog.slice(-8)) {
-    if (!rules.founderRules || !repeatsASale(s, entry.id)) out.push({ type: "REPEAT_OPERATION", sourceCommandId: entry.id });
-  }
+  for (const entry of s.commandLog.slice(-8)) out.push({ type: "REPEAT_OPERATION", sourceCommandId: entry.id });
   out.push({ type: "REPEAT_OPERATION", sourceCommandId: BOGUS.command });
   for (const location of LOCATIONS) {
     out.push({ type: "TRAVEL", destinationLocationId: location.id, transport: { kind: "FOOT" }, via: null });
@@ -830,7 +824,8 @@ type Station =
   | "contractedHome"
   | "lakeview"
   | "jobRunning"
-  | "riding";
+  | "riding"
+  | "soldHome";
 
 const STATIONS: readonly Station[] = [
   "resting",
@@ -851,6 +846,7 @@ const STATIONS: readonly Station[] = [
   "lakeview",
   "jobRunning",
   "riding",
+  "soldHome",
 ];
 
 const saves = new Map<Station, SaveGame>();
@@ -1016,6 +1012,13 @@ function build(name: Station): KernelSimulation {
       advanceUntil(sim, (s) => s.founder.whereabouts.kind === "ON_DELIVERY", TICKS_PER_DAY, "the truck sets out");
       sim.advance(20);
       if (sim.state.founder.whereabouts.kind !== "ON_DELIVERY") throw new Error("Construction: the founder rides");
+      return sim;
+    }
+    case "soldHome": {
+      const sim = station("riding");
+      advanceUntil(sim, (s) => isFree(s) && presentAt(s, HOLLOW_CREEK), TICKS_PER_DAY, "home again with the truck");
+      if (sim.state.vehicles.find((v) => v.id === TRUCK)?.parkedAt !== HOLLOW_CREEK) throw new Error("Construction: the truck is parked at home");
+      if (moonshineAtHome(sim.state) === 0) throw new Error("Construction: stock left to sell");
       return sim;
     }
   }
@@ -1463,7 +1466,22 @@ const CASES: readonly Case[] = [
   { name: "SET_WORKFORCE while riding", station: "riding", command: () => workforce(2), ...notPresent(HOLLOW_CREEK, null) },
   { name: "TRAVEL while riding", station: "riding", command: () => walk(HOLLOW_CREEK), ...exactly(() => ({ code: "FOUNDER_AWAY", whereabouts: "ON_DELIVERY" })) },
   { name: "REST while riding", station: "riding", command: restValid, ...exactly(() => ({ code: "FOUNDER_AWAY", whereabouts: "ON_DELIVERY" })) },
-  { name: "DISPATCH_DELIVERY while riding", station: "riding", command: () => onSpec(1), ...oneOf("NOT_PRESENT", "NO_DRIVER", "VEHICLE_NOT_AT", "INVALID_QUANTITY") },
+  { name: "DISPATCH_DELIVERY while riding", station: "riding", command: () => onSpec(1), ...oneOf("NOT_PRESENT", "NO_DRIVER", "VEHICLE_NOT_AT") },
+
+  // --- Sales on spec (SK1c-2, ADR 0022 decision 6): nothing is checked against the buyer at dispatch.
+  { name: "DISPATCH_DELIVERY on spec, at home with stock", station: "dealHome", command: () => onSpec(1), ...applied },
+  {
+    name: "DISPATCH_DELIVERY on spec with no stock",
+    station: "home",
+    command: () => onSpec(1),
+    ...exactly(() => ({ code: "INSUFFICIENT_STOCK", productId: MOONSHINE, quality: "basic", requested: 1, available: 0 })),
+  },
+  {
+    name: "REPEAT_OPERATION of a SALE, home again: it goes on spec",
+    station: "soldHome",
+    command: (sim) => ({ type: "REPEAT_OPERATION", sourceCommandId: lastLogged(sim, "DISPATCH_DELIVERY") }),
+    ...applied,
+  },
 ];
 
 /**
@@ -1843,6 +1861,53 @@ function act(sim: KernelSimulation, action: Action): void {
   }
 }
 
+describe("decision 6: a sale on spec, and a repeated sale, read nothing of the buyer (SK1c-2)", () => {
+  it("on spec from home: applied whatever the buyer's hidden state, with no deal, no deadline and no commitment", { timeout: 60_000 }, () => {
+    const sim = station("dealHome");
+    expect(presentAt(sim.state, HOLLOW_CREEK), "construction: away from the buyer").toBe(true);
+    const command = onSpec(1);
+    const roadhouseGone = (b: GameState["buyers"][number]) =>
+      b.id === CROSSROADS_ROADHOUSE ? { ...b, budgetRemaining: cents(0), wants: b.wants.map((w) => ({ ...w, demandRemaining: 0 })) } : b;
+    const twins: readonly Twin[] = [
+      { sim: withState(sim, { ...sim.state, buyers: sim.state.buyers.map(roadhouseGone) }), ids: IDENTITY_IDS, what: "the roadhouse broke and full in the world" },
+      { sim: withState(sim, { ...sim.state, buyers: sim.state.buyers.map((b) => (b.id === CROSSROADS_ROADHOUSE ? { ...b, wants: [] } : b)) }), ids: IDENTITY_IDS, what: "the roadhouse wants nothing in the world" },
+      ...fixedTwins(sim),
+    ];
+    expect(expectSameVerdict(sim, twins, command, "on spec to the roadhouse")).toEqual({ status: "applied" });
+    const copy = withState(sim, sim.state);
+    const buyersBefore = copy.state.buyers;
+    const dealsBefore = copy.state.heldDeals;
+    expectApplied(copy.dispatch({ command }), "dispatch on spec");
+    const delivery = copy.state.deliveries.at(-1)!;
+    expect(delivery).toMatchObject({ purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: null }, dealDeadline: null, status: "OUTBOUND" });
+    expect(copy.state.buyers, "nothing is committed on the buyer at dispatch").toEqual(buyersBefore);
+    expect(copy.state.heldDeals, "no deal is made or used").toEqual(dealsBefore);
+  });
+
+  it("a repeated SALE goes on spec: applied from the view, with no deal and the source's buyer, cargo and route", { timeout: 60_000 }, () => {
+    const sim = station("soldHome");
+    const sourceId = lastLogged(sim, "DISPATCH_DELIVERY");
+    const source = sim.state.commandLog.find((e) => e.id === sourceId)!.command;
+    if (source.type !== "DISPATCH_DELIVERY" || source.purpose.kind !== "SALE" || source.purpose.dealId === null) throw new Error("Construction: the source dispatched a deal");
+    const command: GameCommand = { type: "REPEAT_OPERATION", sourceCommandId: sourceId };
+    expect(expectSameVerdict(sim, fixedTwins(sim), command, "repeat the deal's dispatch")).toEqual({ status: "applied" });
+    const copy = withState(sim, sim.state);
+    const buyersBefore = copy.state.buyers;
+    const dealsBefore = copy.state.heldDeals;
+    expectApplied(copy.dispatch({ command }), "repeat the sale");
+    const delivery = copy.state.deliveries.at(-1)!;
+    expect(delivery).toMatchObject({
+      purpose: { kind: "SALE", buyerId: source.purpose.buyerId, dealId: null },
+      routeId: source.routeId ?? delivery.routeId,
+      dealDeadline: null,
+      status: "OUTBOUND",
+    });
+    expect(delivery.cargo.map(({ productId, quality, quantity }) => ({ productId, quality, quantity }))).toEqual(source.cargo);
+    expect(copy.state.buyers, "nothing is committed on the buyer").toEqual(buyersBefore);
+    expect(copy.state.heldDeals, "no deal is re-agreed").toEqual(dealsBefore);
+  });
+});
+
 const startStationArb: fc.Arbitrary<Station> = fc.constantFrom("resting", "home", "stockedHome", "dealHome", "contractedHome", "kesslerKnown");
 
 describe("decision 9: the property over random plays", () => {
@@ -1891,9 +1956,9 @@ describe("founderRules off: PlayerView is the whole world, and the validators ar
 
   it("the tie holds for every probe: the immediate result is the view validator's verdict", { timeout: 120_000 }, () => {
     const fresh = newGame({ scenario: M001_SCENARIO });
-    for (const command of probeCatalog(fresh.state, RULES_OFF)) judge(fresh, command, RULES_OFF);
+    for (const command of probeCatalog(fresh.state)) judge(fresh, command, RULES_OFF);
     const out = m001WithTruckOut();
-    for (const command of probeCatalog(out.state, RULES_OFF)) judge(out, command, RULES_OFF);
+    for (const command of probeCatalog(out.state)) judge(out, command, RULES_OFF);
   });
 
   it("no presence gate; VEHICLE_UNAVAILABLE stays; TRAVEL, REST and WAKE are accepted and change nothing", { timeout: 60_000 }, () => {

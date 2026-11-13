@@ -49,7 +49,8 @@
 //    #187: B1 ID counters; B4 a buyer's budget through affordances; B2/R3-1
 //    the books revealing an outcome that posted no cash (a prepaid batch
 //    finishing elsewhere); B2/R2-2 a seizure showing through `inTransit` or the
-//    deal list before the truck is home), plus controls showing the live view
+//    deal list before it happens; since #222 a riding founder learns it on the
+//    spot), plus controls showing the live view
 //    is read from the world and that never-known subjects are null. Cash
 //    postings are a declared channel (decision 6), so a posting that differs is
 //    allowed to show; the examples stop before a differing one can post.
@@ -59,7 +60,7 @@
 //   the last catch-up, and the books as known. `pendingBooks` and `pendingNews`
 //   list what the founder does *not* know yet (decision 7), so a hidden world
 //   transaction or road event legitimately puts entries there. The production
-//   and seizure examples compare worlds that differ in them, as the dynamic
+//   example compares worlds that differ in them, as the dynamic
 //   half's construction allows while no channel has delivered (D_t undelivered).
 //   The perturbed-save property never changes `knowledge` at all.
 // - The live view is taken conservatively: everything at the place the founder
@@ -71,11 +72,25 @@
 //   both at the snapshot's tick and at the next one, so the boundary minute
 //   never decides a case.
 // - A founder riding a delivery is not present anywhere except at a stop's tick
-//   (ADR 0023 decisions 2, 2a). A seizure on the road isn't observed while
-//   riding: it reaches the founder as news at the delivery's origin or through
-//   the return's cash posting (ADR 0021 decision 7; `PlayerDeal` in
-//   player-snapshot.ts). Until the truck is home, a seized and a delayed trip
-//   must look the same.
+//   (ADR 0023 decisions 2, 2a). But road events on the founder's own delivery
+//   (a seizure, a delay, a deal falling through) are known at once while they
+//   ride (#222, the human's decision, amending ADR 0021 decision 7 and ADR 0023
+//   decision 2a step 3); they aren't news at the delivery's origin. How the
+//   snapshot shows it, as pinned here: on the outcome's tick the truck's
+//   VEHICLE_WHEREABOUTS record is rewritten (`learnedAt` that tick, source
+//   `IN_PERSON`; its `locationId` isn't pinned, since the founder is on the
+//   road), so the deal list (`PlayerDeal`) and the installment's `inTransit`
+//   follow at once; the CARGO_LOSS transaction is in the books, not pending; and
+//   no pending news names the delivery. Before the outcome's tick, a trip that
+//   will be seized and one that will be delayed must look the same. News at the
+//   origin stays for deliveries without the founder aboard, which need a hired
+//   Driver (E2, #182): no such delivery is reachable in M002 yet, so it isn't
+//   constructed here (E2's test-writer pins it).
+// - Per-trip randomness (ADR 0022 decision 8): a trip's outcome draws from a
+//   stream keyed by the game seed, the truck and its trip ordinal, never from
+//   the master `routes` stream. So the game seed is hidden plumbing too: the
+//   perturbed saves change it, and the seizure example varies it, alone, to
+//   find a delayed and a seized world.
 // - A perturbed save stays valid: amounts and quantities stay non-negative, pool
 //   costs are unchanged (so the ledger still matches the pools), and nothing the
 //   founder agreed (contracts, deals, workforce, equipment, queued commands) or
@@ -483,6 +498,8 @@ function perturbHidden(s: GameState, plan: HiddenPlan): GameState {
 
   return {
     ...s,
+    // The game seed: hidden plumbing that per-trip draws read (ADR 0022 decision 8).
+    seed: s.seed + (plan.rngSeeds[0] ?? 1),
     rng,
     eventJournal: journal,
     scheduledEvents,
@@ -983,11 +1000,14 @@ describe("non-leak: focused examples", () => {
   });
 
   /**
-   * A risky trip with the founder riding, resolved two ways by a hidden RNG
-   * state: delayed in one world, seized in the other. Until the truck is home,
-   * the founder has observed neither, so the snapshots match. That covers
-   * `inTransit` (review R2-2) for an installment, and the deal list
-   * (`PlayerDeal` stays DISPATCHED) for a sale.
+   * A risky trip with the founder riding, resolved two ways by a hidden input
+   * of the trip's own draw stream (the game seed, ADR 0022 decision 8): delayed
+   * in one world, seized in the other. Until the outcome's tick the worlds
+   * differ only in hidden plumbing, so the snapshots match. On that tick the
+   * founder is aboard and learns the outcome at once (#222): the seizure shows
+   * through known VEHICLE_WHEREABOUTS, so through `inTransit` (review R2-2) for
+   * an installment and the deal list (`PlayerDeal`) for a sale, and the loss is
+   * in the books; the delay shows too. Neither is news at the origin.
    */
   function rideOut(purpose: "installment" | "deal"): KernelSimulation {
     let sim: KernelSimulation;
@@ -1037,36 +1057,52 @@ describe("non-leak: focused examples", () => {
     return sim;
   }
 
-  /** Searches hidden RNG states, in a fixed order, for one that delays the trip and one that seizes the cargo. */
+  /** The ride with only the game seed changed: hidden plumbing, read by the trip's draws. */
+  function reseeded(sim: KernelSimulation, seed: number): KernelSimulation {
+    return withState(sim, { ...sim.state, seed });
+  }
+
+  /** Searches game seeds, in a fixed order, for one that delays the trip and one that seizes the cargo. */
   function delayedAndSeized(sim: KernelSimulation): { readonly delayed: KernelSimulation; readonly seized: KernelSimulation; readonly resolvedAt: number } {
     const trip = sim.state.vehicles.find((v) => v.id === MODEL_TT_TRUCK)!.trip!;
     let delayed: KernelSimulation | null = null;
     let seized: KernelSimulation | null = null;
     for (let seed = 1; seed <= 2_000 && (!delayed || !seized); seed++) {
-      const candidate = withState(sim, { ...sim.state, rng: { ...sim.state.rng, routes: seedRng(seed, "routes") } });
+      const candidate = reseeded(sim, seed);
       candidate.advance(trip.arrivesAt - candidate.state.tick);
       const t = candidate.state.vehicles.find((v) => v.id === MODEL_TT_TRUCK)!.trip;
       const outcome = t?.leg === "OUTBOUND" && t.delayed ? "delayed" : t?.leg === "RETURN" && candidate.state.deliveries.some((d) => d.status === "FAILED") ? "seized" : "other";
-      if (outcome === "delayed" && !delayed) delayed = withState(sim, { ...sim.state, rng: { ...sim.state.rng, routes: seedRng(seed, "routes") } });
-      if (outcome === "seized" && !seized) seized = withState(sim, { ...sim.state, rng: { ...sim.state.rng, routes: seedRng(seed, "routes") } });
+      if (outcome === "delayed" && !delayed) delayed = reseeded(sim, seed);
+      if (outcome === "seized" && !seized) seized = reseeded(sim, seed);
     }
-    if (!delayed || !seized) throw new Error("Construction: no RNG state found for both a delay and a seizure");
+    if (!delayed || !seized) throw new Error("Construction: no game seed gives both a delay and a seizure (are trip draws keyed by the seed?)");
     return { delayed, seized, resolvedAt: trip.arrivesAt };
   }
 
+  /** Pending news items, at any place, that name `deliveryId`. */
+  function newsAbout(s: GameState, deliveryId: string): readonly unknown[] {
+    return s.knowledge.pendingNews.flatMap((p) => p.items).filter((item) => "deliveryId" in item.event && item.event.deliveryId === deliveryId);
+  }
+
+  function knownTruck(snapshot: PlayerSnapshot) {
+    const truck = snapshot.vehicles.find((v) => v.id === MODEL_TT_TRUCK);
+    if (!truck) throw new Error("No truck in the player snapshot");
+    return truck.whereabouts;
+  }
+
+  const inTransitTotal = (snapshot: PlayerSnapshot): number =>
+    snapshot.contracts.reduce((n, c) => n + (c.progress?.value.installments.reduce((m, i) => m + i.inTransit, 0) ?? 0), 0);
+
   for (const purpose of ["installment", "deal"] as const) {
-    it(`a seizure while riding isn't seen before the truck is home (${purpose}; reviews B2, R2-2)`, () => {
+    it(`a seizure while riding is known at once, and not before it happens (${purpose}; reviews B2, R2-2; #222)`, () => {
       const { delayed, seized, resolvedAt } = delayedAndSeized(rideOut(purpose));
-      expectSamePlayerView(seized.playerSnapshot(), delayed.playerSnapshot(), "at departure, differing only in the RNG");
-      delayed.advance(resolvedAt - delayed.state.tick);
-      seized.advance(resolvedAt - seized.state.tick);
-      const seizedTrip = seized.state.vehicles.find((v) => v.id === MODEL_TT_TRUCK)!.trip!;
-      const delayedTrip = delayed.state.vehicles.find((v) => v.id === MODEL_TT_TRUCK)!.trip!;
-      expect(seizedTrip.leg, "construction: seized, heading home").toBe("RETURN");
-      expect(delayedTrip.delayed, "construction: delayed, still outbound").toBe(true);
-      const homeAt = Math.min(seizedTrip.arrivesAt, delayedTrip.arrivesAt);
-      while (delayed.state.tick < homeAt) {
-        expect(canonicalTree(seized.state.founder), "construction: the founder rides on in both worlds").toEqual(canonicalTree(delayed.state.founder));
+      const deliveryId = seized.state.vehicles.find((v) => v.id === MODEL_TT_TRUCK)!.trip!.deliveryId;
+      if (purpose === "installment") expect(inTransitTotal(seized.playerSnapshot()), "construction: the cases count as on their way at departure").toBeGreaterThan(0);
+      else expect(seized.playerSnapshot().deals.filter((x) => x.deliveryId === deliveryId).map((x) => x.status), "construction: the deal is out").toEqual(["DISPATCHED"]);
+
+      // Up to the outcome: the worlds differ only in the seed, and nothing has happened yet.
+      while (delayed.state.tick < resolvedAt) {
+        expect(canonicalTree(seized.state.founder), "construction: the founder rides in both worlds").toEqual(canonicalTree(delayed.state.founder));
         const d = delayed.playerSnapshot();
         const s = seized.playerSnapshot();
         if (purpose === "installment") {
@@ -1074,10 +1110,57 @@ describe("non-leak: focused examples", () => {
         } else {
           expect(canonicalTree(s.deals), `tick ${delayed.state.tick}: deals`).toEqual(canonicalTree(d.deals));
         }
-        expectSamePlayerView(s, d, `tick ${delayed.state.tick}`);
+        expectSamePlayerView(s, d, `tick ${delayed.state.tick}, before the outcome`);
         delayed.advance(1);
         seized.advance(1);
       }
+
+      // The outcome's tick: seized in one world, delayed in the other, the founder aboard in both.
+      const seizedTrip = seized.state.vehicles.find((v) => v.id === MODEL_TT_TRUCK)!.trip!;
+      const delayedTrip = delayed.state.vehicles.find((v) => v.id === MODEL_TT_TRUCK)!.trip!;
+      expect(seizedTrip.leg, "construction: seized, heading home").toBe("RETURN");
+      expect(delayedTrip.delayed, "construction: delayed, still outbound").toBe(true);
+      expect(seized.state.founder.whereabouts, "construction: riding home with the truck").toMatchObject({ kind: "ON_DELIVERY", deliveryId });
+      expect(delayed.state.founder.whereabouts, "construction: riding on with the truck").toMatchObject({ kind: "ON_DELIVERY", deliveryId });
+      const s = seized.playerSnapshot();
+      const d = delayed.playerSnapshot();
+
+      // Seized: known at once, in person (#222).
+      expect(knownTruck(s), "the seizure is known at once: the truck's whereabouts, learned in person on the spot").toMatchObject({
+        learnedAt: resolvedAt,
+        source: { kind: "IN_PERSON" },
+        value: { kind: "VEHICLE_WHEREABOUTS", vehicleId: MODEL_TT_TRUCK, parkedAt: null, trip: { deliveryId, leg: "RETURN", arrivesAt: seizedTrip.arrivesAt } },
+      });
+      const loss = seized.state.ledger.transactions.find((t) => t.kind === "CARGO_LOSS" && t.tick === resolvedAt);
+      if (!loss) throw new Error("Construction: the seized cargo was written off");
+      expect(seized.state.knowledge.pendingBooks.map((b) => b.transactionId), "the loss isn't pending: the founder saw it").not.toContain(loss.id);
+      expect(s.finance.books.some((r) => r.kind === "CARGO_LOSS" && r.tick === resolvedAt), "the loss is in the books at once").toBe(true);
+      expect(newsAbout(seized.state, deliveryId), "a road event on the founder's own run isn't news at the origin").toEqual([]);
+      if (purpose === "installment") {
+        expect(inTransitTotal(s), "the seized cases no longer count as on their way").toBe(0);
+      } else {
+        expect(s.deals.filter((x) => x.deliveryId === deliveryId), "the seized deal has left the deal list").toEqual([]);
+      }
+
+      // Delayed: known at once too.
+      expect(knownTruck(d), "the delay is known at once").toMatchObject({
+        learnedAt: resolvedAt,
+        source: { kind: "IN_PERSON" },
+        value: { kind: "VEHICLE_WHEREABOUTS", vehicleId: MODEL_TT_TRUCK, parkedAt: null, trip: { deliveryId, leg: "OUTBOUND", delayed: true, arrivesAt: delayedTrip.arrivesAt } },
+      });
+      expect(newsAbout(delayed.state, deliveryId), "the delay isn't news at the origin").toEqual([]);
+      if (purpose === "deal") {
+        expect(d.deals.filter((x) => x.deliveryId === deliveryId).map((x) => x.status), "the delayed deal is still out").toEqual(["DISPATCHED"]);
+      }
+      expect(canonical(s), "the founder saw different things happen").not.toBe(canonical(d));
+
+      // Riding home after the seizure: no news of it waits anywhere, and the founder comes home with the truck.
+      while (seized.state.vehicles.find((v) => v.id === MODEL_TT_TRUCK)!.trip !== null) {
+        if (seized.state.tick >= seizedTrip.arrivesAt) throw new Error("Construction: the truck didn't get home on time");
+        seized.advance(1);
+        expect(newsAbout(seized.state, deliveryId), `tick ${seized.state.tick}: no news of the seizure waits anywhere`).toEqual([]);
+      }
+      expect(presentAt(seized.state, HOLLOW_CREEK), "construction: home with the truck").toBe(true);
     });
   }
 

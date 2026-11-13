@@ -477,7 +477,7 @@ describe("no traps: focused cases (ADR 0023 decisions 2a, 4, 7, 8)", () => {
 
   it("driving a delivery: busy loading, away on the round trip, accepted the tick after the truck is home", () => {
     const sim = stockedGame();
-    // A sale carries out a held deal (ADR 0022 decision 6; on spec is SK1c's):
+    // A sale here carries out a held deal (ADR 0022 decision 6; on spec is the property's):
     // walk to the Crossroads (AGREE_DEAL needs the founder present at the buyer,
     // ADR 0022 decision 3), agree one case there at today's quote during its
     // hours, walk home, then dispatch the held deal by its id.
@@ -578,10 +578,11 @@ const commandArb: fc.Arbitrary<(s: GameState, applyTick: number) => GameCommand 
   fc
     .record({ recipeId: fc.constantFrom(BASIC_MOONSHINE_RECIPE, STANDARD_MOONSHINE_RECIPE), quantity: fc.integer({ min: 1, max: 3 }) })
     .map(({ recipeId, quantity }) => (): GameCommand => ({ type: "START_PRODUCTION", facilityId: DISTILLERY_MAIN, recipeId, quantity })),
-  // DISPATCH_DELIVERY of a held deal (ADR 0022 decision 6): mostly one the
+  // DISPATCH_DELIVERY of a sale (ADR 0022 decision 6): mostly a held deal the
   // founder holds, carried out as agreed; sometimes any deal on record or one
-  // that was never agreed, which is rejected. (A sale on spec, `dealId: null`,
-  // is SK1c's and rejected until then.)
+  // that was never agreed, which is rejected; sometimes on spec (`dealId: null`,
+  // SK1c-2, #226), which leaves with whatever the founder loads and settles on
+  // arrival. A REPEAT_OPERATION of a sale (below) goes on spec too.
   fc
     .record({
       pick: fc.nat(),
@@ -589,6 +590,7 @@ const commandArb: fc.Arbitrary<(s: GameState, applyTick: number) => GameCommand 
         { weight: 4, arbitrary: fc.constant("held" as const) },
         { weight: 1, arbitrary: fc.constant("any" as const) },
         { weight: 1, arbitrary: fc.constant("unknown" as const) },
+        { weight: 2, arbitrary: fc.constant("spec" as const) },
       ),
       buyerId: fc.constantFrom(...BUYER_IDS),
       quantity: fc.integer({ min: 1, max: 2 }),
@@ -601,7 +603,7 @@ const commandArb: fc.Arbitrary<(s: GameState, applyTick: number) => GameCommand 
         type: "DISPATCH_DELIVERY",
         vehicleId: MODEL_TT_TRUCK,
         cargo: [{ productId: MOONSHINE, quality: chosen?.quality ?? "basic", quantity: chosen?.quantity ?? quantity }],
-        purpose: { kind: "SALE", buyerId: chosen?.buyerId ?? buyerId, dealId: chosen?.id ?? asId("Deal", "deal-never-agreed") },
+        purpose: { kind: "SALE", buyerId: chosen?.buyerId ?? buyerId, dealId: deal === "spec" ? null : (chosen?.id ?? asId("Deal", "deal-never-agreed")) },
         routeId,
         driver: { kind: "FOUNDER" },
       };
@@ -741,7 +743,7 @@ function play(start: Start, actions: readonly Action[]): KernelSimulation {
 }
 
 describe("no traps: the property (ADR 0023 decision 8)", () => {
-  it("from any reachable state, the one-click REST is accepted by max(now, Q) + B + 1", () => {
+  it("from any reachable state, the one-click REST is accepted by max(now, Q) + B + 1", { timeout: 60_000 }, () => {
     fc.assert(
       fc.property(startArb, fc.array(actionArb, { maxLength: 20 }), (start, actions) => {
         // A finished game (won or lost) still runs commands and ticks (ADR 0020 decision 8), so it's no exception.
