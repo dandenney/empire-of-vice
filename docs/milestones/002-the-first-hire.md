@@ -45,11 +45,13 @@ Each playtest records these as met, partly met, or not met, with notes, in the p
 
 Design records come first, because each one changes contracts. Then a walking skeleton (like M001's Sprint Zero) before anything runs in parallel.
 
-Phases (the table below has the exact dependencies):
+Phases (the table below has the exact dependencies). Refreshed on 2026-11-12 after D1–D3 (factory.md §1): D5 and O1 were split, SK1 was split by ADR, and the contract tasks run one after another because they share files.
 
 ```
-Design records      D1  D2  D3  ──►  D4  D5
-Walking skeleton    SK1 ─► SK2      R1 (first-hire reachability, after SK1 + D5)
+Design records      D1  D2  D3 (merged)  ──►  D4 ─► D5a ─► D5b       (one after another)
+Contracts           K1 ─► P1 ─► O1a ─► O1b                          (one after another, save v2–v5)
+Behaviour           SK1a (presence) ─► SK1b (knowledge) ─► SK1c (orders)
+Walking skeleton    SK1d ─► SK2      R1 (first-hire reachability, after SK1d + D5a)
                                   ▼
                                PT1 (human)
                                   ▼
@@ -62,22 +64,30 @@ Delegation                        E2 (driver)  E3 (office hand)
 
 | ID (issue) | Task | Depends on | Mode |
 |---|---|---|---|
-| D1 (#168) | ADR: knowledge model. World vs knowledge, records and sources, which fields each source reveals, the player snapshot, the non-leak property | — | orchestrator, contract review |
-| D2 (#169) | ADR: orders and outcomes. Splitting commands, which rejections may be immediate, outcome events, presence-gated orders | D1 | orchestrator, contract review |
-| D3 (#170) | ADR: presence, time of day and rest. Founder entity, travel, which activities cost time (not clicks), place hours, the first sleep/rest implementation, overnight pacing, M002 clock pacing (§16) | D1 | orchestrator, contract review |
-| D4 (#171) | ADR: telephones and messages (COMM-001) | D1, D2 | orchestrator, contract review |
-| D5 (#172) | ADR: employees and standing orders (PERS-001) | D1, D2 | orchestrator, contract review |
-| SK1 (#173) | Walking skeleton, headless: founder travels to the feed store, buys, goes to the still, starts a batch, drives a delivery, sleeps; knowledge records and catch-up summaries throughout | D1–D3 | agent, locked tests first |
-| SK2 (#174) | Walking skeleton, browser: map navigation, a placeholder scene per place with state layers, the ledger view with "last updated" | SK1 | agent; visual direction → `ready-for-human` |
-| PT1 (#175) | **Playtest 1:** alone, no hires, no phones. Is presence plus stale knowledge interesting, or a chore? Did the need to sleep make planning the day more interesting, without turning into a chore? Tests the 8-minute-day hypothesis against travel, hours, idle time and deadlines | SK2 | **human** |
-| K2 (#177) | Knowledge everywhere: every M001 panel's data moved behind knowledge; the non-leak property test over the full snapshot | PT1 | agent, locked tests first |
+| D1 (#168) | ADR 0021: knowledge model (merged) | — | orchestrator, contract review |
+| D2 (#169) | ADR 0022: orders, authority and outcomes (merged) | D1 | orchestrator, contract review |
+| D3 (#170) | ADR 0023: presence, time of day and rest (merged) | D1 | orchestrator, contract review |
+| D4 (#171) | ADR 0024: telephones and messages (COMM-001) | D1–D3 | orchestrator, contract review |
+| D5a (#172) | ADR 0025: employees, hiring, authority and standing orders, reports, the Distiller (PERS-001) | D1–D3, D4 | orchestrator, contract review |
+| D5b (#196) | ADR 0026: the Driver and the Office Hand | D4, D5a | orchestrator, contract review |
+| K1 (#188) | Knowledge contract (ADR 0021), save v2 | D1 | agent, contract review |
+| P1 (#193) | Presence contract (ADR 0023), save v3; flag-off no-op founder commands | D3, K1 | agent, contract review |
+| O1a (#192) | Deals and every command-shape change (ADR 0022 + 0023 `driver`), save v4; one re-lock pass over nine locked files; M001-equivalent with the flag off | D2, D3, P1 | agent, contract review, two-step re-lock |
+| O1b (#197) | Production conversion cost paid at start (ADR 0022 decision 7), save v5 | O1a | agent, contract review, two-step re-lock |
+| SK1a (#198) | Presence behaviour: travel, rest, busy, hours, the founder phase, the founder as driver | P1 | agent, locked tests first |
+| SK1b (#199) | Knowledge behaviour: live view, persist, catch-up, news, books, the `playerSnapshot()` builder | K1, SK1a | agent, locked tests first |
+| SK1c (#200) | Orders behaviour: `IssuerView` validation, presence gates, on-spec sales, per-trip randomness | O1a, O1b, SK1a, SK1b | agent, locked tests first |
+| SK1d (#173) | Walking skeleton, headless: the M002 scenario end to end (wake, feed store, still, on-spec delivery, sleep) | SK1a–c | agent, locked tests first |
+| SK2 (#174) | Walking skeleton, browser: map navigation, a placeholder scene per place with state layers, the ledger view with "last updated" | SK1d | agent; visual direction → `ready-for-human` |
+| PT1 (#175) | **Playtest 1:** alone, no hires, no phones. Is presence plus stale knowledge interesting, or a chore? Did the need to sleep make planning the day more interesting, without turning into a chore? Tests the day-length hypothesis against travel, hours, idle time and deadlines | SK2 | **human** |
+| K2 (#177) | Knowledge everywhere: every M001 panel's data moved behind knowledge; the `GameSnapshot` lint boundary; the non-leak property test over the full snapshot | PT1 | agent, locked tests first |
 | U3 (#178) | Known to-do list built from knowledge (PLAY-001 rule 2) | K2 | agent |
-| C1 (#179) | Public phone at the general store: calls out, unanswered calls, calls in, messages; a phone as a purchasable asset | PT1, D4 | agent |
-| E1 (#180) | Hiring and the distiller: candidates, wages, the standing order, reports | PT1, D5, R1 | agent, locked tests first |
+| C1 (#179) | Public phone: calls out, unanswered calls, calls in, messages; a phone as a purchasable asset | PT1, D4 | agent |
+| E1 (#180) | Hiring and the Distiller: candidates, wages, the standing order, reports | PT1, D5a, R1 | agent, locked tests first |
 | PT2 (#181) | **Playtest 2:** the first hire. Does it free you up? Is there something worth doing with the freed time? | E1 | **human** |
-| E2 (#182) | Driver: deliveries without the founder; reports | PT2, C1 | agent |
-| E3 (#183) | Office hand: answers your phone, takes messages, passes on orders | PT2, C1 | agent |
-| R1 (#176) | First-hire reachability check (scripted + property-based) and the M002 scenario retune it drives: starting cash, wages, travel, hours, sleep | SK1, D5 | agent, locked tests first |
+| E2 (#182) | Driver: deliveries without the founder; reports | PT2, C1, D5b | agent |
+| E3 (#183) | Office Hand: answers your phone, takes messages, passes on orders | PT2, C1, D5b | agent |
+| R1 (#176) | First-hire reachability check (scripted + property-based) and the M002 scenario retune it drives: starting cash, wages, travel, hours, sleep | SK1d, D5a | agent, locked tests first |
 | T-LAB (#184) | Lab bots play under fog with M002 pacing; new balance targets; session length and victory retune (§16 knock-on) | K2, E1, R1 | agent |
 | PT3 (#185) | **Playtest 3:** full M002. All six experience criteria | E2, E3, U3, T-LAB | **human** |
 
