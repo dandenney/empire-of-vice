@@ -5,7 +5,11 @@
 //   it's deterministic.
 // - Each command type has exactly one handler.
 // - Each scheduled world event kind has exactly one handler.
-// - One projection builds the UI snapshot (S0 provides the real one).
+// - One projection builds the world snapshot (S0 provides the real one), and
+//   one builds the player snapshot (SK1b, ADR 0021 decision 8).
+// - At most one set of knowledge steps (SK1b, ADR 0021 decisions 5 and 8): the
+//   tick-end persist (SIM-001 step 6) and the founder's command activity.
+//   Registered only with founder rules on.
 //
 // Every hook and handler is a pure function from state to state. It must not
 // mutate its input or read anything but its arguments (no wall clock, no
@@ -19,6 +23,7 @@ import type {
   GameCommandType,
   GameSnapshot,
   GameState,
+  PlayerSnapshot,
   RejectionReason,
   Tick,
 } from "@eov/contracts";
@@ -110,6 +115,28 @@ export interface ProjectionContext {
 
 export type Projection = (state: GameState, ctx: ProjectionContext) => GameSnapshot;
 
+/** Builds the player snapshot (ADR 0021 decision 8). Like `Projection`, a pure function of state. */
+export type PlayerProjection = (state: GameState, ctx: ProjectionContext) => PlayerSnapshot;
+
+/** What became of one of the founder's commands, for the activity feed (ADR 0021 decision 8). */
+export type CommandFate =
+  | { readonly status: "APPLIED" }
+  | { readonly status: "QUEUED" }
+  | { readonly status: "REJECTED"; readonly reason: RejectionReason };
+
+/**
+ * The knowledge model's steps the kernel runs (ADR 0021 decisions 5 and 8):
+ * - `commandRecorded`: after a command is applied, queued, or rejected when its
+ *   tick arrives, in the same unit of work;
+ * - `tickEnd`: SIM-001 step 6, after the midnight phase and before the tick
+ *   commits: this tick's news and books, then persist the live view.
+ *   `state.tick` is still the previous tick.
+ */
+export interface KnowledgeSteps {
+  readonly commandRecorded: (state: GameState, envelope: CommandEnvelope, fate: CommandFate, tick: Tick) => GameState;
+  readonly tickEnd: PhaseHook;
+}
+
 export class RegistryError extends Error {
   override readonly name = "RegistryError";
 }
@@ -126,6 +153,8 @@ export class SystemRegistry {
   readonly #gates: { readonly name: string; readonly gate: CommandGate }[] = [];
   readonly #worldEvents = new Map<WorldEventKind, WorldEventHandler>();
   #projection: Projection | null = null;
+  #playerProjection: PlayerProjection | null = null;
+  #knowledge: KnowledgeSteps | null = null;
   #sealed = false;
 
   /** Called by createSimulation. Registering systems mid-run would change the rules, so it's an error. */
@@ -181,6 +210,20 @@ export class SystemRegistry {
     return this;
   }
 
+  setPlayerProjection(projection: PlayerProjection): this {
+    this.#assertOpen();
+    if (this.#playerProjection) throw new RegistryError("A player projection is already registered");
+    this.#playerProjection = projection;
+    return this;
+  }
+
+  setKnowledge(steps: KnowledgeSteps): this {
+    this.#assertOpen();
+    if (this.#knowledge) throw new RegistryError("Knowledge steps are already registered");
+    this.#knowledge = steps;
+    return this;
+  }
+
   hooks(phase: Phase): readonly NamedHook[] {
     return this.#hooks.get(phase)!;
   }
@@ -201,6 +244,16 @@ export class SystemRegistry {
   projection(): Projection {
     if (!this.#projection) throw new RegistryError("No snapshot projection registered (S0 provides it)");
     return this.#projection;
+  }
+
+  playerProjection(): PlayerProjection {
+    if (!this.#playerProjection) throw new RegistryError("No player snapshot projection registered (SK1b provides it)");
+    return this.#playerProjection;
+  }
+
+  /** The knowledge steps, or null when none are registered (founder rules off). */
+  knowledge(): KnowledgeSteps | null {
+    return this.#knowledge;
   }
 }
 

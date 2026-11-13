@@ -22,7 +22,12 @@ import {
   type FacilityState,
   type GameSnapshot,
   type GameState,
+  type InventoryPoolSnapshot,
   type LocationSnapshot,
+  type MaterialStockSnapshot,
+  type ProductPriceSnapshot,
+  type SupplierSnapshot,
+  type VehicleTrip,
   type MarketReport,
   type Money,
   type ProductionJobSnapshot,
@@ -220,32 +225,56 @@ function projectLocations(state: GameState, data: GameData): readonly LocationSn
   return out.sort(byId);
 }
 
+/** A route's condition in the world (ADR 0007's `RouteSnapshot.status`). */
+export function routeStatus(state: GameState, routeId: string): RouteSnapshot["status"] {
+  const closure = state.routes.find((r) => r.id === routeId)?.closure ?? null;
+  return closure ? { open: false, reopensAt: closure.reopensAt, reason: closure.reason } : { open: true };
+}
+
+/** A route's geometry, cost and risk: static game-data (always known, ADR 0021 decision 3). */
+export function routeGeography(data: GameData, routeId: string): Omit<RouteSnapshot, "status"> {
+  const def = named(data.routes, routeId, "route");
+  return {
+    id: def.id,
+    name: def.name,
+    fromLocationId: def.fromLocationId,
+    toLocationId: def.toLocationId,
+    waypoints: def.waypoints.map((p) => ({ ...p })),
+    durationTicks: def.durationTicks,
+    transportCost: def.transportCost,
+    riskPpm: def.riskPpm,
+  };
+}
+
 function projectRoutes(state: GameState, data: GameData): readonly RouteSnapshot[] {
   return state.routes
     .map((r): RouteSnapshot => {
-      const def = named(data.routes, r.id, "route");
+      const geography = routeGeography(data, r.id);
       return {
-        id: r.id,
-        name: def.name,
-        fromLocationId: def.fromLocationId,
-        toLocationId: def.toLocationId,
-        waypoints: def.waypoints.map((p) => ({ ...p })),
-        durationTicks: def.durationTicks,
-        transportCost: def.transportCost,
-        status: r.closure ? { open: false, reopensAt: r.closure.reopensAt, reason: r.closure.reason } : { open: true },
-        riskPpm: def.riskPpm,
+        id: geography.id,
+        name: geography.name,
+        fromLocationId: geography.fromLocationId,
+        toLocationId: geography.toLocationId,
+        waypoints: geography.waypoints,
+        durationTicks: geography.durationTicks,
+        transportCost: geography.transportCost,
+        status: routeStatus(state, r.id),
+        riskPpm: geography.riskPpm,
       };
     })
     .sort(byId);
 }
 
-function projectFacility(state: GameState, facility: FacilityState, deps: ProjectionDeps, ctx: ProjectionContext): FacilitySnapshot {
-  const { data } = deps;
-  const def = named(data.facilities, facility.id, "facility");
+/** A facility's product and material pools, with reservations and cost (ADR 0007), in state order. */
+export function facilityStock(
+  state: GameState,
+  data: GameData,
+  facilityId: string,
+): { readonly products: readonly InventoryPoolSnapshot[]; readonly materials: readonly MaterialStockSnapshot[] } {
   const reservedHere = (match: (goods: GameState["reservations"][number]["goods"]) => boolean): number =>
-    state.reservations.filter((r) => r.facilityId === facility.id && match(r.goods)).reduce((n, r) => n + r.quantity, 0);
+    state.reservations.filter((r) => r.facilityId === facilityId && match(r.goods)).reduce((n, r) => n + r.quantity, 0);
   const products = state.productPools
-    .filter((p) => p.facilityId === facility.id)
+    .filter((p) => p.facilityId === facilityId)
     .map((p) => ({
       productId: p.productId,
       productName: named(data.products, p.productId, "product").name,
@@ -256,7 +285,7 @@ function projectFacility(state: GameState, facility: FacilityState, deps: Projec
       averageUnitCost: p.quantity > 0 ? divideMoney(p.totalCost, p.quantity) : ZERO_MONEY,
     }));
   const materials = state.materialPools
-    .filter((m) => m.facilityId === facility.id)
+    .filter((m) => m.facilityId === facilityId)
     .map((m) => ({
       materialId: m.materialId,
       materialName: named(data.materials, m.materialId, "material").name,
@@ -264,6 +293,13 @@ function projectFacility(state: GameState, facility: FacilityState, deps: Projec
       reservedQuantity: reservedHere((g) => g.kind === "MATERIAL" && g.materialId === m.materialId),
       totalCost: m.totalCost,
     }));
+  return { products, materials };
+}
+
+function projectFacility(state: GameState, facility: FacilityState, deps: ProjectionDeps, ctx: ProjectionContext): FacilitySnapshot {
+  const { data } = deps;
+  const def = named(data.facilities, facility.id, "facility");
+  const { products, materials } = facilityStock(state, data, facility.id);
   const owned = facility.equipment.map((e) => named(data.equipment, e.equipmentId, "equipment"));
   return {
     id: facility.id,
@@ -288,7 +324,8 @@ function projectFacility(state: GameState, facility: FacilityState, deps: Projec
   };
 }
 
-function projectJobs(state: GameState, data: GameData): readonly ProductionJobSnapshot[] {
+/** Production jobs in state order (ADR 0007). */
+export function projectJobs(state: GameState, data: GameData): readonly ProductionJobSnapshot[] {
   return state.productionJobs.map((j) => {
     const recipe = named(data.recipes, j.recipeId, "recipe");
     return {
@@ -304,33 +341,37 @@ function projectJobs(state: GameState, data: GameData): readonly ProductionJobSn
   });
 }
 
+/** A vehicle's trip with its delivery's cargo and purpose (ADR 0007), or null when it has none. */
+export function vehicleTrip(state: GameState, v: GameState["vehicles"][number]): VehicleTrip | null {
+  if (!v.trip) return null;
+  const trip = v.trip;
+  const delivery = state.deliveries.find((d) => d.id === trip.deliveryId);
+  if (!delivery) throw new RangeError(`Snapshot: vehicle ${v.id} is on unknown delivery ${trip.deliveryId}`);
+  return {
+    deliveryId: trip.deliveryId,
+    routeId: trip.routeId,
+    leg: trip.leg,
+    departedAt: trip.departedAt,
+    arrivesAt: trip.arrivesAt,
+    cargo: delivery.cargo.map((l) => ({ productId: l.productId, quality: l.quality, quantity: l.quantity })),
+    purpose: delivery.purpose,
+    delayed: trip.delayed,
+  };
+}
+
 function projectVehicles(state: GameState, data: GameData): readonly VehicleSnapshot[] {
   return state.vehicles
     .map((v): VehicleSnapshot => {
       const def = named(data.vehicles, v.id, "vehicle");
       const home = named(data.facilities, def.homeFacilityId, "facility");
-      let trip: VehicleSnapshot["trip"] = null;
-      if (v.trip) {
-        const delivery = state.deliveries.find((d) => d.id === v.trip!.deliveryId);
-        if (!delivery) throw new RangeError(`Snapshot: vehicle ${v.id} is on unknown delivery ${v.trip.deliveryId}`);
-        trip = {
-          deliveryId: v.trip.deliveryId,
-          routeId: v.trip.routeId,
-          leg: v.trip.leg,
-          departedAt: v.trip.departedAt,
-          arrivesAt: v.trip.arrivesAt,
-          cargo: delivery.cargo.map((l) => ({ productId: l.productId, quality: l.quality, quantity: l.quantity })),
-          purpose: delivery.purpose,
-          delayed: v.trip.delayed,
-        };
-      }
-      return { id: v.id, name: def.name, capacity: def.capacityCases, homeLocationId: home.locationId, trip };
+      return { id: v.id, name: def.name, capacity: def.capacityCases, homeLocationId: home.locationId, trip: vehicleTrip(state, v) };
     })
     .sort(byId);
 }
 
-function projectMarket(state: GameState, data: GameData, clock: ClockSnapshot): MarketReport {
-  const products = state.markets
+/** Every (product, quality) market with its price inputs (ADR 0007), sorted by product then quality. */
+export function marketProducts(state: GameState, data: GameData): readonly ProductPriceSnapshot[] {
+  return state.markets
     .map((m) => {
       const product = named(data.products, m.productId, "product");
       const def = data.markets.find((d) => d.productId === m.productId && d.quality === m.quality);
@@ -351,21 +392,27 @@ function projectMarket(state: GameState, data: GameData, clock: ClockSnapshot): 
       };
     })
     .sort((a, b) => (a.productId < b.productId ? -1 : a.productId > b.productId ? 1 : qualityRank(a.quality) - qualityRank(b.quality)));
+}
+
+/** A supplier's materials: price, availability, shortage (ADR 0007). */
+export function supplierMaterials(state: GameState, data: GameData, supplierId: string): SupplierSnapshot["materials"] {
+  const supplier = state.suppliers.find((s) => s.id === supplierId);
+  if (!supplier) throw new RangeError(`Snapshot: unknown supplier ${supplierId}`);
+  return supplier.stock.map((st) => ({
+    materialId: st.materialId,
+    materialName: named(data.materials, st.materialId, "material").name,
+    unitPrice: st.unitPrice,
+    available: st.available,
+    shortage: st.shortage !== null,
+  }));
+}
+
+function projectMarket(state: GameState, data: GameData, clock: ClockSnapshot): MarketReport {
+  const products = marketProducts(state, data);
   const suppliers = state.suppliers
     .map((s) => {
       const def = named(data.suppliers, s.id, "supplier");
-      return {
-        id: s.id,
-        name: def.name,
-        locationId: def.locationId,
-        materials: s.stock.map((st) => ({
-          materialId: st.materialId,
-          materialName: named(data.materials, st.materialId, "material").name,
-          unitPrice: st.unitPrice,
-          available: st.available,
-          shortage: st.shortage !== null,
-        })),
-      };
+      return { id: s.id, name: def.name, locationId: def.locationId, materials: supplierMaterials(state, data, s.id) };
     })
     .sort(byId);
   const buyers = state.buyers

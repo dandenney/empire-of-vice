@@ -33,6 +33,7 @@ import { hashState } from "./hash.ts";
 import { formatId, idNumber } from "./ids.ts";
 import {
   type CommandContext,
+  type CommandFate,
   type CommandHandler,
   type Phase,
   type SystemRegistry,
@@ -196,7 +197,7 @@ export class KernelSimulation implements Simulation {
     if (target > current + 1) {
       const reason = mode === "dispatch" ? (handler.validate?.(s, envelope.command as never) ?? null) : null;
       if (reason) return reject(reason);
-      this.#commit(before, enqueue(s, envelope));
+      this.#commit(before, this.#recordCommand(enqueue(s, envelope), envelope, { status: "QUEUED" }, tick(current + 1)));
       return { status: "queued", commandId: envelope.id, scheduledTick: envelope.scheduledTick };
     }
 
@@ -250,7 +251,17 @@ export class KernelSimulation implements Simulation {
       { type: "COMMAND_REJECTED", commandId: envelope.id, commandType: envelope.command.type, reason },
       { tick: ctx.tick, causedBy: envelope.id },
     );
-    return { state: { ...emitted.state, commandLog: [...emitted.state.commandLog, envelope] }, eventId: emitted.eventId };
+    const recorded = this.#recordCommand(emitted.state, envelope, { status: "REJECTED", reason }, ctx.tick);
+    return { state: { ...recorded, commandLog: [...recorded.commandLog, envelope] }, eventId: emitted.eventId };
+  }
+
+  /** The knowledge model's record of a founder command's fate (ADR 0021 decision 8); unchanged without knowledge steps. */
+  #recordCommand(state: GameState, envelope: CommandEnvelope, fate: CommandFate, at: Tick): GameState {
+    const knowledge = this.#registry.knowledge();
+    if (!knowledge) return state;
+    const next = knowledge.commandRecorded(state, envelope, fate, at);
+    this.#assertKernelFieldsUntouched(state, next, "knowledge step commandRecorded");
+    return next;
   }
 
   /**
@@ -284,6 +295,7 @@ export class KernelSimulation implements Simulation {
       this.#assertKernelFieldsUntouched(after, next, `command gate ${name}`);
       after = next;
     }
+    after = this.#recordCommand(after, envelope, { status: "APPLIED" }, ctx.tick);
     const eventIds: EventId[] = [];
     for (let n = state.counters.nextId.Event; n < after.counters.nextId.Event; n++) {
       eventIds.push(formatId("Event", n));
@@ -322,7 +334,13 @@ export class KernelSimulation implements Simulation {
     s = this.#runPhase("deadlines", s, ctx);
     // 5. Midnight settlement.
     if (ctx.isMidnight) s = this.#runPhase("midnight", s, ctx);
-    // 6. Emit: the tick is complete.
+    // 6. Persist the live view (ADR 0021 decision 5), then emit: the tick is complete.
+    const knowledge = this.#registry.knowledge();
+    if (knowledge) {
+      const next = knowledge.tickEnd(s, ctx);
+      this.#assertKernelFieldsUntouched(s, next, "knowledge step tickEnd");
+      s = next;
+    }
     this.#commit(before, { ...s, tick: ctx.tick });
   }
 
@@ -385,9 +403,14 @@ export class KernelSimulation implements Simulation {
     return projection(this.#state, { clock: clockAt(this.#startDate, this.#state.tick), startDate: this.#startDate });
   }
 
-  /** The player snapshot builder arrives with SK1b (#199). The worker doesn't call this yet. */
+  /**
+   * The player snapshot (ADR 0021 decision 8): built only from knowledge, the
+   * always-known state and the live view, which is read from the world now.
+   * Building it changes no state.
+   */
   playerSnapshot(): PlayerSnapshot {
-    throw new Error("NOT_IMPLEMENTED: playerSnapshot() is built by SK1b (#199)");
+    const projection = this.#registry.playerProjection();
+    return projection(this.#state, { clock: clockAt(this.#startDate, this.#state.tick), startDate: this.#startDate });
   }
 
   serialize(): SaveGame {
