@@ -14,12 +14,14 @@ import { registerFounder } from "../founder/founder.ts";
 import { registerMarket } from "../economy/market/market.ts";
 import { registerInventory } from "../inventory/release.ts";
 import { createRegistry, type SystemRegistry } from "../kernel/registry.ts";
+import { M001_RULES, type GameRules } from "../kernel/rules.ts";
 import { registerLogistics } from "../logistics/logistics.ts";
 import { registerProduction } from "../production/production.ts";
 import { registerProgression } from "../progression/index.ts";
 import { PROJECTION_SYSTEM } from "../projection/index.ts";
 
-export type RegisterSystem = (registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator) => void;
+/** Registers a system's hooks and handlers. `rules` are the scenario's switches (ADR 0023 decision 9); most systems ignore them. */
+export type RegisterSystem = (registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator, rules: GameRules) => void;
 
 export interface SystemEntry {
   /** Who owns the system, for readers and error messages. */
@@ -37,16 +39,17 @@ export const SYSTEMS: readonly SystemEntry[] = [
   { name: "repeat orders (T05c)", register: registerRepeat },
   { name: "progression (T05e)", register: registerProgression },
   { name: "shakedown (T07f)", register: registerShakedown },
-  { name: "founder (P1: flag-off no-ops; SK1a)", register: registerFounder },
+  { name: "founder (SK1a)", register: registerFounder },
 ];
 
-/** A registry with every system in SYSTEMS, sharing one coordinator. */
+/** A registry with every system in SYSTEMS, sharing one coordinator, under the scenario's rules (default: M001's). */
 export function createGameRegistry(
   data: GameData,
   coordinator: TransactionCoordinator = createCoordinator(),
   systems: readonly SystemEntry[] = SYSTEMS,
+  rules: GameRules = M001_RULES,
 ): SystemRegistry {
   const registry = createRegistry();
-  for (const system of systems) system.register(registry, data, coordinator);
+  for (const system of systems) system.register(registry, data, coordinator, rules);
   return registry;
 }

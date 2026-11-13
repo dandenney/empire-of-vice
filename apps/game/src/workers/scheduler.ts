@@ -17,11 +17,13 @@
 //
 // Rest fast-forward (ADR 0023 decision 9): while it's on and the game is
 // running, time accrues at REST_SPEED_MULTIPLIER × 1× whatever speed the player
-// picked. It isn't a player Speed: `speed` stays 0 | 1 | 2 | 4. The host turns
-// it on while the founder rests and off when they wake or a `notify` activity
-// item lands; that wiring, and the `fastForward` flag on SchedulerStatus, are
-// SK1a's. Until then nothing turns it on, and with `founderRules` off the
-// founder never rests, so it stays inert.
+// picked. It isn't a player Speed: `speed` stays 0 | 1 | 2 | 4. `followFounder`
+// is the rule (SK1a): on while the founder rests, off when they wake, and off
+// for the rest of that rest once a `notify` activity item lands. The host feeds
+// it from the player snapshot after each batch. That wiring waits for the
+// player snapshot (SK1b), and the `fastForward` flag on SchedulerStatus waits
+// for the host and its tests. With `founderRules` off the founder never rests,
+// so it stays inert.
 //   - Whole ticks move from the accumulator into a backlog. Each step takes at
 //     most MAX_TICKS_PER_STEP from the backlog; the rest waits for the next
 //     step. Ticks are never dropped (SIM-001).
@@ -58,6 +60,21 @@ export interface SchedulerStatus {
   readonly autoPaused: boolean;
 }
 
+/**
+ * What the rest fast-forward follows (ADR 0023 decision 9), read from the player
+ * snapshot: always-known founder state and the activity, never world events.
+ */
+export interface FounderPacing {
+  /** The current rest's start tick (`RESTING.startedAt`), or null when the founder isn't resting. */
+  readonly restStartedAt: number | null;
+  /**
+   * An activity item whose importance is `notify` landed since this rest's
+   * fast-forward began. The host counts only items newer than its start, so the
+   * REST command's own COMMAND item doesn't count.
+   */
+  readonly notifyLanded: boolean;
+}
+
 export const PAUSED_STATUS: SchedulerStatus = { speed: 0, autoPaused: false };
 
 export function isSpeed(value: unknown): value is Speed {
@@ -86,6 +103,8 @@ export class SpeedScheduler {
   #backlog = 0;
   /** The rest fast-forward is requested (ADR 0023 decision 9). */
   #restFastForward = false;
+  /** The rest `followFounder` last saw (its start tick), and whether a notify item ended its fast-forward. */
+  #followedRest: { readonly startedAt: number; readonly ended: boolean } | null = null;
 
   constructor(clock: SchedulerClock, realMsPerGameHourAt1x: number = DEFAULT_REAL_MS_PER_GAME_HOUR_AT_1X) {
     this.#clock = clock;
@@ -118,11 +137,29 @@ export class SpeedScheduler {
   /**
    * Turns the rest fast-forward on or off. Time up to now accrues at the old
    * rate first. Pausing still pauses; the player's speed is kept for when it
-   * turns off. Nothing calls this until SK1a.
+   * turns off. `followFounder` is the rule that drives it.
    */
   setRestFastForward(on: boolean): void {
     this.#accrue();
     this.#restFastForward = on;
+  }
+
+  /**
+   * The rest fast-forward rule (ADR 0023 decision 9): on from the moment a rest
+   * is seen, off when the founder wakes, and off for the rest of that rest once a
+   * `notify` item lands. A new rest (a different start tick) turns it on again.
+   */
+  followFounder(pacing: FounderPacing): void {
+    const { restStartedAt, notifyLanded } = pacing;
+    const previous = this.#followedRest;
+    if (restStartedAt === null) {
+      this.#followedRest = null;
+    } else {
+      const same = previous !== null && previous.startedAt === restStartedAt;
+      this.#followedRest = { startedAt: restStartedAt, ended: (same && previous.ended) || notifyLanded };
+    }
+    const on = this.#followedRest !== null && !this.#followedRest.ended;
+    if (on !== this.#restFastForward) this.setRestFastForward(on);
   }
 
   /** Whole ticks owed but not yet handed out by `step()`. */
@@ -170,6 +207,7 @@ export class SpeedScheduler {
     this.#remainder = 0;
     this.#backlog = 0;
     this.#restFastForward = false;
+    this.#followedRest = null;
   }
 
   /** Ticks to run now: whatever is owed, at most MAX_TICKS_PER_STEP. 0 while paused. */
