@@ -102,6 +102,22 @@ describe("producer coverage (ADR 0021 decisions 6 and 7)", () => {
     expect(cashRows["PRODUCTION_WRITE_OFF"]).toBeDefined();
     for (const name of ["PRODUCTION", "PRODUCTION_WRITE_OFF"] as const) expect(TRANSACTION_PRODUCERS[name].legs).toEqual(["CASH", "NON_CASH", "NO_ENTRIES"]);
   });
+
+  it("classifies the founder's two-stage producers (ADR 0029 decision 12)", () => {
+    // A mash: rule 1, the founder's command. Cash, or nothing at a zero cost.
+    expect(TRANSACTION_PRODUCERS["PRODUCTION_START:MASH"]).toEqual({ trigger: "FOUNDER_COMMAND", legs: ["CASH", "NO_ENTRIES"] });
+    // A run start: rule 1, never any entries (the prepaid amount moves from washes to the job unposted).
+    expect(TRANSACTION_PRODUCERS["PRODUCTION_START:RUN"]).toEqual({ trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] });
+    for (const name of ["PRODUCTION_START:MASH", "PRODUCTION_START:RUN"]) {
+      expect(cashRows[name], name).toBeUndefined();
+      expect(bookRows[name], name).toBeUndefined();
+    }
+    // The employee families land with their call sites in E1 (#180).
+    for (const family of Object.keys(TRANSACTION_PRODUCERS)) expect(family.startsWith("PRODUCTION_START:EMPLOYEE"), family).toBe(false);
+    // The keys decision 5 names resolve to the new families, not to O1b's PRODUCTION_START.
+    expect(transactionProducerOf(idempotencyKey("PRODUCTION_START", "MASH", "distillery-main", 4_200))).toBe("PRODUCTION_START:MASH");
+    expect(transactionProducerOf(idempotencyKey("PRODUCTION_START", "RUN", "job-4"))).toBe("PRODUCTION_START:RUN");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -109,6 +125,16 @@ describe("producer coverage (ADR 0021 decisions 6 and 7)", () => {
 // ---------------------------------------------------------------------------
 
 const SIM_SRC = fileURLToPath(new URL("../../simulation/src/", import.meta.url));
+
+/**
+ * Producers registered ahead of their call sites, with the task that adds them.
+ * ADR 0029 decision 16 registers the founder's two-stage families in TS1 (#243),
+ * the contract task, and puts their call sites in TS2 (#244).
+ */
+const AWAITING_CALL_SITES: Readonly<Record<string, string>> = {
+  "PRODUCTION_START:MASH": "TS2 (#244)",
+  "PRODUCTION_START:RUN": "TS2 (#244)",
+};
 
 /**
  * Call sites whose kind or tag is a variable rather than a literal, with the
@@ -224,9 +250,17 @@ describe("the producer registry matches the simulation", () => {
     expect(unregistered, "add these to TRANSACTION_PRODUCERS (and the tables, if they can post without a command)").toEqual([]);
   });
 
-  it("every registered producer has a call site", () => {
-    const unused = Object.keys(TRANSACTION_PRODUCERS).filter((f) => !found.has(f));
+  it("every registered producer has a call site, except those whose call sites a named later task adds", () => {
+    const unused = Object.keys(TRANSACTION_PRODUCERS).filter((f) => !found.has(f) && !Object.hasOwn(AWAITING_CALL_SITES, f));
     expect(unused).toEqual([]);
+  });
+
+  it("lists as awaiting only registered producers that still have no call site", () => {
+    // When TS2 adds a call site, this fails until its entry is removed.
+    for (const family of Object.keys(AWAITING_CALL_SITES)) {
+      expect(Object.hasOwn(TRANSACTION_PRODUCERS, family), family).toBe(true);
+      expect(found.has(family), `${family} has a call site now: remove it from AWAITING_CALL_SITES`).toBe(false);
+    }
   });
 
   it("lists exactly the value arguments the simulation uses (no stale entries)", () => {

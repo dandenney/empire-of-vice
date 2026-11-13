@@ -39,7 +39,7 @@ import type {
   VehicleId,
 } from "./ids.ts";
 import type { Money } from "./money.ts";
-import type { ArrangementPrivilege, CallAnswerer, EmployeeRole, StandingOrderTerms, Transport } from "./state.ts";
+import type { ArrangementPrivilege, CallAnswerer, DriverRef, EmployeeRole, StandingOrderTerms, Transport } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 /** Fields every event has. */
@@ -627,6 +627,39 @@ export type ReportDeliveredEvent = GameEventOf<
 >;
 
 // ---------------------------------------------------------------------------
+// Two-stage production (ADR 0029 decision 4)
+// ---------------------------------------------------------------------------
+
+/** Mash set in free barrels (ADR 0029 decision 4). `barrels` lists the barrels filled, in order. */
+export type MashSetEvent = GameEventOf<
+  "MASH_SET",
+  {
+    readonly facilityId: FacilityId;
+    readonly recipeId: RecipeId;
+    readonly barrels: readonly number[];
+    /** Cases the mash yields: barrels × casesPerBarrel. */
+    readonly quantity: number;
+    readonly readyAt: Tick;
+    readonly conversionPrepaid: Money;
+  }
+>;
+
+/** A distillation run started, taking every ready wash of the recipe at the facility (ADR 0029 decision 4). */
+export type DistillationStartedEvent = GameEventOf<
+  "DISTILLATION_STARTED",
+  {
+    readonly jobId: ProductionJobId;
+    readonly facilityId: FacilityId;
+    readonly recipeId: RecipeId;
+    /** The barrels the run took, in barrel order. */
+    readonly barrels: readonly number[];
+    readonly quantity: number;
+    readonly operator: DriverRef;
+    readonly completesAt: Tick;
+  }
+>;
+
+// ---------------------------------------------------------------------------
 // The union
 // ---------------------------------------------------------------------------
 
@@ -685,7 +718,9 @@ export type GameEvent =
   | StandingOrderSetEvent
   | EmployeeDismissedEvent
   | EmployeeActedEvent
-  | ReportDeliveredEvent;
+  | ReportDeliveredEvent
+  | MashSetEvent
+  | DistillationStartedEvent;
 
 export type GameEventType = GameEvent["type"];
 
@@ -768,6 +803,10 @@ export const EVENT_IMPORTANCE: Readonly<Record<GameEventType, "notify" | "log">>
   EMPLOYEE_DISMISSED: "log",
   EMPLOYEE_ACTED: "log",
   REPORT_DELIVERED: "log",
+  // Two-stage production (ADR 0029 decision 4): like PRODUCTION_STARTED. Never
+  // in `LoggedToastEventType`.
+  MASH_SET: "log",
+  DISTILLATION_STARTED: "log",
 };
 
 export const GAME_EVENT_TYPES = Object.keys(EVENT_IMPORTANCE) as readonly GameEventType[];
@@ -846,6 +885,10 @@ export const EVENT_CONCERNS_PLACE = {
   EMPLOYEE_DISMISSED: null,
   EMPLOYEE_ACTED: null,
   REPORT_DELIVERED: null,
+  // The founder's own commands at the still, or an employee's that a report or a
+  // visit tells of, like PRODUCTION_STARTED (ADR 0029 decision 4). Never news.
+  MASH_SET: null,
+  DISTILLATION_STARTED: null,
 } as const satisfies Readonly<Record<GameEventType, "FACILITY" | "DELIVERY_ORIGIN" | null>>;
 
 /** Event types that become news at the place they concern. */

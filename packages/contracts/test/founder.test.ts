@@ -61,6 +61,9 @@ describe("founder state (decision 1)", () => {
       // ADR 0025 decisions 4 and 5 (EM1).
       "HIRE",
       "BRIEF_EMPLOYEE",
+      // ADR 0029 decision 10 (TS1).
+      "MASH",
+      "DISTILL",
     ]);
     expectTypeOf<(typeof ACTIVITY_KINDS)[number]>().toEqualTypeOf<ActivityKind>();
   });

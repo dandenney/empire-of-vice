@@ -164,8 +164,8 @@ const catchUp: CatchUp = {
   lines: [
     {
       subject: { kind: "FACILITY_OPERATIONS", facilityId: ids.distillery },
-      before: { kind: "FACILITY_OPERATIONS", facilityId: ids.distillery, jobs: [], workersPresent: 3 },
-      after: { kind: "FACILITY_OPERATIONS", facilityId: ids.distillery, jobs: [], workersPresent: 2 },
+      before: { kind: "FACILITY_OPERATIONS", facilityId: ids.distillery, jobs: [], workersPresent: 3, washes: [] },
+      after: { kind: "FACILITY_OPERATIONS", facilityId: ids.distillery, jobs: [], workersPresent: 2, washes: [] },
     },
   ],
   news: [delayed],
@@ -332,8 +332,17 @@ describe("player snapshot schema (decision 8)", () => {
               ticksPerCase: 60,
               maxStartableQuantity: 10,
               blockedBy: null,
+              twoStage: {
+                casesPerBarrel: 10,
+                fermentTicks: 6_480,
+                maxMashBarrels: 2,
+                mashBlockedBy: null,
+                readyQuantity: 0,
+                distillBlockedBy: { code: "NO_READY_WASH", facilityId: ids.distillery, recipeId: ids.basicRecipe, readyAt: tick(9_000) },
+              },
             },
           ],
+          barrels: 4,
           storageCapacity: 200,
           stock: known({ kind: "FACILITY_STOCK", facilityId: ids.distillery, products: [], materials: [], storageUsed: 0 }),
           operations: null,

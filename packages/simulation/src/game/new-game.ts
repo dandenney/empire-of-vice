@@ -189,6 +189,8 @@ export function createInitialState(
     materialPools: [],
     reservations: [],
     productionJobs: [],
+    // ADR 0029 decision 3. Opening washes (decision 15) are R1's (#176).
+    washes: [],
     vehicles,
     deliveries: [],
     heldDeals: [],

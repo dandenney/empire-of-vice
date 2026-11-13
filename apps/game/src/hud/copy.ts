@@ -45,6 +45,9 @@ export const HUD_COPY = {
     CHECK_IN: "Checking in",
     HIRE: "Hiring",
     BRIEF_EMPLOYEE: "Briefing a hand",
+    // ADR 0029 (TS1, #243). PLACEHOLDER copy until the human decides the words.
+    MASH: "Setting a mash",
+    DISTILL: "Running the still",
   } satisfies Readonly<Record<ActivityKind, string>>,
   unknownPlace: "somewhere",
 } as const;

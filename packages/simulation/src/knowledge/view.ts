@@ -41,7 +41,7 @@ import {
 import { KNOWLEDGE_VISIBILITY, LIVE_VIEW_ROUTES, type GameData } from "@eov/game-data";
 import { isOpenAt } from "../founder/time.ts";
 import { storageUsed } from "../inventory/pools.ts";
-import { facilityStock, marketProducts, projectJobs, routeStatus, supplierMaterials, vehicleTrip } from "../projection/snapshot.ts";
+import { facilityStock, marketProducts, projectJobs, projectWashes, routeStatus, supplierMaterials, vehicleTrip } from "../projection/snapshot.ts";
 
 /** A subject with its current world value, as the live view shows it. */
 export interface LiveEntry {
@@ -263,7 +263,7 @@ function valueDeps(state: GameState, data: GameData, subject: KnowledgeSubject):
     case "FACILITY_STOCK":
       return [state.productPools, state.materialPools, state.reservations, data];
     case "FACILITY_OPERATIONS":
-      return [state.productionJobs, state.facilities, data];
+      return [state.productionJobs, state.washes, state.facilities, data];
     case "SUPPLIER_OFFER":
       return [state.suppliers, data];
     case "BUYER_WANTS":
@@ -300,6 +300,8 @@ function computeWorldValue(state: GameState, data: GameData, subject: KnowledgeS
         facilityId: subject.facilityId,
         jobs: projectJobs(state, data).filter((j) => j.facilityId === subject.facilityId),
         workersPresent: facility?.workerCount ?? 0,
+        // ADR 0029 decision 8: the full barrels there. Always [] until TS2 (#244) sets mashes.
+        washes: projectWashes(state, data).filter((w) => w.facilityId === subject.facilityId),
       };
     }
     case "SUPPLIER_OFFER":

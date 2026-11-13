@@ -275,6 +275,28 @@ export interface DismissEmployeeCommand {
   readonly characterId: CharacterId;
 }
 
+/**
+ * Fill free barrels with mash (ADR 0029 decision 4). In person at the facility;
+ * MASH long. A founder-rules production command.
+ */
+export interface SetMashCommand {
+  readonly type: "SET_MASH";
+  readonly facilityId: FacilityId;
+  readonly recipeId: RecipeId;
+  /** How many free barrels to fill, each with one barrel of the recipe's mash. */
+  readonly barrels: number;
+}
+
+/**
+ * Distill every ready wash of the recipe at the facility in one run (ADR 0029
+ * decision 4). The operator is tied to the still for the run.
+ */
+export interface StartDistillationCommand {
+  readonly type: "START_DISTILLATION";
+  readonly facilityId: FacilityId;
+  readonly recipeId: RecipeId;
+}
+
 export type GameCommand =
   | PurchaseMaterialsCommand
   | StartProductionCommand
@@ -294,7 +316,9 @@ export type GameCommand =
   | RentRoomCommand
   | HireEmployeeCommand
   | SetStandingOrderCommand
-  | DismissEmployeeCommand;
+  | DismissEmployeeCommand
+  | SetMashCommand
+  | StartDistillationCommand;
 
 export type GameCommandType = GameCommand["type"];
 
@@ -321,6 +345,8 @@ export const GAME_COMMAND_TYPES = [
   "HIRE_EMPLOYEE",
   "SET_STANDING_ORDER",
   "DISMISS_EMPLOYEE",
+  "SET_MASH",
+  "START_DISTILLATION",
 ] as const satisfies readonly GameCommandType[];
 
 // ---------------------------------------------------------------------------
@@ -520,7 +546,12 @@ export type RejectionReason =
    * gate 4, ADR 0025 decision 5). Only ever an employee command's result,
    * reported in a report line, never a founder command's immediate result.
    */
-  | { readonly code: "OUTSIDE_AUTHORITY"; readonly characterId: CharacterId; readonly standingOrderId: StandingOrderId; readonly limit: AuthorityLimit };
+  | { readonly code: "OUTSIDE_AUTHORITY"; readonly characterId: CharacterId; readonly standingOrderId: StandingOrderId; readonly limit: AuthorityLimit }
+  // Two-stage production (ADR 0029 decision 14).
+  /** START_PRODUCTION under founder rules: production there is SET_MASH then START_DISTILLATION (ADR 0029). */
+  | { readonly code: "TWO_STAGE_RECIPE"; readonly facilityId: FacilityId; readonly recipeId: RecipeId }
+  /** No wash of the recipe is ready there. readyAt: the soonest a fermenting one is ready, or null if none is fermenting. */
+  | { readonly code: "NO_READY_WASH"; readonly facilityId: FacilityId; readonly recipeId: RecipeId; readonly readyAt: Tick | null };
 
 /** Which part of a standing order an employee's command went beyond (ADR 0025 decision 5). */
 export type AuthorityLimit = "COMMAND" | "STATION" | "RECIPE" | "BATCH_SIZE" | "SPENDING_CAP";

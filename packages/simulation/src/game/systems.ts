@@ -19,6 +19,7 @@ import { registerLogistics } from "../logistics/logistics.ts";
 import { registerPersonnel } from "../personnel/personnel.ts";
 import { registerPhones } from "../phones/phones.ts";
 import { registerProduction } from "../production/production.ts";
+import { registerTwoStage } from "../production/two-stage.ts";
 import { registerProgression } from "../progression/index.ts";
 import { PROJECTION_SYSTEM } from "../projection/index.ts";
 
@@ -44,6 +45,7 @@ export const SYSTEMS: readonly SystemEntry[] = [
   { name: "founder (SK1a)", register: registerFounder },
   { name: "phones (PH1 no-ops; C1)", register: registerPhones },
   { name: "personnel (EM1 no-ops; E1)", register: registerPersonnel },
+  { name: "two-stage production (TS1 no-ops; TS2)", register: registerTwoStage },
 ];
 
 /** A registry with every system in SYSTEMS, sharing one coordinator, under the scenario's rules (default: M001's). */

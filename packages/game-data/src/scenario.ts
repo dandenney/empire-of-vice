@@ -20,6 +20,7 @@ import {
   type FamilyId,
   type LocationId,
   type Money,
+  type RecipeId,
   type RouteId,
   type ScenarioId,
   type ScheduledWorldEvent,
@@ -29,6 +30,8 @@ import {
   type UnlockId,
   type VehicleId,
 } from "@eov/contracts";
+import type { FacilityProductionDefinition } from "./facilities.ts";
+import type { RecipeDefinition } from "./recipes.ts";
 
 /**
  * A route closure the scenario schedules at tick 0, always with a duration, so
@@ -74,6 +77,22 @@ export interface ScenarioFacility {
   /** Owned at the start, valued at each equipment definition's price. */
   readonly equipmentIds: readonly EquipmentId[];
   readonly workerCount: number;
+  /**
+   * Mash already fermenting when the story starts (ADR 0029 decision 15): "the
+   * family's still was already going". Absent means none (M001; M002 until R1,
+   * #176, sets the stagger and `new-game.ts` creates them). Read only with founder
+   * rules on. Checked against game-data by `validateOpeningWashes`.
+   */
+  readonly washes?: readonly ScenarioWash[];
+}
+
+/** Opening washes of one recipe at a facility (ADR 0029 decision 15). Their `mashedAt` is tick 0. */
+export interface ScenarioWash {
+  readonly recipeId: RecipeId;
+  /** Full barrels of it. */
+  readonly barrels: number;
+  /** Ready from this tick. In [0, the recipe's fermentTicks]: the one exception to readyAt = mashedAt + fermentTicks. */
+  readonly readyAtTick: Tick;
 }
 
 export interface ScenarioDefinition {
@@ -194,6 +213,47 @@ function scheduledEvent(value: unknown, path: string): ScenarioScheduledEvent {
   };
 }
 
+function scenarioWash(value: unknown, path: string): ScenarioWash {
+  const w = obj(value, path);
+  return {
+    recipeId: asId("Recipe", str(w["recipeId"], `${path}.recipeId`)),
+    barrels: int(w["barrels"], `${path}.barrels`, 1),
+    readyAtTick: tick(int(w["readyAtTick"], `${path}.readyAtTick`, 0)),
+  };
+}
+
+/**
+ * Checks a scenario's opening washes against game-data (ADR 0029 decisions 2 and
+ * 15): each names a known recipe; each facility with washes has a production
+ * spec, and its barrel counts sum to at most its `barrels`; each `readyAtTick` is
+ * in [0, the recipe's fermentTicks]. Returns the scenario unchanged; throws
+ * ScenarioError.
+ */
+export function validateOpeningWashes(
+  scenario: ScenarioDefinition,
+  recipes: readonly RecipeDefinition[],
+  facilityProduction: readonly FacilityProductionDefinition[],
+): ScenarioDefinition {
+  scenario.facilities.forEach((facility, i) => {
+    const washes = facility.washes ?? [];
+    if (washes.length === 0) return;
+    const spec = facilityProduction.find((f) => f.facilityId === facility.id);
+    if (spec === undefined) throw new ScenarioError(`facilities[${i}].washes: ${facility.id} has no production spec`);
+    let barrels = 0;
+    washes.forEach((wash, j) => {
+      const path = `facilities[${i}].washes[${j}]`;
+      const recipe = recipes.find((r) => r.id === wash.recipeId);
+      if (recipe === undefined) throw new ScenarioError(`${path}.recipeId: unknown recipe ${wash.recipeId}`);
+      if (wash.readyAtTick > recipe.twoStage.fermentTicks) {
+        throw new ScenarioError(`${path}.readyAtTick: ${wash.readyAtTick} is past ${recipe.id}'s fermentTicks (${recipe.twoStage.fermentTicks})`);
+      }
+      barrels += wash.barrels;
+    });
+    if (barrels > spec.barrels) throw new ScenarioError(`facilities[${i}].washes: ${barrels} barrels, but ${facility.id} has ${spec.barrels}`);
+  });
+  return scenario;
+}
+
 /** Checks a scenario file and brands its values. Throws ScenarioError (or InvalidIdError) on bad input. */
 export function parseScenario(raw: unknown): ScenarioDefinition {
   const s = obj(raw, "scenario");
@@ -227,6 +287,9 @@ export function parseScenario(raw: unknown): ScenarioDefinition {
         id: asId("Facility", str(facility["id"], `facilities[${i}].id`)),
         equipmentIds: ids("Equipment", facility["equipmentIds"], `facilities[${i}].equipmentIds`),
         workerCount: int(facility["workerCount"], `facilities[${i}].workerCount`, 0),
+        ...(facility["washes"] === undefined
+          ? {}
+          : { washes: arr(facility["washes"], `facilities[${i}].washes`).map((w, j) => scenarioWash(w, `facilities[${i}].washes[${j}]`)) }),
       };
     }),
     vehicleIds: ids("Vehicle", s["vehicleIds"], "vehicleIds"),
