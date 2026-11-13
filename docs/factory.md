@@ -115,7 +115,7 @@ Agent PRs and orchestrator PRs follow the same review and merge rules: review, t
 Track these per merged task in the milestone doc:
 
 - Merged without rework? (y/n)
-- Number of review rounds
+- Number of review rounds: every review-agent verdict on the PR, the approving one included (a PR approved first time has 1)
 - What a check or reviewer caught
 - Merged by: `auto` or `human`
 - Merged before review? (y/n), with a link to the follow-up issue if the review found something

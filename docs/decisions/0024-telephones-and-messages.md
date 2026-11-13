@@ -572,7 +572,7 @@ C1 (#179) implements the behaviour:
 - the commands and the `phones` phase;
 - the call view and message delivery in the player snapshot builder;
 - `keyedRng`;
-- the scheduler's pause on connect (`apps/game/src/workers/scheduler.ts`);
+- the pause on connect, as amended by ADR 0027 decision 10 (the host's `DISPATCH` handler and a `SpeedScheduler.step(maxTicks)` cap, in `apps/game/src/workers/{simulation-host,scheduler}.ts`);
 - the producer coverage rows.
 
 ADR 0026 fills both attendant hooks and the `FACILITY` rows.
