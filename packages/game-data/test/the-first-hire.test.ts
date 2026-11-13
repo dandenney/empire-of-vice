@@ -2,7 +2,8 @@
 // for R1 (#176); the walking skeleton (packages/simulation/test/walking-skeleton)
 // checks it plays.
 import { describe, expect, it } from "vitest";
-import { FIRST_SHIPMENT_SCENARIO, HOLLOW_CREEK, parseScenario, THE_FIRST_HIRE_SCENARIO, type ScenarioDefinition } from "../src/index.ts";
+import { FIRST_SHIPMENT_SCENARIO, HOLLOW_CREEK, parseScenario, ScenarioError, THE_FIRST_HIRE_SCENARIO, type ScenarioDefinition } from "../src/index.ts";
+import firstShipmentJson from "../src/scenarios/first-shipment.json" with { type: "json" };
 import theFirstHireJson from "../src/scenarios/the-first-hire.json" with { type: "json" };
 
 /** A parsed scenario as it would be written back to a file: plain JSON. */
@@ -27,5 +28,24 @@ describe("THE_FIRST_HIRE_SCENARIO", () => {
     expect(FIRST_SHIPMENT_SCENARIO.id).toBe("first-shipment");
     expect(FIRST_SHIPMENT_SCENARIO.founderRules).toBe(false);
     expect(FIRST_SHIPMENT_SCENARIO.realMsPerGameHourAt1x).toBe(5_000);
+  });
+
+  it("carries the approved player-facing description (#232)", () => {
+    expect(THE_FIRST_HIRE_SCENARIO.name).toBe("The First Hire");
+    expect(THE_FIRST_HIRE_SCENARIO.description).toBe(
+      "You're running Hollow Creek alone. Buy supplies, work the still, make deliveries, and earn enough to put your first employee on the payroll.",
+    );
+    expect(THE_FIRST_HIRE_SCENARIO.notes).not.toContain("pending the story decision");
+  });
+
+  it("leaves the First Shipment without a description", () => {
+    expect(FIRST_SHIPMENT_SCENARIO.description).toBeUndefined();
+    expect("description" in FIRST_SHIPMENT_SCENARIO).toBe(false);
+  });
+
+  it("rejects a description that isn't a string", () => {
+    for (const description of [42, null, true, ["x"], { text: "x" }]) {
+      expect(() => parseScenario({ ...firstShipmentJson, description })).toThrow(ScenarioError);
+    }
   });
 });
