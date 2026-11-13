@@ -1,14 +1,31 @@
 // @locked
 // PROD-001 acceptance tests for T02c1 (issue #7): production jobs, capacity, and
 // equipment. Covers the capacity helpers (throughput, job duration, storage),
-// START_PRODUCTION's check order and its rule 6 overflow bound, the RESERVATION
-// start, completion through `consumeReservations` and the posting builders with
-// the WAGES_PAYABLE accrual branch, seeded failure with write-off, a job that
+// START_PRODUCTION's check order and its rule 6 overflow bound, the PRODUCTION_START
+// start that prepays the conversion cost, completion through `consumeReservations`
+// and the posting builders (the WAGES_PAYABLE accrual branch for migrated jobs),
+// seeded failure with write-off, a job that
 // completes on the midnight tick, PURCHASE_EQUIPMENT, and the snapshot's facility
 // section. Rules come from GDD §6 and §8 and ADR 0017.
 //
 // Written ahead of the implementation by a separate test-writer agent
 // (factory.md §2, §7.3). Do not edit (CLAUDE.md rule 9).
+//
+// Re-locked for ADR 0022 decision 7 (issue #197): the conversion cost is paid when
+// the job starts. START_PRODUCTION commits one `PRODUCTION_START:<jobId>` transaction
+// (kind PRODUCTION_START, replacing the entry-less `RESERVATION:<jobId>`) that carries
+// the input reservations and PRODUCTION_STARTED, plus Dr PRODUCTION_IN_PROGRESS / Cr CASH
+// for the conversion cost (no entries when that cost is 0). The job stores what it paid
+// in `conversionPrepaid`. Completion posts Dr FINISHED_GOODS / Cr RAW_MATERIALS /
+// Cr PRODUCTION_IN_PROGRESS; failure posts Dr LOSSES / Cr RAW_MATERIALS /
+// Cr PRODUCTION_IN_PROGRESS; neither moves cash, and both credit exactly
+// `conversionPrepaid`, so a recipe-cost change mid-job leaves no residue. A job
+// migrated from a pre-M002 save (`conversionPrepaid: null`) settles under the old
+// rule: the conversion cost is paid from cash first, then WAGES_PAYABLE. Invariant
+// (checked by `expectPrepaidInvariant`): the PRODUCTION_IN_PROGRESS balance equals the
+// sum of `conversionPrepaid` over running jobs. The WAGES_PAYABLE accrual branch is now
+// reachable only for migrated jobs, since START_PRODUCTION rejects INSUFFICIENT_FUNDS
+// below the conversion cost.
 //
 // Imports are limited to `src/production/index.ts`, `src/inventory/index.ts`,
 // the public package entry `src/index.ts` (the `Simulation`: `newGame`,
@@ -115,7 +132,7 @@ import {
 } from "@eov/game-data";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { addMaterial, addProduct, storageUsed } from "../../src/inventory/index.ts";
+import { addMaterial, addProduct, addReservation, storageUsed } from "../../src/inventory/index.ts";
 import { conversionCost, jobDuration, storageCapacity, storageCommitted, throughput } from "../../src/production/index.ts";
 import {
   allocateId,
@@ -324,8 +341,44 @@ function runningJob(quantity: number) {
       startedAt: s.tick,
       completesAt: tick(s.tick + 10 * TICKS_PER_DAY),
       reservationIds: [],
+      conversionPrepaid: ZERO_MONEY,
     };
     return { ...state, productionJobs: [...state.productionJobs, job] };
+  };
+}
+
+/**
+ * A job as a pre-M002 save migrates it (ADR 0022, save migration): `conversionPrepaid: null`,
+ * nothing in PRODUCTION_IN_PROGRESS, its inputs (already in stock) reserved for it, completing
+ * at 1× throughput `ticksPerCase × quantity` after now.
+ */
+function migratedJob(recipe: RecipeDefinition, quantity: number) {
+  return (s: GameState): GameState => {
+    const minted = allocateId(s, "ProductionJob");
+    let next = minted.state;
+    const reservationIds: ProductionJobState["reservationIds"][number][] = [];
+    for (const input of recipe.inputsPerCase) {
+      const r = allocateId(next, "Reservation");
+      reservationIds.push(r.id);
+      next = addReservation(r.state, {
+        id: r.id,
+        facilityId: DISTILLERY_MAIN,
+        goods: { kind: "MATERIAL", materialId: input.materialId },
+        quantity: input.quantity * quantity,
+        holder: { kind: "PRODUCTION_JOB", jobId: minted.id },
+      });
+    }
+    const job: ProductionJobState = {
+      id: minted.id,
+      facilityId: DISTILLERY_MAIN,
+      recipeId: recipe.id,
+      quantity,
+      startedAt: s.tick,
+      completesAt: tick(s.tick + recipe.ticksPerCase * quantity),
+      reservationIds,
+      conversionPrepaid: null,
+    };
+    return { ...next, productionJobs: [...next.productionJobs, job] };
   };
 }
 
@@ -443,6 +496,22 @@ const netWorth = (state: GameState): number => {
   const sheet = balanceSheet(state);
   return sheet.assets - sheet.liabilities;
 };
+
+/** Debits minus credits on an account over the whole ledger (an asset's balance; a liability's, negated). */
+function balanceOf(state: GameState, account: LedgerAccount): number {
+  let n = 0;
+  for (const t of state.ledger.transactions) {
+    for (const e of t.entries) if (e.account === account) n += e.side === "DEBIT" ? e.amount : -e.amount;
+  }
+  return n;
+}
+
+const inProgress = (state: GameState): number => balanceOf(state, "PRODUCTION_IN_PROGRESS");
+
+/** ADR 0022 decision 7: the PRODUCTION_IN_PROGRESS balance equals Σ conversionPrepaid over running jobs. */
+function expectPrepaidInvariant(state: GameState): void {
+  expect(inProgress(state)).toBe(state.productionJobs.reduce((n, j) => n + (j.conversionPrepaid ?? 0), 0));
+}
 
 function facilityIn(sim: KernelSimulation): FacilitySnapshot {
   const f = sim.snapshot().facilities.find((x) => x.id === DISTILLERY_MAIN);
@@ -658,10 +727,13 @@ describe("PROD-001 START_PRODUCTION check order", () => {
   });
 
   // @locked
-  it("accepts once every check passes (cash exactly the conversion cost)", () => {
+  it("accepts once every check passes (cash exactly the conversion cost), and the start spends all of it", () => {
     const g = game({ cash: conversionCost(basic(), Q) });
     edit(g, freeMaterials(basic(), Q));
     expectApplied(g.sim.dispatch({ command: produce(Q) }));
+    expect(cashBalance(g.sim.state)).toBe(0);
+    expect(jobAt(g.sim.state).conversionPrepaid).toBe(conversionCost(basic(), Q));
+    expectPrepaidInvariant(g.sim.state);
   });
 });
 
@@ -739,10 +811,14 @@ describe("PROD-001 START_PRODUCTION overflow never throws", () => {
 
 describe("PROD-001 START_PRODUCTION success", () => {
   // @locked
-  it("reserves each input line for the job, schedules it, and emits PRODUCTION_STARTED in an empty RESERVATION transaction", () => {
+  it("reserves each input line for the job, schedules it, pays the conversion cost, and emits PRODUCTION_STARTED in one PRODUCTION_START transaction", () => {
     const g = game();
     edit(g, freeMaterials(basic(), 10));
     g.sim.takeEvents();
+    const cashBefore = cashBalance(g.sim.state);
+    const worthBefore = netWorth(g.sim.state);
+    const conversion = conversionCost(basic(), 4);
+    expect(conversion).toBeGreaterThan(0);
     // An eager command applies as the first thing of the next tick.
     const applyTick = g.sim.state.tick + 1;
     const result = g.sim.dispatch({ command: produce(4) });
@@ -764,10 +840,19 @@ describe("PROD-001 START_PRODUCTION success", () => {
       });
     });
 
-    const t = onlyTransaction(s, idempotencyKey("RESERVATION", job.id));
-    expect(t.kind).toBe("RESERVATION");
-    expect(t.entries).toEqual([]);
+    // ADR 0022 decision 7: PRODUCTION_START:<jobId> replaces the entry-less RESERVATION:<jobId>.
+    expect(transactionsKeyed(s, idempotencyKey("RESERVATION", job.id))).toEqual([]);
+    const t = onlyTransaction(s, idempotencyKey("PRODUCTION_START", job.id));
+    expect(t.kind).toBe("PRODUCTION_START");
+    expectEntries(t.entries, [dr("PRODUCTION_IN_PROGRESS", conversion), cr("CASH", conversion)]);
     expect(t.tick).toBe(applyTick);
+    expect(job.conversionPrepaid).toBe(conversion);
+    expect(cashBalance(s)).toBe(cashBefore - conversion);
+    // A prepaid cost, not an expense: net worth doesn't change at the start.
+    expect(netWorth(s)).toBe(worthBefore);
+    expect(inProgress(s)).toBe(conversion);
+    expectPrepaidInvariant(s);
+    expect(g.sim.snapshot().finance.balanceSheet.assets.productionInProgress).toBe(conversion);
     const events = eventsOf(s, t);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
@@ -778,6 +863,41 @@ describe("PROD-001 START_PRODUCTION success", () => {
       quantity: 4,
       completesAt: job.completesAt,
     });
+  });
+
+  // @locked
+  it("a recipe with zero conversion cost starts with a PRODUCTION_START transaction that has no entries and prepays 0", () => {
+    const data = withRecipe(BASIC_MOONSHINE_RECIPE, { laborPerCase: cents(0), overheadPerCase: cents(0) });
+    const g = game({ data });
+    edit(g, freeMaterials(basic(), 3));
+    const cashBefore = cashBalance(g.sim.state);
+    expectApplied(g.sim.dispatch({ command: produce(3) }));
+    const s = g.sim.state;
+    const job = jobAt(s);
+    const t = onlyTransaction(s, idempotencyKey("PRODUCTION_START", job.id));
+    expect(t.kind).toBe("PRODUCTION_START");
+    expect(t.entries).toEqual([]);
+    expect(eventsOf(s, t).map((e) => e.type)).toEqual(["PRODUCTION_STARTED"]);
+    expect(job.conversionPrepaid).toBe(0);
+    expect(cashBalance(s)).toBe(cashBefore);
+    expectPrepaidInvariant(s);
+  });
+
+  // @locked
+  it("the PRODUCTION_IN_PROGRESS invariant holds at every tick of a run of start, complete, start, fail", () => {
+    const g = game({ data: failing(0) });
+    edit(g, freeMaterials(basic(), 6));
+    expectPrepaidInvariant(g.sim.state);
+    expectApplied(g.sim.dispatch({ command: produce(3) }));
+    const first = jobAt(g.sim.state);
+    while (g.sim.state.tick < first.completesAt) {
+      g.sim.advance(1);
+      expectPrepaidInvariant(g.sim.state);
+    }
+    expect(inProgress(g.sim.state)).toBe(0);
+    expectApplied(g.sim.dispatch({ command: produce(3) }));
+    expect(inProgress(g.sim.state)).toBe(conversionCost(basic(), 3));
+    expectPrepaidInvariant(g.sim.state);
   });
 
   // @locked
@@ -851,7 +971,7 @@ describe("PROD-001 START_PRODUCTION success", () => {
 
 describe("PROD-001 completion", () => {
   // @locked
-  it("consumes the reservations and capitalizes materials + conversion, exactly as S0 posts it", () => {
+  it("consumes the reservations and capitalizes materials + the prepaid conversion, moving no cash", () => {
     const g = game();
     const Q = 5;
     buyInputs(g.sim, basic(), Q);
@@ -867,11 +987,14 @@ describe("PROD-001 completion", () => {
 
     const s = g.sim.state;
     const conversion = conversionCost(basic(), Q);
-    expect(cashBefore).toBeGreaterThanOrEqual(conversion);
+    expect(job.conversionPrepaid).toBe(conversion);
     const t = onlyTransaction(s, idempotencyKey("PRODUCTION", job.id));
     expect(t).toMatchObject({ kind: "PRODUCTION", tick: job.completesAt });
-    expectEntries(t.entries, [dr("FINISHED_GOODS", materials + conversion), cr("RAW_MATERIALS", materials), cr("CASH", conversion)]);
-    expect(cashBalance(s)).toBe(cashBefore - conversion);
+    expectEntries(t.entries, [dr("FINISHED_GOODS", materials + conversion), cr("RAW_MATERIALS", materials), cr("PRODUCTION_IN_PROGRESS", conversion)]);
+    // The conversion cost was paid at the start (ADR 0022 decision 7): completion moves no cash.
+    expect(cashBalance(s)).toBe(cashBefore);
+    expect(inProgress(s)).toBe(0);
+    expectPrepaidInvariant(s);
 
     const events = eventsOf(s, t);
     expect(events.map((e) => e.type)).toEqual([...job.reservationIds.map(() => "RESERVATION_RELEASED"), "PRODUCTION_COMPLETED"]);
@@ -896,24 +1019,92 @@ describe("PROD-001 completion", () => {
   });
 
   // @locked
-  it("accrues the conversion cost cash can't cover to WAGES_PAYABLE, to the cent, when cash was spent after the start", () => {
+  it("a prepaid job completes with no cash and no WAGES_PAYABLE even when all cash was spent after the start", () => {
     const Q = 5;
     const conversion = conversionCost(basic(), Q);
     const item = expansion();
-    const leftAfterPurchase = Math.floor(conversion / 3);
-    expect(item.price + leftAfterPurchase).toBeGreaterThanOrEqual(conversion);
-    const g = game({ cash: cents(item.price + leftAfterPurchase) });
+    const g = game({ cash: cents(item.price + conversion) });
     edit(g, (s) => unlockedFor(item)(freeMaterials(basic(), Q)(s)));
     expectApplied(g.sim.dispatch({ command: produce(Q) }));
     const job = jobAt(g.sim.state);
+    expect(cashBalance(g.sim.state)).toBe(item.price);
     expectApplied(g.sim.dispatch({ command: buyEquipment(item.id) }));
-    expect(cashBalance(g.sim.state)).toBe(leftAfterPurchase);
+    expect(cashBalance(g.sim.state)).toBe(0);
     expect(job.completesAt).toBeLessThan(TICKS_PER_DAY);
     advanceTo(g.sim, job.completesAt);
 
     const t = onlyTransaction(g.sim.state, idempotencyKey("PRODUCTION", job.id));
-    expectEntries(t.entries, [dr("FINISHED_GOODS", conversion), cr("CASH", leftAfterPurchase), cr("WAGES_PAYABLE", conversion - leftAfterPurchase)]);
+    expectEntries(t.entries, [dr("FINISHED_GOODS", conversion), cr("PRODUCTION_IN_PROGRESS", conversion)]);
     expect(cashBalance(g.sim.state)).toBe(0);
+    expect(balanceOf(g.sim.state, "WAGES_PAYABLE")).toBe(0);
+    expectPrepaidInvariant(g.sim.state);
+  });
+
+  // @locked
+  it("a migrated job (conversionPrepaid: null) pays the conversion cost at settlement: cash first, the rest to WAGES_PAYABLE, to the cent", () => {
+    const Q = 5;
+    const conversion = conversionCost(basic(), Q);
+    const left = Math.floor(conversion / 3);
+    expect(left).toBeGreaterThan(0);
+    const g = game({ cash: cents(left) });
+    edit(g, (s) => migratedJob(basic(), Q)(freeMaterials(basic(), Q)(s)));
+    const job = jobAt(g.sim.state);
+    expect(job.conversionPrepaid).toBeNull();
+    expect(inProgress(g.sim.state)).toBe(0);
+    expectPrepaidInvariant(g.sim.state);
+    expect(job.completesAt).toBeLessThan(TICKS_PER_DAY);
+    advanceTo(g.sim, job.completesAt);
+
+    const s = g.sim.state;
+    const t = onlyTransaction(s, idempotencyKey("PRODUCTION", job.id));
+    expectEntries(t.entries, [dr("FINISHED_GOODS", conversion), cr("CASH", left), cr("WAGES_PAYABLE", conversion - left)]);
+    expect(t.entries.some((e) => e.account === "PRODUCTION_IN_PROGRESS")).toBe(false);
+    expect(cashBalance(s)).toBe(0);
+    expect(s.productionJobs).toEqual([]);
+    expect(casesInStock(s)).toBe(Q);
+    expect(inProgress(s)).toBe(0);
+  });
+
+  // @locked
+  it("a migrated job with enough cash pays its conversion cost from cash at settlement, capitalized as before", () => {
+    const Q = 5;
+    const conversion = conversionCost(basic(), Q);
+    const g = game();
+    buyInputs(g.sim, basic(), Q);
+    const materials = basic().inputsPerCase.reduce((n, i) => n + materialPool(g.sim.state, i.materialId)!.totalCost, 0);
+    edit(g, migratedJob(basic(), Q));
+    const job = jobAt(g.sim.state);
+    const cashBefore = cashBalance(g.sim.state);
+    expect(cashBefore).toBeGreaterThanOrEqual(conversion);
+    advanceTo(g.sim, job.completesAt);
+    const s = g.sim.state;
+    const t = onlyTransaction(s, idempotencyKey("PRODUCTION", job.id));
+    expectEntries(t.entries, [dr("FINISHED_GOODS", materials + conversion), cr("RAW_MATERIALS", materials), cr("CASH", conversion)]);
+    expect(cashBalance(s)).toBe(cashBefore - conversion);
+    expect(eventsOf(s, t).at(-1)).toMatchObject({ type: "PRODUCTION_COMPLETED", jobId: job.id, costBasis: materials + conversion });
+  });
+
+  // @locked
+  it("completion credits exactly what the job prepaid: a recipe-cost change mid-job leaves no residue in PRODUCTION_IN_PROGRESS", () => {
+    const Q = 4;
+    const g = game();
+    edit(g, freeMaterials(basic(), Q));
+    expectApplied(g.sim.dispatch({ command: produce(Q) }));
+    const job = jobAt(g.sim.state);
+    const prepaid = conversionCost(basic(), Q);
+    expect(job.conversionPrepaid).toBe(prepaid);
+    const cashAfterStart = cashBalance(g.sim.state);
+    // The recipe's labor doubles while the job runs.
+    const pricier = withRecipe(BASIC_MOONSHINE_RECIPE, { laborPerCase: cents(basic().laborPerCase * 2 + 1) });
+    const after: Game = { sim: createSimulation(g.sim.state, simulationOptions({ ...g.setup, data: pricier })), setup: { ...g.setup, data: pricier } };
+    advanceTo(after.sim, job.completesAt);
+    const s = after.sim.state;
+    const t = onlyTransaction(s, idempotencyKey("PRODUCTION", job.id));
+    expectEntries(t.entries, [dr("FINISHED_GOODS", prepaid), cr("PRODUCTION_IN_PROGRESS", prepaid)]);
+    expect(inProgress(s)).toBe(0);
+    expect(cashBalance(s)).toBe(cashAfterStart);
+    expect(eventsOf(s, t).at(-1)).toMatchObject({ type: "PRODUCTION_COMPLETED", costBasis: prepaid });
+    expectPrepaidInvariant(s);
   });
 
   // @locked
@@ -944,7 +1135,7 @@ describe("PROD-001 completion", () => {
 
 describe("PROD-001 failure", () => {
   // @locked
-  it("failureChance 1 000 000 always fails: inputs and conversion written off to LOSSES in PRODUCTION_WRITE_OFF", () => {
+  it("failureChance 1 000 000 always fails: inputs and the prepaid conversion written off to LOSSES in PRODUCTION_WRITE_OFF", () => {
     const data = failing(PPM);
     const g = game({ data });
     const Q = 5;
@@ -961,12 +1152,16 @@ describe("PROD-001 failure", () => {
 
     const s = g.sim.state;
     const conversion = conversionCost(basic(), Q);
+    expect(job.conversionPrepaid).toBe(conversion);
     expect(transactionsKeyed(s, idempotencyKey("PRODUCTION", job.id))).toEqual([]);
     const t = onlyTransaction(s, idempotencyKey("PRODUCTION_WRITE_OFF", job.id));
     expect(t).toMatchObject({ kind: "PRODUCTION_WRITE_OFF", tick: job.completesAt });
-    expectEntries(t.entries, [dr("LOSSES", materials + conversion), cr("RAW_MATERIALS", materials), cr("CASH", conversion)]);
-    expect(cashBalance(s)).toBe(cashBefore - conversion);
+    expectEntries(t.entries, [dr("LOSSES", materials + conversion), cr("RAW_MATERIALS", materials), cr("PRODUCTION_IN_PROGRESS", conversion)]);
+    // Paid at the start (ADR 0022 decision 7): the failure moves no cash, and the prepaid asset is written off.
+    expect(cashBalance(s)).toBe(cashBefore);
     expect(netWorth(s)).toBe(worthBefore - materials - conversion);
+    expect(inProgress(s)).toBe(0);
+    expectPrepaidInvariant(s);
 
     const events = eventsOf(s, t);
     expect(events.map((e) => e.type)).toEqual([...job.reservationIds.map(() => "RESERVATION_RELEASED"), "PRODUCTION_FAILED"]);
@@ -989,22 +1184,42 @@ describe("PROD-001 failure", () => {
   });
 
   // @locked
-  it("a failed job's conversion cost is paid from cash first, then WAGES_PAYABLE", () => {
+  it("a prepaid job that fails after all cash was spent writes off the prepaid amount, with no cash and no WAGES_PAYABLE", () => {
     const Q = 5;
     const data = failing(PPM);
     const conversion = conversionCost(basic(), Q);
     const item = expansion();
-    const left = Math.floor(conversion / 4);
-    expect(item.price + left).toBeGreaterThanOrEqual(conversion);
-    const g = game({ data, cash: cents(item.price + left) });
+    const g = game({ data, cash: cents(item.price + conversion) });
     edit(g, (s) => unlockedFor(item)(freeMaterials(basic(), Q)(s)));
     expectApplied(g.sim.dispatch({ command: produce(Q) }));
     const job = jobAt(g.sim.state);
     expectApplied(g.sim.dispatch({ command: buyEquipment(item.id) }));
+    expect(cashBalance(g.sim.state)).toBe(0);
+    advanceTo(g.sim, job.completesAt);
+    const t = onlyTransaction(g.sim.state, idempotencyKey("PRODUCTION_WRITE_OFF", job.id));
+    expectEntries(t.entries, [dr("LOSSES", conversion), cr("PRODUCTION_IN_PROGRESS", conversion)]);
+    expect(cashBalance(g.sim.state)).toBe(0);
+    expect(balanceOf(g.sim.state, "WAGES_PAYABLE")).toBe(0);
+    expect(eventsOf(g.sim.state, t).at(-1)).toMatchObject({ type: "PRODUCTION_FAILED", writtenOff: conversion });
+    expectPrepaidInvariant(g.sim.state);
+  });
+
+  // @locked
+  it("a migrated job (conversionPrepaid: null) that fails pays its conversion cost from cash first, then WAGES_PAYABLE", () => {
+    const Q = 5;
+    const data = failing(PPM);
+    const conversion = conversionCost(basic(), Q);
+    const left = Math.floor(conversion / 4);
+    expect(left).toBeGreaterThan(0);
+    const g = game({ data, cash: cents(left) });
+    edit(g, (s) => migratedJob(basic(), Q)(freeMaterials(basic(), Q)(s)));
+    const job = jobAt(g.sim.state);
+    expect(job.conversionPrepaid).toBeNull();
     advanceTo(g.sim, job.completesAt);
     const t = onlyTransaction(g.sim.state, idempotencyKey("PRODUCTION_WRITE_OFF", job.id));
     expectEntries(t.entries, [dr("LOSSES", conversion), cr("CASH", left), cr("WAGES_PAYABLE", conversion - left)]);
     expect(cashBalance(g.sim.state)).toBe(0);
+    expect(inProgress(g.sim.state)).toBe(0);
     expect(eventsOf(g.sim.state, t).at(-1)).toMatchObject({ type: "PRODUCTION_FAILED", writtenOff: conversion });
   });
 

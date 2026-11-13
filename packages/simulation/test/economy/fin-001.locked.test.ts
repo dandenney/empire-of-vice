@@ -6,6 +6,16 @@
 //
 // Written ahead of the implementation. Do not edit (CLAUDE.md rule 9).
 //
+// Re-locked for ADR 0022 decision 7 (issue #197): production's conversion cost is
+// paid when the job starts. `PRODUCTION_START:<jobId>` posts Dr PRODUCTION_IN_PROGRESS
+// (a new asset) / Cr CASH; completion and failure credit PRODUCTION_IN_PROGRESS with the
+// job's `conversionPrepaid` and move no cash. A job migrated from a pre-M002 save
+// (`conversionPrepaid: null`) still settles under the old pay-at-settlement rule, so
+// `productionEntries` and `productionWriteOffEntries` remain for that path.
+// `BalanceSheet.assets` gains `productionInProgress`, and `PRODUCTION_START`'s cash-flow
+// kind default is WAGES (ADR 0015). New invariant, checked by `expectLedgerSound`: the
+// PRODUCTION_IN_PROGRESS balance equals the sum of `conversionPrepaid` over running jobs.
+//
 // Imports are limited to `src/economy/ledger/index.ts`, `src/economy/coordinator/index.ts`
 // and the public package entry `src/index.ts` (the `Simulation` and its finance
 // projection), plus contracts and game-data.
@@ -23,11 +33,19 @@
 //     omits zero-amount lines (an all-zero posting returns []), and never returns a
 //     single entry. Entry order is free (tests compare sorted).
 //       materialPurchaseEntries(cost)                         Dr RAW_MATERIALS / Cr CASH
+//       productionStartEntries(conversion)                    Dr PRODUCTION_IN_PROGRESS / Cr CASH
+//           (ADR 0022 decision 7: a job's conversion cost, paid at START_PRODUCTION)
+//       prepaidProductionEntries({ materials, prepaid })
+//           Dr FINISHED_GOODS materials+prepaid / Cr RAW_MATERIALS materials /
+//           Cr PRODUCTION_IN_PROGRESS prepaid (no cash)
+//       prepaidProductionWriteOffEntries({ materials, prepaid })
+//           as prepaidProductionEntries, but the debit goes to LOSSES (a failed run)
 //       productionEntries({ materials, conversion, cashAvailable })
+//           A migrated job (`conversionPrepaid: null`), settling under the old rule:
 //           Dr FINISHED_GOODS materials+conversion / Cr RAW_MATERIALS materials /
 //           Cr CASH min(conversion, cashAvailable) / Cr WAGES_PAYABLE the rest
 //       productionWriteOffEntries({ materials, conversion, cashAvailable })
-//           as productionEntries, but the debit goes to LOSSES (a failed run)
+//           as productionEntries, but the debit goes to LOSSES (a failed migrated run)
 //       dispatchEntries(cost)                                 Dr GOODS_IN_TRANSIT / Cr FINISHED_GOODS
 //       returnFromTransitEntries(cost)                        Dr FINISHED_GOODS / Cr GOODS_IN_TRANSIT
 //       saleEntries({ revenue, costOfGoodsSold })             Dr CASH / Cr SALES_REVENUE, Dr COST_OF_GOODS_SOLD / Cr GOODS_IN_TRANSIT
@@ -65,6 +83,8 @@ import {
   type LedgerEntry,
   type LedgerTransaction,
   type Money,
+  type ProductionJobId,
+  type ProductionJobState,
   type ReservationId,
   type TransactionDraft,
   type TransactionId,
@@ -97,7 +117,10 @@ import {
   materialPurchaseEntries,
   payDownEntries,
   payOrAccrueEntries,
+  prepaidProductionEntries,
+  prepaidProductionWriteOffEntries,
   productionEntries,
+  productionStartEntries,
   productionWriteOffEntries,
   returnFromTransitEntries,
   saleEntries,
@@ -184,7 +207,13 @@ function commitEntries(
 
 const fullBalances = (state: GameState) => accountBalances(state.ledger.transactions);
 
-/** Every committed transaction is empty or ≥ 2 positive lines that balance; keys are unique; the latest passes every invariant. */
+/** ADR 0022 decision 7: what running jobs have prepaid (a migrated job's null counts as 0). */
+const prepaidByJobs = (state: GameState): number => state.productionJobs.reduce((n, j) => n + (j.conversionPrepaid ?? 0), 0);
+
+/**
+ * Every committed transaction is empty or ≥ 2 positive lines that balance; keys are unique; the latest passes every invariant;
+ * the PRODUCTION_IN_PROGRESS balance equals the sum of `conversionPrepaid` over running jobs (ADR 0022 decision 7).
+ */
 function expectLedgerSound(state: GameState): void {
   const keys = new Set<string>();
   for (const t of state.ledger.transactions) {
@@ -201,6 +230,7 @@ function expectLedgerSound(state: GameState): void {
   expect(sheet.assets).toBe(sheet.liabilities + sheet.equity + sheet.netIncome);
   expect(sheet.netWorth).toBe(sheet.assets - sheet.liabilities);
   expect(fullBalances(state).CASH).toBeGreaterThanOrEqual(0);
+  expect(fullBalances(state).PRODUCTION_IN_PROGRESS).toBe(prepaidByJobs(state));
 }
 
 function expectThrowsInvariant(tx: TransactionDraft, code: InvariantViolation["code"]): InvariantViolationError {
@@ -241,6 +271,7 @@ const ACCOUNT_CATEGORY: Partial<Record<LedgerAccount, CashFlowCategory>> = {
 const KIND_DEFAULT: Partial<Record<TransactionKind, CashFlowCategory>> = {
   MATERIAL_PURCHASE: "MATERIALS",
   PRODUCTION: "WAGES",
+  PRODUCTION_START: "WAGES",
   EQUIPMENT_PURCHASE: "EQUIPMENT",
   DISPATCH: "TRANSPORT",
   SALE: "SALES",
@@ -295,6 +326,7 @@ function expectFinanceReconciles(state: GameState, finance: FinanceSnapshot, che
     rawMaterials: b("RAW_MATERIALS"),
     finishedGoods: b("FINISHED_GOODS"),
     goodsInTransit: b("GOODS_IN_TRANSIT"),
+    productionInProgress: b("PRODUCTION_IN_PROGRESS"),
     receivables: b("RECEIVABLES"),
     equipment: b("EQUIPMENT"),
     vehicles: b("VEHICLES"),
@@ -379,6 +411,8 @@ type ValidOp =
   | { readonly k: "buy"; readonly sugar: boolean; readonly qty: number; readonly unit: number }
   | { readonly k: "writeOff"; readonly sugar: boolean; readonly qty: number }
   | { readonly k: "produce"; readonly qty: number; readonly conversion: number }
+  | { readonly k: "start"; readonly conversion: number }
+  | { readonly k: "settle"; readonly qty: number; readonly fail: boolean }
   | { readonly k: "sell"; readonly qty: number; readonly unit: number }
   | { readonly k: "expense"; readonly amount: number; readonly penalty: boolean }
   | { readonly k: "payDown"; readonly amount: number; readonly penalty: boolean }
@@ -396,6 +430,8 @@ const validOpArb: fc.Arbitrary<ValidOp> = fc.oneof(
   fc.record({ k: fc.constant("buy" as const), sugar: fc.boolean(), qty: fc.integer({ min: 1, max: 40 }), unit: fc.integer({ min: 1, max: 900 }) }),
   fc.record({ k: fc.constant("writeOff" as const), sugar: fc.boolean(), qty: fc.integer({ min: 1, max: 40 }) }),
   fc.record({ k: fc.constant("produce" as const), qty: fc.integer({ min: 1, max: 40 }), conversion: fc.integer({ min: 0, max: 20_000 }) }),
+  fc.record({ k: fc.constant("start" as const), conversion: fc.integer({ min: 0, max: 20_000 }) }),
+  fc.record({ k: fc.constant("settle" as const), qty: fc.integer({ min: 0, max: 40 }), fail: fc.boolean() }),
   fc.record({ k: fc.constant("sell" as const), qty: fc.integer({ min: 1, max: 40 }), unit: fc.integer({ min: 0, max: 5_000 }) }),
   fc.record({ k: fc.constant("expense" as const), amount: amountArb, penalty: fc.boolean() }),
   fc.record({ k: fc.constant("payDown" as const), amount: amountArb, penalty: fc.boolean() }),
@@ -454,6 +490,7 @@ function applyValid(run: Run, op: ValidOp): void {
       break;
     }
     case "produce": {
+      // A migrated job (`conversionPrepaid: null`) settling under the old rule: cash first, then WAGES_PAYABLE.
       const pool = materialPool(s, CORN);
       const qty = min(op.qty, pool.quantity);
       if (qty === 0) break;
@@ -471,6 +508,52 @@ function applyValid(run: Run, op: ValidOp): void {
       next = commitEntries(s, "PRODUCTION", key("PRODUCTION"), entries, (x) =>
         setProductPool(setMaterialPool(x, CORN, pool.quantity - qty, subtractMoney(pool.totalCost, materials)), product.quantity + qty, addMoney(product.totalCost, cents(basis))),
       );
+      break;
+    }
+    case "start": {
+      // ADR 0022 decision 7: PRODUCTION_START pays the conversion cost into PRODUCTION_IN_PROGRESS,
+      // and the job records what it prepaid. A zero cost posts no entries.
+      const prepaid = min(op.conversion, cash);
+      const k = key("PRODUCTION_START");
+      const job: ProductionJobState = {
+        id: `job-prop-${run.n}` as ProductionJobId,
+        facilityId: DISTILLERY_MAIN,
+        recipeId: BASIC_MOONSHINE_RECIPE,
+        quantity: 1,
+        startedAt: tick(1),
+        completesAt: tick(2),
+        reservationIds: [],
+        conversionPrepaid: cents(prepaid),
+      };
+      const entries = prepaid > 0 ? [dr("PRODUCTION_IN_PROGRESS", prepaid), cr("CASH", prepaid)] : [];
+      next = commitEntries(s, "PRODUCTION_START", k, entries, (x) => ({ ...x, productionJobs: [...x.productionJobs, job] }));
+      expect(fullBalances(next).CASH).toBe(cash - prepaid);
+      break;
+    }
+    case "settle": {
+      // Completion or failure of a prepaid job: PRODUCTION_IN_PROGRESS is credited with exactly
+      // `conversionPrepaid`, and no cash moves.
+      const job = s.productionJobs.find((j) => j.conversionPrepaid !== null);
+      if (!job) break;
+      const prepaid = job.conversionPrepaid ?? 0;
+      const pool = materialPool(s, CORN);
+      const qty = min(op.qty, pool.quantity);
+      const materials = qty === 0 ? 0 : allocateRemovalCost(pool.totalCost, pool.quantity, qty);
+      const basis = materials + prepaid;
+      const kind = op.fail ? "PRODUCTION_WRITE_OFF" : "PRODUCTION";
+      const entries = [
+        ...(basis > 0 ? [dr(op.fail ? "LOSSES" : "FINISHED_GOODS", basis)] : []),
+        ...(materials > 0 ? [cr("RAW_MATERIALS", materials)] : []),
+        ...(prepaid > 0 ? [cr("PRODUCTION_IN_PROGRESS", prepaid)] : []),
+      ];
+      const product = productPool(s);
+      next = commitEntries(s, kind, key(kind), entries, (x) => {
+        let y: GameState = { ...x, productionJobs: x.productionJobs.filter((j) => j.id !== job.id) };
+        if (qty > 0) y = setMaterialPool(y, CORN, pool.quantity - qty, subtractMoney(pool.totalCost, cents(materials)));
+        if (!op.fail) y = setProductPool(y, product.quantity + job.quantity, addMoney(product.totalCost, cents(basis)));
+        return y;
+      });
+      expect(fullBalances(next).CASH).toBe(cash);
       break;
     }
     case "sell": {
@@ -796,7 +879,45 @@ describe("FIN-001 posting builders", () => {
   });
 
   // @locked
-  it("production (the FIN-001 example): Dr FINISHED_GOODS $120 / Cr RAW_MATERIALS $80 / Cr CASH $40, no profit", () => {
+  it("PRODUCTION_IN_PROGRESS is an asset account (ADR 0022 decision 7)", () => {
+    expect(LEDGER_ACCOUNTS.PRODUCTION_IN_PROGRESS).toBe("asset");
+    expect(fullBalances(start).PRODUCTION_IN_PROGRESS).toBe(0);
+  });
+
+  // @locked
+  it("production start: Dr PRODUCTION_IN_PROGRESS / Cr CASH for the conversion cost, net worth unchanged; a zero cost posts nothing", () => {
+    const e = productionStartEntries(cents(4_000));
+    expectEntries(e, [dr("PRODUCTION_IN_PROGRESS", 4_000), cr("CASH", 4_000)]);
+    expect(netWorthDelta(e)).toBe(0);
+    for (const x of e) expect(["revenue", "expense"]).not.toContain(LEDGER_ACCOUNTS[x.account]);
+    expect(productionStartEntries(ZERO_MONEY)).toEqual([]);
+  });
+
+  // @locked
+  it("production (the FIN-001 example, prepaid): Dr FINISHED_GOODS $120 / Cr RAW_MATERIALS $80 / Cr PRODUCTION_IN_PROGRESS $40, no cash, no profit", () => {
+    const done = prepaidProductionEntries({ materials: cents(8_000), prepaid: cents(4_000) });
+    expectEntries(done, [dr("FINISHED_GOODS", 12_000), cr("RAW_MATERIALS", 8_000), cr("PRODUCTION_IN_PROGRESS", 4_000)]);
+    expect(netWorthDelta(done)).toBe(0);
+    expect(netCash(done)).toBe(0);
+    for (const e of done) expect(["revenue", "expense"]).not.toContain(LEDGER_ACCOUNTS[e.account]);
+    // Nothing prepaid (a zero-cost recipe): materials only.
+    expectEntries(prepaidProductionEntries({ materials: cents(8_000), prepaid: ZERO_MONEY }), [dr("FINISHED_GOODS", 8_000), cr("RAW_MATERIALS", 8_000)]);
+    // No materials (inputs that cost nothing): the prepaid amount only.
+    expectEntries(prepaidProductionEntries({ materials: ZERO_MONEY, prepaid: cents(4_000) }), [dr("FINISHED_GOODS", 4_000), cr("PRODUCTION_IN_PROGRESS", 4_000)]);
+    expect(prepaidProductionEntries({ materials: ZERO_MONEY, prepaid: ZERO_MONEY })).toEqual([]);
+  });
+
+  // @locked
+  it("a prepaid failure: Dr LOSSES / Cr RAW_MATERIALS / Cr PRODUCTION_IN_PROGRESS, no cash (ADR 0017's write-off with the cash leg replaced)", () => {
+    const failed = prepaidProductionWriteOffEntries({ materials: cents(8_000), prepaid: cents(4_000) });
+    expectEntries(failed, [dr("LOSSES", 12_000), cr("RAW_MATERIALS", 8_000), cr("PRODUCTION_IN_PROGRESS", 4_000)]);
+    expect(netWorthDelta(failed)).toBe(-12_000);
+    expect(netCash(failed)).toBe(0);
+    expectEntries(prepaidProductionWriteOffEntries({ materials: cents(8_000), prepaid: ZERO_MONEY }), [dr("LOSSES", 8_000), cr("RAW_MATERIALS", 8_000)]);
+  });
+
+  // @locked
+  it("a migrated job (conversionPrepaid: null) settles under the old rule: Dr FINISHED_GOODS $120 / Cr RAW_MATERIALS $80 / Cr CASH $40", () => {
     const paid = productionEntries({ materials: cents(8_000), conversion: cents(4_000), cashAvailable: cents(100_000) });
     expectEntries(paid, [dr("FINISHED_GOODS", 12_000), cr("RAW_MATERIALS", 8_000), cr("CASH", 4_000)]);
     expect(netWorthDelta(paid)).toBe(0);
@@ -804,7 +925,7 @@ describe("FIN-001 posting builders", () => {
   });
 
   // @locked
-  it("production with no cash accrues the $40 to WAGES_PAYABLE; with some cash it splits", () => {
+  it("a migrated job with no cash accrues the $40 to WAGES_PAYABLE; with some cash it splits", () => {
     const accrued = productionEntries({ materials: cents(8_000), conversion: cents(4_000), cashAvailable: ZERO_MONEY });
     expectEntries(accrued, [dr("FINISHED_GOODS", 12_000), cr("RAW_MATERIALS", 8_000), cr("WAGES_PAYABLE", 4_000)]);
     const split = productionEntries({ materials: cents(8_000), conversion: cents(4_000), cashAvailable: cents(1_500) });
@@ -814,20 +935,83 @@ describe("FIN-001 posting builders", () => {
   });
 
   // @locked
-  it("production commits through the coordinator against real pools and recognizes no profit", () => {
+  it("production commits through the coordinator against real pools: cash moves at the start only, net worth never moves, no profit", () => {
     let s = commitEntries(start, "MATERIAL_PURCHASE", "MATERIAL_PURCHASE:corn", materialPurchaseEntries(cents(8_000)), (x) =>
       setMaterialPool(x, CORN, 10, cents(8_000)),
     );
     const netWorth = balanceSheet(s).netWorth;
+    const cash = fullBalances(s).CASH;
+    const job: ProductionJobState = {
+      id: "job-1" as ProductionJobId,
+      facilityId: DISTILLERY_MAIN,
+      recipeId: BASIC_MOONSHINE_RECIPE,
+      quantity: 10,
+      startedAt: tick(1),
+      completesAt: tick(2),
+      reservationIds: [],
+      conversionPrepaid: cents(4_000),
+    };
+
+    // Start: PRODUCTION_START:<jobId> pays the conversion cost into PRODUCTION_IN_PROGRESS.
+    s = commitEntries(s, "PRODUCTION_START", idempotencyKey("PRODUCTION_START", job.id), productionStartEntries(cents(4_000)), (x) => ({
+      ...x,
+      productionJobs: [...x.productionJobs, job],
+    }));
+    expect(fullBalances(s).CASH).toBe(cash - 4_000);
+    expect(fullBalances(s).PRODUCTION_IN_PROGRESS).toBe(4_000);
+    expect(balanceSheet(s).netWorth).toBe(netWorth);
+    expect(projectFinance(s).balanceSheet.assets.productionInProgress).toBe(4_000);
+    expectLedgerSound(s);
+
+    // Completion: PRODUCTION_IN_PROGRESS and RAW_MATERIALS become FINISHED_GOODS; cash doesn't move.
     s = commitEntries(
       s,
       "PRODUCTION",
-      "PRODUCTION:job-1",
-      productionEntries({ materials: cents(8_000), conversion: cents(4_000), cashAvailable: fullBalances(s).CASH }),
-      (x) => setProductPool(setMaterialPool(x, CORN, 0, ZERO_MONEY), 10, cents(12_000)),
+      idempotencyKey("PRODUCTION", job.id),
+      prepaidProductionEntries({ materials: cents(8_000), prepaid: cents(4_000) }),
+      (x) => ({ ...setProductPool(setMaterialPool(x, CORN, 0, ZERO_MONEY), 10, cents(12_000)), productionJobs: x.productionJobs.filter((j) => j.id !== job.id) }),
     );
     expect(fullBalances(s).FINISHED_GOODS).toBe(12_000);
     expect(fullBalances(s).RAW_MATERIALS).toBe(0);
+    expect(fullBalances(s).PRODUCTION_IN_PROGRESS).toBe(0);
+    expect(fullBalances(s).CASH).toBe(cash - 4_000);
+    expect(projectFinance(s).balanceSheet.assets.productionInProgress).toBe(0);
+    expect(balanceSheet(s).netIncome).toBe(0);
+    expect(balanceSheet(s).netWorth).toBe(netWorth);
+    expectLedgerSound(s);
+  });
+
+  // @locked
+  it("a migrated job (conversionPrepaid: null) commits its old-rule settlement through the coordinator and recognizes no profit", () => {
+    let s = commitEntries(start, "MATERIAL_PURCHASE", "MATERIAL_PURCHASE:corn", materialPurchaseEntries(cents(8_000)), (x) =>
+      setMaterialPool(x, CORN, 10, cents(8_000)),
+    );
+    const job: ProductionJobState = {
+      id: "job-1" as ProductionJobId,
+      facilityId: DISTILLERY_MAIN,
+      recipeId: BASIC_MOONSHINE_RECIPE,
+      quantity: 10,
+      startedAt: tick(0),
+      completesAt: tick(2),
+      reservationIds: [],
+      conversionPrepaid: null,
+    };
+    s = { ...s, productionJobs: [job] };
+    // A migrated job prepaid nothing, so PRODUCTION_IN_PROGRESS holds nothing for it.
+    expectLedgerSound(s);
+    const netWorth = balanceSheet(s).netWorth;
+    const cash = fullBalances(s).CASH;
+    s = commitEntries(
+      s,
+      "PRODUCTION",
+      idempotencyKey("PRODUCTION", job.id),
+      productionEntries({ materials: cents(8_000), conversion: cents(4_000), cashAvailable: fullBalances(s).CASH }),
+      (x) => ({ ...setProductPool(setMaterialPool(x, CORN, 0, ZERO_MONEY), 10, cents(12_000)), productionJobs: [] }),
+    );
+    expect(fullBalances(s).FINISHED_GOODS).toBe(12_000);
+    expect(fullBalances(s).RAW_MATERIALS).toBe(0);
+    expect(fullBalances(s).CASH).toBe(cash - 4_000);
+    expect(fullBalances(s).PRODUCTION_IN_PROGRESS).toBe(0);
     expect(balanceSheet(s).netIncome).toBe(0);
     expect(balanceSheet(s).netWorth).toBe(netWorth);
     expectLedgerSound(s);
@@ -912,6 +1096,9 @@ describe("FIN-001 posting builders", () => {
       fc.property(m, m, m, m, (a, b, c, d) => {
         const cases: [readonly LedgerEntry[], number][] = [
           [materialPurchaseEntries(a), 0],
+          [productionStartEntries(a), 0],
+          [prepaidProductionEntries({ materials: a, prepaid: b }), 0],
+          [prepaidProductionWriteOffEntries({ materials: a, prepaid: b }), 0 - (a + b)],
           [productionEntries({ materials: a, conversion: b, cashAvailable: c }), 0],
           [productionWriteOffEntries({ materials: a, conversion: b, cashAvailable: c }), 0 - (a + b)],
           [dispatchEntries(a), 0],
@@ -928,6 +1115,10 @@ describe("FIN-001 posting builders", () => {
           expectWellFormed(entries);
           expect(netWorthDelta(entries)).toBe(delta);
         }
+        // Decision 7: a start moves exactly the conversion cost out of cash; a prepaid settlement moves none.
+        expect(netCash(productionStartEntries(a))).toBe(0 - a);
+        expect(netCash(prepaidProductionEntries({ materials: a, prepaid: b }))).toBe(0);
+        expect(netCash(prepaidProductionWriteOffEntries({ materials: a, prepaid: b }))).toBe(0);
         // Cash credited by the pay-or-accrue patterns never exceeds what's available.
         for (const entries of [
           productionEntries({ materials: a, conversion: b, cashAvailable: c }),
@@ -1049,7 +1240,13 @@ describe("FIN-001 cash flow attribution (ADR 0015)", () => {
   it("falls back to the kind's default when the non-cash accounts disagree or include an unmapped account, with no split", () => {
     // Wages and overhead in one settlement: kind default (WAGES), whole amount, no rounding.
     expect(linesOf([txn("DAILY_SETTLEMENT", [dr("WAGES_EXPENSE", 333), dr("OVERHEAD_EXPENSE", 334), cr("CASH", 667)])])).toEqual({ WAGES: -667 });
-    // Production's capitalized conversion cost stays under WAGES (FINISHED_GOODS has no category).
+    // Production's conversion cost, paid at the start (ADR 0022 decision 7), files under PRODUCTION_START's
+    // kind default, WAGES (PRODUCTION_IN_PROGRESS has no category).
+    expect(linesOf([txn("PRODUCTION_START", productionStartEntries(cents(4_000)))])).toEqual({ WAGES: -4_000 });
+    // A prepaid completion or failure moves no cash, so it reports nothing.
+    expect(linesOf([txn("PRODUCTION", prepaidProductionEntries({ materials: cents(8_000), prepaid: cents(4_000) }))])).toEqual({});
+    expect(linesOf([txn("PRODUCTION_WRITE_OFF", prepaidProductionWriteOffEntries({ materials: cents(8_000), prepaid: cents(4_000) }))])).toEqual({});
+    // A migrated job's capitalized conversion cost stays under WAGES (FINISHED_GOODS has no category).
     expect(linesOf([txn("PRODUCTION", productionEntries({ materials: cents(8_000), conversion: cents(4_000), cashAvailable: cents(10_000) }))])).toEqual({
       WAGES: -4_000,
     });
@@ -1209,6 +1406,42 @@ describe("FIN-001 invariants through the real Simulation", () => {
       }),
       { numRuns: 100 },
     );
+  });
+
+  // @locked
+  it("START_PRODUCTION pays the conversion cost at the start into PRODUCTION_IN_PROGRESS, which the snapshot reports until the job settles (ADR 0022 decision 7)", () => {
+    const sim = newGame();
+    const recipe = GAME_DATA.recipes.find((r) => r.id === BASIC_MOONSHINE_RECIPE)!;
+    const Q = 2;
+    for (const input of recipe.inputsPerCase) {
+      sim.dispatch({ command: { type: "PURCHASE_MATERIALS", supplierId: MILLERS_FEED, materialId: input.materialId, quantity: input.quantity * Q, facilityId: DISTILLERY_MAIN } });
+    }
+    const conversion = (recipe.laborPerCase + recipe.overheadPerCase) * Q;
+    expect(conversion).toBeGreaterThan(0);
+    const cashBefore = fullBalances(sim.state).CASH;
+    const worthBefore = balanceSheet(sim.state).netWorth;
+    dispatchStep(sim, { k: "produce", qty: Q });
+    const job = sim.state.productionJobs[0]!;
+    expect(job.conversionPrepaid).toBe(conversion);
+    const started = sim.state.ledger.transactions.filter((t) => t.idempotencyKey === idempotencyKey("PRODUCTION_START", job.id));
+    expect(started).toHaveLength(1);
+    expect(started[0]!.kind).toBe("PRODUCTION_START");
+    expectEntries(started[0]!.entries, [dr("PRODUCTION_IN_PROGRESS", conversion), cr("CASH", conversion)]);
+    expect(sim.state.ledger.transactions.filter((t) => t.idempotencyKey === idempotencyKey("RESERVATION", job.id))).toEqual([]);
+    expect(fullBalances(sim.state).CASH).toBe(cashBefore - conversion);
+    expect(balanceSheet(sim.state).netWorth).toBe(worthBefore);
+    expect(sim.snapshot().finance.balanceSheet.assets.productionInProgress).toBe(conversion);
+    expectLedgerSound(sim.state);
+    expectFinanceReconciles(sim.state, sim.snapshot().finance);
+
+    sim.advance(job.completesAt - sim.state.tick);
+    expect(sim.state.productionJobs).toEqual([]);
+    const settled = sim.state.ledger.transactions.find((t) => t.idempotencyKey === idempotencyKey("PRODUCTION", job.id))!;
+    expect(netCash(settled.entries)).toBe(0);
+    expect(settled.entries).toContainEqual(cr("PRODUCTION_IN_PROGRESS", conversion));
+    expect(sim.snapshot().finance.balanceSheet.assets.productionInProgress).toBe(0);
+    expectLedgerSound(sim.state);
+    expectFinanceReconciles(sim.state, sim.snapshot().finance);
   });
 
   // @locked
