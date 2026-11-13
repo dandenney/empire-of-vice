@@ -108,10 +108,17 @@ export function observation(state: GameState, t: Tick): Observation {
   }
 }
 
+/** Without repeats, in record order (decision 4). The lists are short: one place's subjects. */
 function sortSubjects(subjects: readonly KnowledgeSubject[]): readonly KnowledgeSubject[] {
-  const seen = new Map<string, KnowledgeSubject>();
-  for (const s of subjects) seen.set(`${s.kind}|${knowledgeSubjectKey(s)}`, s);
-  return [...seen.values()].sort(compareKnowledgeSubjects);
+  const keys = new Set<string>();
+  const out: KnowledgeSubject[] = [];
+  for (const s of subjects) {
+    const key = subjectKey(s);
+    if (keys.has(key)) continue;
+    keys.add(key);
+    out.push(s);
+  }
+  return out.length > 1 ? out.sort(compareKnowledgeSubjects) : out;
 }
 
 /** The subjects that belong to a place (ADR 0021 decision 5), as its party kind allows, with the closed-hours filter. */
@@ -139,8 +146,38 @@ function placeSubjects(state: GameState, data: GameData, locationId: LocationId,
   return out.filter((s) => allowed.has(s.kind));
 }
 
+// The tick-end persist works these out every tick the founder is somewhere, so
+// they're memoised on the immutable state slices they read. A cache hit returns
+// the same result the computation would; it changes nothing but speed.
+
+interface SubjectsMemo {
+  readonly deps: readonly unknown[];
+  readonly subjects: readonly KnowledgeSubject[];
+}
+const subjectsMemo = new WeakMap<object, SubjectsMemo>();
+
 /** The live view's subjects for an observation at `t`. */
 export function liveSubjects(state: GameState, data: GameData, obs: Observation, t: Tick): readonly KnowledgeSubject[] {
+  const deps = [
+    data,
+    obs.locationId,
+    obs.locationId !== null && isOpenAt(obs.locationId, t),
+    obs.stop,
+    state.vehicles,
+    state.contracts,
+    state.routes,
+    state.facilities,
+    state.suppliers,
+    state.buyers,
+  ];
+  const memo = subjectsMemo.get(state.founder);
+  if (memo && memo.deps.every((d, i) => d === deps[i])) return memo.subjects;
+  const subjects = computeLiveSubjects(state, data, obs, t);
+  subjectsMemo.set(state.founder, { deps, subjects });
+  return subjects;
+}
+
+function computeLiveSubjects(state: GameState, data: GameData, obs: Observation, t: Tick): readonly KnowledgeSubject[] {
   const out: KnowledgeSubject[] = [];
   if (obs.locationId !== null) out.push(...placeSubjects(state, data, obs.locationId, t));
   if (obs.stop !== null) {
@@ -199,6 +236,51 @@ function subjectLocation(state: GameState, data: GameData, subject: KnowledgeSub
 
 /** A subject's value in the world now: what any channel copies when it delivers that subject. */
 export function worldValue(state: GameState, data: GameData, subject: KnowledgeSubject): KnowledgeValue {
+  const deps = valueDeps(state, data, subject);
+  const key = subjectKey(subject);
+  let byKey = valueMemo.get(deps[0]!);
+  const memo = byKey?.get(key);
+  if (memo && memo.deps.every((d, i) => d === deps[i])) return memo.value;
+  const value = computeWorldValue(state, data, subject);
+  if (!byKey) {
+    byKey = new Map();
+    valueMemo.set(deps[0]!, byKey);
+  }
+  byKey.set(key, { deps, value });
+  return value;
+}
+
+const valueMemo = new WeakMap<object, Map<string, { readonly deps: readonly object[]; readonly value: KnowledgeValue }>>();
+
+/** The state slices (and game-data) a subject's value is projected from, first the one memoised on. */
+function valueDeps(state: GameState, data: GameData, subject: KnowledgeSubject): readonly object[] {
+  switch (subject.kind) {
+    case "FACILITY_STOCK":
+      return [state.productPools, state.materialPools, state.reservations, data];
+    case "FACILITY_OPERATIONS":
+      return [state.productionJobs, state.facilities, data];
+    case "SUPPLIER_OFFER":
+      return [state.suppliers, data];
+    case "BUYER_WANTS":
+      return [state.buyers, state.family, data];
+    case "BUYER_BUDGET":
+      return [state.buyers, data];
+    case "CONTRACT_OFFERS":
+      return [state.contractOffers, data];
+    case "CONTRACT_PROGRESS":
+      return [state.contracts, data];
+    case "MARKET_PRICES":
+      return [state.markets, data];
+    case "ROUTE_CONDITION":
+      return [state.routes, data];
+    case "VEHICLE_WHEREABOUTS":
+      return [state.vehicles, state.deliveries, data];
+    case "STANDING":
+      return [state.family, data];
+  }
+}
+
+function computeWorldValue(state: GameState, data: GameData, subject: KnowledgeSubject): KnowledgeValue {
   switch (subject.kind) {
     case "FACILITY_STOCK": {
       const { products, materials } = facilityStock(state, data, subject.facilityId);
@@ -295,12 +377,29 @@ export function liveView(state: GameState, data: GameData, t: Tick, omniscient: 
     });
   }
   const obs = observation(state, t);
-  return liveSubjects(state, data, obs, t).map((subject) => {
+  return liveEntries(state, data, obs, liveSubjects(state, data, obs, t));
+}
+
+/** The live view's entries for subjects already worked out (`liveSubjects`). */
+export function liveEntries(state: GameState, data: GameData, obs: Observation, subjects: readonly KnowledgeSubject[]): readonly LiveEntry[] {
+  return subjects.map((subject) => {
     let at = obs.locationId;
     if (at === null && subject.kind === "ROUTE_CONDITION") at = data.routes.find((r) => r.id === subject.routeId)!.fromLocationId;
     return { subject, value: worldValue(state, data, subject), source: { kind: "IN_PERSON", locationId: at! } };
   });
 }
+
+/** A subject's identity as one string: its kind and key. */
+export function subjectKey(subject: KnowledgeSubject): string {
+  let key = keyMemo.get(subject);
+  if (key === undefined) {
+    key = `${subject.kind}|${knowledgeSubjectKey(subject)}`;
+    keyMemo.set(subject, key);
+  }
+  return key;
+}
+
+const keyMemo = new WeakMap<KnowledgeSubject, string>();
 
 export function sameSubject(a: KnowledgeSubject, b: KnowledgeSubject): boolean {
   return a.kind === b.kind && knowledgeSubjectKey(a) === knowledgeSubjectKey(b);

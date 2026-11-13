@@ -19,24 +19,22 @@ import {
   type Tick,
 } from "@eov/contracts";
 import { ACTIVITY_LIMIT, PENDING_NEWS_LIMIT } from "@eov/game-data";
-import { sameSubject } from "./view.ts";
+import { subjectKey } from "./view.ts";
 
 export function withKnowledge(state: GameState, change: (k: KnowledgeState) => KnowledgeState): GameState {
   return { ...state, knowledge: change(state.knowledge) };
 }
 
 export function findRecord(knowledge: KnowledgeState, subject: KnowledgeSubject): KnowledgeRecord | null {
-  return knowledge.records.find((r) => sameSubject(r.subject, subject)) ?? null;
-}
-
-/** Whether a pending book's concern is one of `subjects`. */
-function concernIn(concern: BooksConcern, subjects: readonly KnowledgeSubject[]): boolean {
-  return concern.kind !== "NEWS" && subjects.some((s) => sameSubject(s, concern));
+  const key = subjectKey(subject);
+  return knowledge.records.find((r) => subjectKey(r.subject) === key) ?? null;
 }
 
 /**
  * Learns values (decision 4: one record per subject, the newest wins). The
- * books waiting on any of these subjects become known (decision 7).
+ * books waiting on any of these subjects become known (decision 7). Runs every
+ * tick while the founder is somewhere, so a subject already on record is
+ * replaced in place, and the records are re-sorted only when one is new.
  */
 export function learn(
   knowledge: KnowledgeState,
@@ -44,12 +42,25 @@ export function learn(
   learnedAt: Tick,
 ): KnowledgeState {
   if (entries.length === 0) return knowledge;
-  const subjects = entries.map((e) => e.subject);
-  const kept = knowledge.records.filter((r) => !subjects.some((s) => sameSubject(s, r.subject)));
-  const records = [...kept, ...entries.map((e) => ({ subject: e.subject, value: e.value, learnedAt, source: e.source }))].sort((a, b) =>
-    compareKnowledgeSubjects(a.subject, b.subject),
-  );
-  return { ...knowledge, records, pendingBooks: knowledge.pendingBooks.filter((b) => !concernIn(b.concerns, subjects)) };
+  const fresh = new Map<string, KnowledgeRecord>();
+  for (const e of entries) fresh.set(subjectKey(e.subject), { subject: e.subject, value: e.value, learnedAt, source: e.source });
+  const records: KnowledgeRecord[] = knowledge.records.map((r) => {
+    const key = subjectKey(r.subject);
+    const replacement = fresh.get(key);
+    if (!replacement) return r;
+    fresh.delete(key);
+    return replacement;
+  });
+  if (fresh.size > 0) {
+    records.push(...fresh.values());
+    records.sort((a, b) => compareKnowledgeSubjects(a.subject, b.subject));
+  }
+  let pendingBooks = knowledge.pendingBooks;
+  if (pendingBooks.length > 0) {
+    const learned = new Set(entries.map((e) => subjectKey(e.subject)));
+    pendingBooks = pendingBooks.filter((b) => b.concerns.kind === "NEWS" || !learned.has(subjectKey(b.concerns)));
+  }
+  return { ...knowledge, records, pendingBooks };
 }
 
 /** Delivers a place's pending news: it leaves `pendingNews`, and the books waiting on that news become known. */

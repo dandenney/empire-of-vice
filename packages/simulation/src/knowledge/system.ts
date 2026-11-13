@@ -36,7 +36,7 @@ import type { CommandFate } from "../kernel/registry.ts";
 import { cashMovement } from "../projection/finance.ts";
 import { cashPostingCause, classify } from "./books.ts";
 import { addActivity, addNews, addPendingBook, findRecord, learn, takeNews, withKnowledge } from "./records.ts";
-import { facilityLocation, liveSubjects, liveView, observation, worldValue } from "./view.ts";
+import { facilityLocation, liveEntries, liveSubjects, liveView, observation, worldValue } from "./view.ts";
 
 /** Persists the live view at `t` into the records (decision 5). */
 export function persistLiveView(state: GameState, data: GameData, t: Tick): GameState {
@@ -129,6 +129,13 @@ function newsItem(event: GameEvent): NewsItem {
   return { tick: tagged.tick, event: payload as unknown as NewsItem["event"] };
 }
 
+/** The entries of a tick-ordered list that fall on tick `t`, in order. */
+function tail<T extends { readonly tick: Tick }>(list: readonly T[], t: Tick): readonly T[] {
+  let start = list.length;
+  while (start > 0 && list[start - 1]!.tick >= t) start--;
+  return list.slice(start).filter((x) => x.tick === t);
+}
+
 /**
  * SIM-001 step 6 (decision 5): this tick's news and books, then the persist.
  * `state.tick` is still the previous tick; `t` is the tick being completed.
@@ -136,8 +143,10 @@ function newsItem(event: GameEvent): NewsItem {
 export function tickEnd(state: GameState, data: GameData, t: Tick): GameState {
   const obs = observation(state, t);
   const observed = { subjects: liveSubjects(state, data, obs, t), locationId: obs.locationId };
-  const events = state.eventJournal.filter((e) => e.tick === t);
-  const byId = new Map<string, GameEvent>(state.eventJournal.map((e) => [e.id, e]));
+  // The journal and the ledger are in tick order, so this tick's are at their ends.
+  const events = tail(state.eventJournal, t);
+  const transactions = tail(state.ledger.transactions, t);
+  const byId = new Map<string, GameEvent>(events.map((e) => [e.id, e]));
   let s = state;
 
   // News (decision 7): a place-tagged event the founder didn't see waits at its place.
@@ -149,8 +158,7 @@ export function tickEnd(state: GameState, data: GameData, t: Tick): GameState {
   }
 
   // The books (decision 6), in ledger order.
-  for (const transaction of s.ledger.transactions) {
-    if (transaction.tick !== t) continue;
+  for (const transaction of transactions) {
     const verdict = classify(s, data, transaction, observed, byId);
     if (verdict.kind === "PENDING") {
       s = withKnowledge(s, (k) => addPendingBook(k, transaction.id, verdict.concerns));
@@ -159,7 +167,7 @@ export function tickEnd(state: GameState, data: GameData, t: Tick): GameState {
     }
   }
 
-  return persistLiveView(s, data, t);
+  return withKnowledge(s, (k) => learn(k, liveEntries(s, data, obs, observed.subjects), t));
 }
 
 /** A cash posting away from the founder: known, and a channel for its cause (decision 6). */
