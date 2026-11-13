@@ -31,7 +31,9 @@ import {
   type LocationId,
   type RejectionReason,
   type RestCommand,
+  type RouteLeg,
   type Tick,
+  type TransactionCoordinator,
   type TravelCommand,
   type VehicleId,
   type WakeCommand,
@@ -40,8 +42,12 @@ import { MAX_REST_TICKS, MIN_REST_TICKS, type GameData } from "@eov/game-data";
 import { emitEvent } from "../events/journal.ts";
 import type { CommandContext, CommandOutcome, SystemRegistry, TickContext } from "../kernel/registry.ts";
 import type { GameRules } from "../kernel/rules.ts";
-import { activityRejection, busyRejection, startActivity } from "./activities.ts";
-import { founderArrived, founderDeparting, founderWoke } from "./hooks.ts";
+import { turnBackAtDeparture } from "../logistics/logistics.ts";
+import { playerViewOf, type IssuerView } from "../view/issuer-view.ts";
+import { judgeOrder, type OrderValidator } from "../view/order.ts";
+import { busyRejection } from "../view/presence.ts";
+import { startActivity } from "./activities.ts";
+import { founderArrived, founderDeparting, founderSawRoute, founderWoke } from "./hooks.ts";
 import { closedInWorld, defaultPath, isSimplePath, knownClosure, legEnds, pathLegTicks } from "./paths.ts";
 import { awakeSinceAfterRest } from "./time.ts";
 
@@ -68,49 +74,70 @@ function emit(state: GameState, event: GameEventInput, t: Tick, causedBy: Comman
   return emitEvent(state, event, { tick: t, causedBy }).state;
 }
 
-/** FOUNDER_AWAY for anything but PRESENT (decision 3a). */
-function awayRejection(w: FounderWhereabouts): RejectionReason | null {
-  return w.kind === "PRESENT" ? null : { code: "FOUNDER_AWAY", whereabouts: w.kind };
-}
-
 // ---------------------------------------------------------------------------
 // TRAVEL (decision 3)
 // ---------------------------------------------------------------------------
 
-function applyTravel(state: GameState, command: TravelCommand, ctx: CommandContext, data: GameData): CommandOutcome {
-  const t = ctx.tick;
+/** What a valid TRAVEL sets out on: the path, and the truck if the founder drives. */
+interface TravelPlan {
+  readonly here: LocationId;
+  readonly path: readonly RouteLeg[];
+}
+
+/**
+ * TRAVEL's checks, in decision 3a's order, against the founder's view:
+ * 1. shape and identity: UNKNOWN_ENTITY for the destination, a route in `via`,
+ *    or the vehicle (owned);
+ * 2. presence and busy: FOUNDER_AWAY, FOUNDER_BUSY;
+ * 3. validity against what the founder can see: ALREADY_THERE, INVALID_PATH,
+ *    VEHICLE_NOT_AT (the truck isn't parked here with no trip), ROUTE_CLOSED (a
+ *    leg of `via` known closed), NO_PATH.
+ */
+function planTravel(view: IssuerView, command: TravelCommand, data: GameData): TravelPlan | RejectionReason {
+  const world = view.world;
   const { destinationLocationId: destination, transport, via } = command;
-  // 1. Shape and identity.
-  if (!data.locations.some((l) => l.id === destination)) return rejected({ code: "UNKNOWN_ENTITY", kind: "Location", id: destination });
+  if (!data.locations.some((l) => l.id === destination)) return { code: "UNKNOWN_ENTITY", kind: "Location", id: destination };
   for (const leg of via ?? []) {
-    if (!data.routes.some((r) => r.id === leg.routeId)) return rejected({ code: "UNKNOWN_ENTITY", kind: "Route", id: leg.routeId });
+    if (!data.routes.some((r) => r.id === leg.routeId)) return { code: "UNKNOWN_ENTITY", kind: "Route", id: leg.routeId };
   }
-  const vehicle = transport.kind === "VEHICLE" ? state.vehicles.find((v) => v.id === transport.vehicleId) : undefined;
-  if (transport.kind === "VEHICLE" && !vehicle) return rejected({ code: "UNKNOWN_ENTITY", kind: "Vehicle", id: transport.vehicleId });
-  // 2. Presence and busy.
-  const w = state.founder.whereabouts;
-  const away = awayRejection(w);
-  if (away) return rejected(away);
-  const busy = busyRejection(state, t);
-  if (busy) return rejected(busy);
-  if (w.kind !== "PRESENT") throw new RangeError("unreachable: the founder is present here");
-  // 3. Validity against what the founder can see.
+  const vehicle = transport.kind === "VEHICLE" ? world.vehicles.find((v) => v.id === transport.vehicleId) : undefined;
+  if (transport.kind === "VEHICLE" && !vehicle) return { code: "UNKNOWN_ENTITY", kind: "Vehicle", id: transport.vehicleId };
+  const w = world.founder.whereabouts;
+  if (w.kind !== "PRESENT") return { code: "FOUNDER_AWAY", whereabouts: w.kind };
+  const busy = busyRejection(view);
+  if (busy) return busy;
   const here = w.locationId;
-  if (destination === here) return rejected({ code: "ALREADY_THERE" });
-  if (via !== null && !isSimplePath(data, here, destination, via)) return rejected({ code: "INVALID_PATH" });
-  if (vehicle && (vehicle.trip !== null || vehicle.parkedAt !== here)) {
-    return rejected({ code: "VEHICLE_NOT_AT", vehicleId: vehicle.id, locationId: here });
-  }
+  if (destination === here) return { code: "ALREADY_THERE" };
+  if (via !== null && !isSimplePath(data, here, destination, via)) return { code: "INVALID_PATH" };
+  if (vehicle && (vehicle.trip !== null || vehicle.parkedAt !== here)) return { code: "VEHICLE_NOT_AT", vehicleId: vehicle.id, locationId: here };
   const onFoot = transport.kind === "FOOT";
   if (!onFoot && via !== null) {
     for (const leg of via) {
-      const closure = knownClosure(state, leg.routeId);
-      if (closure) return rejected({ code: "ROUTE_CLOSED", routeId: leg.routeId, reopensAt: closure.reopensAt });
+      const closure = knownClosure(world, leg.routeId);
+      if (closure) return { code: "ROUTE_CLOSED", routeId: leg.routeId, reopensAt: closure.reopensAt };
     }
   }
-  const path = via ?? defaultPath(state, data, here, destination, onFoot);
-  if (path === null) return rejected({ code: "NO_PATH", destinationLocationId: destination });
+  const path = via ?? defaultPath(world, data, here, destination, onFoot);
+  if (path === null) return { code: "NO_PATH", destinationLocationId: destination };
+  return { here, path };
+}
 
+/** TRAVEL's order validator: decision 3a's checks; with founder rules off, an accepted no-op (decision 9). */
+export function travelValidator(data: GameData): OrderValidator<"TRAVEL"> {
+  return (view, command) => {
+    if (!view.founderRules) return null;
+    const plan = planTravel(view, command, data);
+    return "code" in plan ? plan : null;
+  };
+}
+
+function applyTravel(state: GameState, command: TravelCommand, ctx: CommandContext, data: GameData, rules: GameRules): CommandOutcome {
+  const t = ctx.tick;
+  const plan = planTravel(playerViewOf(state, data, rules, t), command, data);
+  if ("code" in plan) return rejected(plan);
+  const { here, path } = plan;
+  const { destinationLocationId: destination, transport } = command;
+  const onFoot = transport.kind === "FOOT";
   const first = path[0]!;
   // Leg by leg: a truck can't enter a route that's actually closed. The first leg
   // starts here, where the founder can see it, so this only happens for a route
@@ -121,7 +148,7 @@ function applyTravel(state: GameState, command: TravelCommand, ctx: CommandConte
     return { status: "applied", state: s };
   }
   let s = founderDeparting(state, here, "TRAVEL", t);
-  if (vehicle) s = withParkedAt(s, vehicle.id, null);
+  if (transport.kind === "VEHICLE") s = withParkedAt(s, transport.vehicleId, null);
   s = withWhereabouts(s, {
     kind: "TRAVELLING",
     transport,
@@ -139,18 +166,32 @@ function applyTravel(state: GameState, command: TravelCommand, ctx: CommandConte
 // REST and WAKE (decision 7)
 // ---------------------------------------------------------------------------
 
-function applyRest(state: GameState, command: RestCommand, ctx: CommandContext): CommandOutcome {
+/** REST's checks (decision 3a): INVALID_REST_LENGTH (shape), then FOUNDER_AWAY and FOUNDER_BUSY. */
+export function restValidator(): OrderValidator<"REST"> {
+  return (view, command) => {
+    if (!view.founderRules) return null;
+    const min = addTicks(view.at, MIN_REST_TICKS);
+    const max = addTicks(view.at, MAX_REST_TICKS);
+    const until = command.untilTick;
+    if (!Number.isSafeInteger(until) || until < min || until > max) return { code: "INVALID_REST_LENGTH", min, max };
+    const w = view.world.founder.whereabouts;
+    if (w.kind !== "PRESENT") return { code: "FOUNDER_AWAY", whereabouts: w.kind };
+    return busyRejection(view);
+  };
+}
+
+/** WAKE's check (decision 3a): NOT_RESTING. */
+export function wakeValidator(): OrderValidator<"WAKE"> {
+  return (view) => (!view.founderRules || view.world.founder.whereabouts.kind === "RESTING" ? null : { code: "NOT_RESTING" });
+}
+
+function applyRest(state: GameState, command: RestCommand, ctx: CommandContext, data: GameData, rules: GameRules): CommandOutcome {
   const t = ctx.tick;
-  const min = addTicks(t, MIN_REST_TICKS);
-  const max = addTicks(t, MAX_REST_TICKS);
-  const until = command.untilTick;
-  if (!Number.isSafeInteger(until) || until < min || until > max) return rejected({ code: "INVALID_REST_LENGTH", min, max });
+  const rejection = judgeOrder(restValidator(), state, data, rules, command, t);
+  if (rejection) return rejected(rejection);
   const w = state.founder.whereabouts;
-  const away = awayRejection(w);
-  if (away) return rejected(away);
-  const busy = busyRejection(state, t);
-  if (busy) return rejected(busy);
   if (w.kind !== "PRESENT") throw new RangeError("unreachable: the founder is present here");
+  const until = command.untilTick;
   let s = founderDeparting(state, w.locationId, "REST", t);
   s = withWhereabouts(s, { kind: "RESTING", locationId: w.locationId, startedAt: t, until });
   s = emit(s, { type: "FOUNDER_RESTED", locationId: w.locationId, until }, t, ctx.envelope.id);
@@ -167,8 +208,9 @@ function wake(state: GameState, t: Tick, early: boolean, causedBy: CommandContex
   return founderWoke(s, w.locationId, early, t);
 }
 
-function applyWake(state: GameState, _command: WakeCommand, ctx: CommandContext): CommandOutcome {
-  if (state.founder.whereabouts.kind !== "RESTING") return rejected({ code: "NOT_RESTING" });
+function applyWake(state: GameState, command: WakeCommand, ctx: CommandContext, data: GameData, rules: GameRules): CommandOutcome {
+  const rejection = judgeOrder(wakeValidator(), state, data, rules, command, ctx.tick);
+  if (rejection) return rejected(rejection);
   return { status: "applied", state: wake(state, ctx.tick, true, ctx.envelope.id) };
 }
 
@@ -186,16 +228,25 @@ function deliveryBeingLoaded(state: GameState): DeliveryState | null {
   return null;
 }
 
-/** 1. Busy ends. A finished LOAD_TRUCK is the truck's departure, with the founder aboard (decision 5). */
-function endBusy(state: GameState, ctx: TickContext): GameState {
+/**
+ * 1. Busy ends. A finished LOAD_TRUCK is the truck's departure, with the founder
+ * aboard (decision 5). If the trip's route is closed then (a closure since
+ * dispatch, this tick's included), the truck doesn't set out: ADR 0022's
+ * ROUTE_FOUND_CLOSED at departure. The cargo goes back into the facility, a
+ * sale's deal is HELD again, and the founder stays PRESENT, standing there, so
+ * the route's condition is recorded IN_PERSON (decisions 2a and 4).
+ */
+function endBusy(state: GameState, coordinator: TransactionCoordinator, ctx: TickContext): GameState {
   const w = state.founder.whereabouts;
   if (w.kind !== "PRESENT" || w.busy === null || w.busy.until > ctx.tick) return state;
   const free = withWhereabouts(state, { ...w, busy: null });
   if (w.busy.activity !== "LOAD_TRUCK") return free;
   const delivery = deliveryBeingLoaded(state);
   if (!delivery) return free;
-  // A route found closed at departure (ADR 0022's ROUTE_FOUND_CLOSED) is SK1c's (#200);
-  // until then the truck sets out, as a trip in flight would (ADR 0019).
+  if (closedInWorld(free, delivery.routeId)) {
+    const s = turnBackAtDeparture(free, delivery.id, coordinator, ctx.tick);
+    return founderSawRoute(s, w.locationId, delivery.routeId, ctx.tick);
+  }
   let s = founderDeparting(free, w.locationId, "DELIVERY", ctx.tick);
   s = withParkedAt(s, delivery.vehicleId, null);
   return withWhereabouts(s, { kind: "ON_DELIVERY", deliveryId: delivery.id, vehicleId: delivery.vehicleId, atStop: null });
@@ -261,8 +312,8 @@ function wakeOnTime(state: GameState, ctx: TickContext): GameState {
   return wake(state, ctx.tick, false, null);
 }
 
-function founderPhase(state: GameState, data: GameData, ctx: TickContext): GameState {
-  let s = endBusy(state, ctx);
+function founderPhase(state: GameState, data: GameData, coordinator: TransactionCoordinator, ctx: TickContext): GameState {
+  let s = endBusy(state, coordinator, ctx);
   s = advanceTravel(s, data, ctx);
   s = followDelivery(s, data, ctx);
   return wakeOnTime(s, ctx);
@@ -272,7 +323,7 @@ function founderPhase(state: GameState, data: GameData, ctx: TickContext): GameS
 // Registration
 // ---------------------------------------------------------------------------
 
-export function registerFounder(registry: SystemRegistry, data: GameData, _coordinator: unknown, rules: GameRules): void {
+export function registerFounder(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator, rules: GameRules): void {
   if (!rules.founderRules) {
     registry
       .onCommand("TRAVEL", { apply: acceptedNoOp })
@@ -281,12 +332,15 @@ export function registerFounder(registry: SystemRegistry, data: GameData, _coord
     return;
   }
   registry
-    .onCommand("TRAVEL", { apply: (state, command, ctx) => applyTravel(state, command, ctx, data) })
-    .onCommand("REST", { apply: applyRest })
-    .onCommand("WAKE", { apply: applyWake })
+    .onCommand("TRAVEL", { apply: (state, command, ctx) => applyTravel(state, command, ctx, data, rules) })
+    .onCommand("REST", { apply: (state, command, ctx) => applyRest(state, command, ctx, data, rules) })
+    .onCommand("WAKE", { apply: (state, command, ctx) => applyWake(state, command, ctx, data, rules) })
+    // The presence gate (busy and hours included) is part of every command's
+    // order validator (ADR 0022 decision 1, `view/presence.ts`), so this gate
+    // rejects nothing. It makes the founder busy once a timed command applies.
     .onCommandGate("founder-activities", {
-      check: (state, envelope, ctx) => activityRejection(state, data, envelope, ctx.tick),
+      check: () => null,
       after: (before, after, envelope, ctx) => startActivity(before, after, envelope, ctx.tick),
     })
-    .onPhase("founder", "founder-transitions", (state, ctx) => founderPhase(state, data, ctx));
+    .onPhase("founder", "founder-transitions", (state, ctx) => founderPhase(state, data, coordinator, ctx));
 }

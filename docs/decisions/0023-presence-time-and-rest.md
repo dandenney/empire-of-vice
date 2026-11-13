@@ -155,7 +155,7 @@ This record owns the rejection reasons for its three commands: `TRAVEL`, `REST` 
 2. presence and busy (`FOUNDER_AWAY`, `FOUNDER_BUSY`, `NOT_RESTING`)
 3. validity against what the founder can see (`ALREADY_THERE`, `INVALID_PATH`, `VEHICLE_NOT_AT`, `ROUTE_CLOSED`, `NO_PATH`).
 
-Within a step, table order wins.
+Within a step, the order listed above wins, not the table's: in step 3, `ALREADY_THERE`, `INVALID_PATH`, `VEHICLE_NOT_AT`, `ROUTE_CLOSED`, then `NO_PATH`.
 
 **Units.** `INVALID_REST_LENGTH { min, max }` holds **absolute ticks**: the earliest and latest valid `untilTick` for the apply tick.
 

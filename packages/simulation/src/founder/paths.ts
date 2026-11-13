@@ -3,7 +3,8 @@
 // bound finite (decision 8).
 
 import { compareIds, type GameState, type LocationId, type RouteId, type RouteLeg, type Tick } from "@eov/contracts";
-import { LIVE_VIEW_ROUTES, type GameData, type RouteDefinition } from "@eov/game-data";
+import type { GameData, RouteDefinition } from "@eov/game-data";
+import type { WorldSlice } from "../view/world.ts";
 import { legTicks } from "./time.ts";
 
 export interface LegEnds {
@@ -55,25 +56,15 @@ export interface KnownClosure {
 }
 
 /**
- * Whether the founder knows `routeId` to be closed, never reading the world
- * beyond the live view (decision 3: choosing a path leaks nothing):
- * - a route in the live view of the place the founder is at (LIVE_VIEW_ROUTES)
- *   shows its condition now;
- * - any other route, its latest known ROUTE_CONDITION record.
- * Null: not known to be closed. SK1b builds the full live view; this reads only
- * the route part of it, plus the records it writes.
+ * Whether the issuer knows `routeId` to be closed, from their view's routes
+ * (decision 3: choosing a path leaks nothing). In the founder's view a route in
+ * the live view of the place they're at shows its condition now, and any other
+ * route its latest known ROUTE_CONDITION record (`view/issuer-view.ts`). Null:
+ * not known to be closed.
  */
-export function knownClosure(state: GameState, routeId: RouteId): KnownClosure | null {
-  const w = state.founder.whereabouts;
-  const here = w.kind === "PRESENT" ? w.locationId : null;
-  const inLiveView = here !== null && (LIVE_VIEW_ROUTES.find((e) => e.locationId === here)?.routeIds.includes(routeId) ?? false);
-  if (inLiveView) {
-    const closure = state.routes.find((r) => r.id === routeId)?.closure ?? null;
-    return closure ? { reopensAt: closure.reopensAt } : null;
-  }
-  const record = state.knowledge.records.find((r) => r.subject.kind === "ROUTE_CONDITION" && r.subject.routeId === routeId);
-  if (!record || record.value.kind !== "ROUTE_CONDITION" || record.value.status.open) return null;
-  return { reopensAt: record.value.status.reopensAt };
+export function knownClosure(world: Pick<WorldSlice, "routes">, routeId: RouteId): KnownClosure | null {
+  const closure = world.routes.find((r) => r.id === routeId)?.closure ?? null;
+  return closure ? { reopensAt: closure.reopensAt } : null;
 }
 
 /** Whether the route is closed in the world now. Only for a leg starting where the founder stands (decision 3, "leg by leg"). */
@@ -106,9 +97,9 @@ function compareCandidates(a: Candidate, b: Candidate): number {
  * closures are ignored (walkers always get through); by vehicle, routes the
  * founder knows to be closed are left out.
  */
-export function defaultPath(state: GameState, data: GameData, from: LocationId, to: LocationId, onFoot: boolean): readonly RouteLeg[] | null {
+export function defaultPath(world: Pick<WorldSlice, "routes">, data: GameData, from: LocationId, to: LocationId, onFoot: boolean): readonly RouteLeg[] | null {
   let best: Candidate | null = null;
-  const usable = data.routes.filter((r) => onFoot || knownClosure(state, r.id) === null);
+  const usable = data.routes.filter((r) => onFoot || knownClosure(world, r.id) === null);
   const walk = (at: LocationId, visited: Set<LocationId>, legs: RouteLeg[], ticks: number): void => {
     if (at === to) {
       const candidate = { legs: [...legs], ticks };

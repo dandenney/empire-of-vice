@@ -50,6 +50,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { createGameRegistry, newGame, type KernelSimulation } from "../../src/index.ts";
 import { activityTicks, awakeSinceAfterRest, isOpenAt, opensAt, scaleUp } from "../../src/founder/time.ts";
+import { facilityJobDuration } from "../../src/production/capacity.ts";
 
 const SCENARIO: ScenarioDefinition = { ...FIRST_SHIPMENT_SCENARIO, scheduledEvents: [], founderRules: true, realMsPerGameHourAt1x: 20_000 };
 const route = (id: string) => GAME_DATA.routes.find((r) => r.id === id)!;
@@ -321,16 +322,21 @@ describe("timed activities: busy and hours (decisions 2a, 4, 6)", () => {
   });
 
   it("buying needs the supplier open when it starts: PLACE_CLOSED with the next opening tick", () => {
-    const sim = game(); // 06:00: the feed store opens at 07:00
+    const sim = game();
+    applied(sim, walk(MILLERS_FEED_LOCATION));
+    until(sim, (s) => at(s, MILLERS_FEED_LOCATION) && free(s));
+    // Wait outside until the feed store has closed for the evening (07:00–18:00).
+    until(sim, (s) => !isOpenAt(MILLERS_FEED_LOCATION, tick(s.tick + 1)));
     const t = sim.state.tick + 1;
-    expect(isOpenAt(MILLERS_FEED_LOCATION, tick(t))).toBe(false);
-    const opens = t - minuteOfDay(tick(t)) + 7 * TICKS_PER_HOUR;
+    const opens = t - minuteOfDay(tick(t)) + TICKS_PER_DAY + 7 * TICKS_PER_HOUR;
     expect(opensAt(MILLERS_FEED_LOCATION, tick(t))).toBe(opens);
     const buy: GameCommand = { type: "PURCHASE_MATERIALS", supplierId: MILLERS_FEED, materialId: CORN, quantity: 1, facilityId: DISTILLERY_MAIN };
     expect(rejection(sim, buy)).toEqual({ code: "PLACE_CLOSED", locationId: MILLERS_FEED_LOCATION, opensAt: opens });
     sim.advance(opens - 1 - sim.state.tick);
+    // A night outside the store: tired, so buying takes longer (ADR 0023 decision 7).
+    const takes = activityTicks(sim.state.founder, "BUY_MATERIALS", tick(opens));
     applied(sim, buy);
-    expect(sim.state.founder.whereabouts).toMatchObject({ busy: { activity: "BUY_MATERIALS", until: opens + ACTIVITY_DURATIONS.BUY_MATERIALS } });
+    expect(sim.state.founder.whereabouts).toMatchObject({ busy: { activity: "BUY_MATERIALS", until: opens + takes } });
   });
 
   it("hours that cross midnight: the back room is open 20:00–02:00", () => {
@@ -364,8 +370,10 @@ function stocked(cases: number): KernelSimulation {
   return sim;
 }
 
-/** Agrees a deal for one case at the Crossroads at today's quote, waiting until they're open. */
+/** Walks to the Crossroads, agrees a deal for one case at today's quote once they're open (ADR 0022 decision 3: in person), and walks home. */
 function agreeDeal(sim: KernelSimulation): GameState["heldDeals"][number] {
+  applied(sim, walk(CROSSROADS));
+  until(sim, (s) => at(s, CROSSROADS) && free(s));
   until(sim, (s) => isOpenAt(CROSSROADS, tick(s.tick + 1)) && free(s));
   const ask = (price: number): CommandResult =>
     sim.dispatch({ command: { type: "AGREE_DEAL", buyerId: CROSSROADS_ROADHOUSE, productId: MOONSHINE, quality: "basic", quantity: 1, agreedUnitPrice: price as never } });
@@ -373,8 +381,37 @@ function agreeDeal(sim: KernelSimulation): GameState["heldDeals"][number] {
   if (result.status === "rejected" && result.reason.code === "QUOTE_CHANGED") result = ask(result.reason.current);
   expect(result.status).toBe("applied");
   until(sim, free);
+  applied(sim, walk(HOLLOW_CREEK));
+  until(sim, (s) => at(s, HOLLOW_CREEK) && free(s));
+  sim.takeEvents();
   return sim.state.heldDeals.at(-1)!;
 }
+
+describe("a batch's clock starts when it's set up (decision 4, #200 follow-up 1)", () => {
+  it("startedAt is busy.until, and completesAt counts from it", () => {
+    const sim = game();
+    applied(sim, walk(MILLERS_FEED_LOCATION));
+    until(sim, (s) => at(s, MILLERS_FEED_LOCATION) && free(s) && isOpenAt(MILLERS_FEED_LOCATION, tick(s.tick + 1)));
+    for (const [materialId, quantity] of [
+      [CORN, 2],
+      [SUGAR, 1],
+    ] as const) {
+      applied(sim, { type: "PURCHASE_MATERIALS", supplierId: MILLERS_FEED, materialId, quantity, facilityId: DISTILLERY_MAIN });
+      until(sim, free);
+    }
+    applied(sim, walk(HOLLOW_CREEK));
+    until(sim, (s) => at(s, HOLLOW_CREEK) && free(s));
+    const t = sim.state.tick + 1;
+    applied(sim, { type: "START_PRODUCTION", facilityId: DISTILLERY_MAIN, recipeId: BASIC_MOONSHINE_RECIPE, quantity: 1 });
+    const w = sim.state.founder.whereabouts;
+    if (w.kind !== "PRESENT" || w.busy === null) throw new Error("setting up keeps the founder busy");
+    const job = sim.state.productionJobs.at(-1)!;
+    expect(w.busy.until).toBeGreaterThan(t);
+    expect(job.startedAt).toBe(w.busy.until);
+    const recipe = GAME_DATA.recipes.find((r) => r.id === BASIC_MOONSHINE_RECIPE)!;
+    expect(job.completesAt - job.startedAt, "completesAt counts from the end of setting up").toBe(facilityJobDuration(sim.state, GAME_DATA, DISTILLERY_MAIN, recipe, 1));
+  });
+});
 
 describe("the founder as driver (decisions 2a, 5)", () => {
   it("loads, rides out, observes at the buyer, rides back, and steps down where the trip started", () => {

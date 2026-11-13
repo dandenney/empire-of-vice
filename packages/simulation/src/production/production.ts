@@ -11,16 +11,17 @@
 import type { TransactionCoordinator } from "@eov/contracts";
 import type { GameData } from "@eov/game-data";
 import type { SystemRegistry } from "../kernel/registry.ts";
+import { M001_RULES, type GameRules } from "../kernel/rules.ts";
 import { purchaseEquipmentHandler, sellEquipmentHandler } from "./equipment.ts";
 import { settleDueJobs, startProductionHandler } from "./jobs.ts";
 import { settleDay } from "./settlement.ts";
 import { setWorkforceHandler } from "./workforce.ts";
 
-export function registerProduction(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator): void {
-  registry.onCommand("START_PRODUCTION", startProductionHandler(data, coordinator));
-  registry.onCommand("PURCHASE_EQUIPMENT", purchaseEquipmentHandler(data, coordinator));
-  registry.onCommand("SELL_EQUIPMENT", sellEquipmentHandler(data, coordinator));
-  registry.onCommand("SET_WORKFORCE", setWorkforceHandler(data, coordinator));
+export function registerProduction(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): void {
+  registry.onCommand("START_PRODUCTION", startProductionHandler(data, coordinator, rules));
+  registry.onCommand("PURCHASE_EQUIPMENT", purchaseEquipmentHandler(data, coordinator, rules));
+  registry.onCommand("SELL_EQUIPMENT", sellEquipmentHandler(data, coordinator, rules));
+  registry.onCommand("SET_WORKFORCE", setWorkforceHandler(data, coordinator, rules));
   registry.onPhase("production", "production-jobs", settleDueJobs(data, coordinator));
   // After the market's midnight hook (registered first in SYSTEMS), ADR 0017 decision 9.
   registry.onPhase("midnight", "production-daily-settlement", settleDay(data, coordinator));

@@ -73,9 +73,6 @@ export class KernelError extends Error {
 
 type Limit = Pick<CommandEnvelope, "scheduledTick" | "sequence">;
 
-/** Gate 1's reasons (ADR 0022 decision 1): a command's own rejection for these wins over any command gate. */
-const SHAPE_AND_IDENTITY: ReadonlySet<RejectionReason["code"]> = new Set(["INVALID_QUANTITY", "SCHEDULED_IN_PAST", "UNKNOWN_ENTITY"]);
-
 export class KernelSimulation implements Simulation {
   #state: GameState;
   #outbox: GameEvent[] = [];
@@ -278,13 +275,12 @@ export class KernelSimulation implements Simulation {
     const handler = this.#registry.commandHandler(envelope.command.type);
     const commandCtx: CommandContext = { ...ctx, envelope };
     const gates = this.#registry.commandGates();
+    // ADR 0022 decision 1's gate order lives in each command's order validator
+    // (`view/`), which its handler runs first; a command gate that rejects here
+    // stands in front of all of it.
     for (const { gate } of gates) {
       const reason = gate.check(state, envelope, commandCtx);
-      if (reason === null) continue;
-      // Gate 1 (shape and identity) comes before any gate (ADR 0022 decision 1).
-      const own = handler.apply(state, envelope.command as never, commandCtx);
-      const first = own.status === "rejected" && SHAPE_AND_IDENTITY.has(own.reason.code) ? own.reason : reason;
-      return { status: "rejected", state, reason: first };
+      if (reason !== null) return { status: "rejected", state, reason };
     }
     const outcome = handler.apply(state, envelope.command as never, commandCtx);
     if (outcome.status === "rejected") return { status: "rejected", state, reason: outcome.reason };

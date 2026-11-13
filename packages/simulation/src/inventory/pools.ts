@@ -36,6 +36,7 @@ import {
   type ReservationState,
   type ReservedGoods,
 } from "@eov/contracts";
+import type { WorldSlice } from "../view/world.ts";
 
 export class InventoryError extends Error {
   override readonly name = "InventoryError";
@@ -104,7 +105,7 @@ function removeFromPool<P extends { readonly quantity: number; readonly totalCos
 // ---------------------------------------------------------------------------
 
 export function findProductPool(
-  state: GameState,
+  state: WorldSlice,
   facilityId: FacilityId,
   productId: ProductId,
   quality: QualityTier,
@@ -113,7 +114,7 @@ export function findProductPool(
 }
 
 /** Cases not spoken for by a reservation. */
-export function availableProduct(state: GameState, facilityId: FacilityId, productId: ProductId, quality: QualityTier): number {
+export function availableProduct(state: WorldSlice, facilityId: FacilityId, productId: ProductId, quality: QualityTier): number {
   const pool = findProductPool(state, facilityId, productId, quality);
   return (pool?.quantity ?? 0) - sumReserved(state.reservations, (r) => coversProduct(r, facilityId, productId, quality));
 }
@@ -176,12 +177,12 @@ export function takeProduct(state: GameState, facilityId: FacilityId, productId:
 // Materials
 // ---------------------------------------------------------------------------
 
-export function findMaterialPool(state: GameState, facilityId: FacilityId, materialId: MaterialId): MaterialPoolState | undefined {
+export function findMaterialPool(state: WorldSlice, facilityId: FacilityId, materialId: MaterialId): MaterialPoolState | undefined {
   return state.materialPools.find((p) => p.facilityId === facilityId && p.materialId === materialId);
 }
 
 /** Units not spoken for by a reservation. */
-export function availableMaterial(state: GameState, facilityId: FacilityId, materialId: MaterialId): number {
+export function availableMaterial(state: WorldSlice, facilityId: FacilityId, materialId: MaterialId): number {
   const pool = findMaterialPool(state, facilityId, materialId);
   return (pool?.quantity ?? 0) - sumReserved(state.reservations, (r) => coversMaterial(r, facilityId, materialId));
 }
@@ -368,7 +369,7 @@ export function releaseContractReservations(state: GameState, contractId: Contra
 // ---------------------------------------------------------------------------
 
 /** Finished-goods cases held at a facility, reserved included; materials don't count. */
-export function storageUsed(state: GameState, facilityId: FacilityId): number {
+export function storageUsed(state: WorldSlice, facilityId: FacilityId): number {
   let total = 0;
   for (const p of state.productPools) if (p.facilityId === facilityId) total += p.quantity;
   return total;

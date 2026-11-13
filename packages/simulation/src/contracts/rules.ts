@@ -31,6 +31,7 @@ import {
 import type { ContractBuyerDefinition, GameData } from "@eov/game-data";
 import { addReservation, availableProduct } from "../inventory/pools.ts";
 import { allocateId } from "../kernel/ids.ts";
+import type { KnownTrip, ViewWorld, WorldSlice } from "../view/world.ts";
 
 export type Installment = ContractState["installments"][number];
 
@@ -52,7 +53,7 @@ function minimumReputation(data: GameData, buyerId: string): number {
 }
 
 /** The unlock or reputation check shared by offers and acceptance (decisions 2 and 3), or null if both pass. */
-function gateRejection(state: GameState, data: GameData, buyerId: string): RejectionReason | null {
+function gateRejection(state: WorldSlice, data: GameData, buyerId: string): RejectionReason | null {
   const unlockId = data.contracts.terms.requiredUnlockId;
   if (unlockId !== null && !state.family.unlocked.includes(unlockId)) return { code: "LOCKED", unlockId };
   const required = minimumReputation(data, buyerId);
@@ -98,7 +99,7 @@ export function buildOffer(state: GameState, data: GameData, def: ContractBuyerD
 // ---------------------------------------------------------------------------
 
 /** Why ACCEPT_CONTRACT applied at `at` (the tick being processed) is rejected, or null. Checks in decision 3's order. */
-export function acceptRejection(state: GameState, data: GameData, contractOfferId: ContractOfferId, at: Tick): RejectionReason | null {
+export function acceptRejection(state: WorldSlice, data: GameData, contractOfferId: ContractOfferId, at: Tick): RejectionReason | null {
   const offer = state.contractOffers.find((o) => o.id === contractOfferId);
   if (!offer || at >= offer.expiresAt) return { code: "OFFER_UNAVAILABLE", contractOfferId };
   return gateRejection(state, data, offer.buyerId);
@@ -142,7 +143,7 @@ export function withContract(state: GameState, contract: ContractState): GameSta
 const holds = (contractId: ContractId) => (r: GameState["reservations"][number]) => r.holder.kind === "CONTRACT" && r.holder.contractId === contractId;
 
 /** The contract's active reservations (derived by holder; `reservationIds` is append-only history). */
-export function activeReservations(state: GameState, contractId: ContractId): GameState["reservations"] {
+export function activeReservations(state: Pick<WorldSlice, "reservations">, contractId: ContractId): GameState["reservations"] {
   return state.reservations.filter(holds(contractId));
 }
 
@@ -193,7 +194,7 @@ export function reserveForCurrentInstallment(state: GameState, contractId: Contr
 // ---------------------------------------------------------------------------
 
 /** Checks 1–2: the contract is ACTIVE and the cargo matches it. Returns the contract, or why not. */
-export function contractForCargo(state: GameState, contractId: ContractId, line: CargoLine): ContractState | RejectionReason {
+export function contractForCargo(state: WorldSlice, contractId: ContractId, line: CargoLine): ContractState | RejectionReason {
   const contract = state.contracts.find((c) => c.id === contractId);
   if (!contract || contract.status !== "ACTIVE") return { code: "CONTRACT_NOT_ACTIVE", contractId };
   if (line.productId !== contract.productId || qualityRank(line.quality) < qualityRank(contract.minimumQuality)) {
@@ -212,15 +213,23 @@ export function casesInTransit(state: GameState, contractId: ContractId): number
   return total;
 }
 
+/** Cases of this contract on outbound trips the issuer knows of (ADR 0022 decision 6: the founder's own known in-transit cases). */
+export function knownCasesInTransit(trips: readonly KnownTrip[], contractId: ContractId): number {
+  let total = 0;
+  for (const trip of trips) if (trip.purpose.kind === "CONTRACT_INSTALLMENT" && trip.purpose.contractId === contractId) total += trip.cases;
+  return total;
+}
+
 /**
  * Checks 4–5, after the route checks: the quantity cap (what unsettled
  * installments still need, minus cases in transit), then stock (this contract's
- * reservations at home plus unreserved stock). Null if the load is fine.
+ * reservations at home plus unreserved stock). Null if the load is fine. Judged
+ * on the view: known progress and known trips (ADR 0022 decision 6).
  */
-export function contractLoadRejection(state: GameState, contract: ContractState, homeId: FacilityId, line: CargoLine): RejectionReason | null {
+export function contractLoadRejection(state: ViewWorld, contract: ContractState, homeId: FacilityId, line: CargoLine): RejectionReason | null {
   let outstanding = 0;
   for (const i of contract.installments) if (i.outcome === null) outstanding += Math.max(0, i.required - i.delivered);
-  const acceptable = Math.max(0, outstanding - casesInTransit(state, contract.id));
+  const acceptable = Math.max(0, outstanding - knownCasesInTransit(state.trips, contract.id));
   if (line.quantity > acceptable) return { code: "BUYER_WILL_TAKE_LESS", buyerId: contract.buyerId, requested: line.quantity, acceptable };
 
   const own = activeReservations(state, contract.id)

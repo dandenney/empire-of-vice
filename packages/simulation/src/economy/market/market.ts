@@ -11,7 +11,9 @@
 //   reaches `expiresAt` expires (DEAL_EXPIRED) in the deadlines phase. Logistics
 //   dispatches, settles and releases them inside its DISPATCH and SALE
 //   transactions. Founder rules off only: in person, budget committed; the
-//   on-spec path, by-phone deals and the IssuerView are SK1c.
+//   on-spec path is SK1c-2's (#226) and by-phone deals ADR 0024's.
+// - PURCHASE_MATERIALS and AGREE_DEAL are judged by their order validators
+//   against the issuer's view (ADR 0022 decisions 1–3, `view/`).
 
 import {
   addMoney,
@@ -59,11 +61,14 @@ import {
 } from "@eov/game-data";
 import { scheduleWorldEvent } from "../../events/world-events.ts";
 import { allocateId, formatId } from "../../kernel/ids.ts";
-import type { SystemRegistry, TickContext } from "../../kernel/registry.ts";
+import type { CommandOfType, SystemRegistry, TickContext } from "../../kernel/registry.ts";
 import { addMaterial } from "../../inventory/pools.ts";
 import { nextIntBetween } from "../../rng/xoshiro128.ts";
-import { cashBalance } from "../ledger/ledger.ts";
 import { materialPurchaseEntries } from "../ledger/postings.ts";
+import { M001_RULES, type GameRules } from "../../kernel/rules.ts";
+import { judgeOrder, type OrderValidator } from "../../view/order.ts";
+import { presenceRejection } from "../../view/presence.ts";
+import { cashOf, type WorldSlice } from "../../view/world.ts";
 
 // ---------------------------------------------------------------------------
 // Lookups and ordering
@@ -294,7 +299,7 @@ export interface Deal {
  * won't fully take is rejected. AGREE_DEAL's checks (ADR 0022 decision 6), as
  * ADR 0005's dispatch was.
  */
-export function quoteDeal(state: GameState, data: GameData, buyerId: BuyerId, agreedUnitPrice: Money, line: CargoLine): Deal | RejectionReason {
+export function quoteDeal(state: WorldSlice, data: GameData, buyerId: BuyerId, agreedUnitPrice: Money, line: CargoLine): Deal | RejectionReason {
   const buyer = state.buyers.find((b) => b.id === buyerId);
   const def = buyerDefinition(data, buyerId);
   if (!buyer || !def) return { code: "UNKNOWN_ENTITY", kind: "Buyer", id: buyerId };
@@ -323,7 +328,7 @@ export function quoteDeal(state: GameState, data: GameData, buyerId: BuyerId, ag
  * null when the buyer is unknown or wants nothing the line meets. With founder
  * rules off, a repeated sale re-agrees at this price (issue #192).
  */
-export function currentQuote(state: GameState, buyerId: BuyerId, line: Pick<CargoLine, "productId" | "quality">): Money | null {
+export function currentQuote(state: WorldSlice, buyerId: BuyerId, line: Pick<CargoLine, "productId" | "quality">): Money | null {
   const buyer = state.buyers.find((b) => b.id === buyerId);
   return (buyer && matchWant(buyer.wants, line.productId, line.quality)?.unitPrice) ?? null;
 }
@@ -397,7 +402,7 @@ export function releaseDeal(state: GameState, data: GameData, buyerId: BuyerId, 
 // ---------------------------------------------------------------------------
 
 /** A HELD deal, for a dispatch to carry out; undefined if the founder holds no such deal. */
-export function heldDeal(state: GameState, dealId: DealId): HeldDealState | undefined {
+export function heldDeal(state: Pick<WorldSlice, "heldDeals">, dealId: DealId): HeldDealState | undefined {
   return state.heldDeals.find((d) => d.id === dealId && d.status === "HELD");
 }
 
@@ -682,21 +687,20 @@ function withStockLine(
   };
 }
 
-export function registerMarket(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator): void {
+export function registerMarket(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): void {
   validateMarketData(data);
 
   registry.onPhase("midnight", "market-daily-cycle", (state, ctx) => runMidnight(state, ctx, data, coordinator));
   registry.onPhase("deadlines", "held-deal-expiry", (state, ctx) => expireDeals(state, data, coordinator, ctx));
 
   // AGREE_DEAL (ADR 0022 decision 6): one entry-free DAILY_SETTLEMENT transaction
-  // keyed by the new deal, carrying DEAL_AGREED. Shape first (gate 1), then
-  // `quoteDeal`'s checks against the buyer.
+  // keyed by the new deal, carrying DEAL_AGREED. Judged by its order validator first.
+  const validateAgree = agreeDealValidator(data);
   registry.onCommand("AGREE_DEAL", {
-    validate: (_state, command) =>
-      Number.isSafeInteger(command.quantity) && command.quantity > 0
-        ? null
-        : { code: "INVALID_QUANTITY", field: "quantity", value: command.quantity },
+    validate: (_state, command) => quantityRejection(command.quantity),
     apply: (state, command, ctx) => {
+      const rejection = judgeOrder(validateAgree, state, data, rules, command, ctx.tick);
+      if (rejection) return { status: "rejected", reason: rejection };
       const dealId = formatId("Deal", state.counters.nextId.Deal);
       const tx = coordinator.begin(state, {
         kind: "DAILY_SETTLEMENT",
@@ -706,16 +710,13 @@ export function registerMarket(registry: SystemRegistry, data: GameData, coordin
       });
       if (tx.status === "duplicate") return { status: "applied", state };
       const { buyerId, productId, quality, quantity, agreedUnitPrice } = command;
-      if (!Number.isSafeInteger(quantity) || quantity <= 0) {
-        tx.reject({ code: "INVALID_QUANTITY", field: "quantity", value: quantity });
+      // The buyer is in the live view, so the world agrees with the view here.
+      const agreed = agreeDeal(tx.state, data, { buyerId, line: { productId, quality, quantity }, agreedUnitPrice }, ctx.tick);
+      if ("code" in agreed) {
+        tx.reject(agreed);
       } else {
-        const agreed = agreeDeal(tx.state, data, { buyerId, line: { productId, quality, quantity }, agreedUnitPrice }, ctx.tick);
-        if ("code" in agreed) {
-          tx.reject(agreed);
-        } else {
-          tx.update(() => agreed.state);
-          tx.emit(agreed.event);
-        }
+        tx.update(() => agreed.state);
+        tx.emit(agreed.event);
       }
       const result = tx.commit();
       return result.status === "committed" ? { status: "applied", state: result.state } : { status: "rejected", reason: result.reason };
@@ -756,12 +757,12 @@ export function registerMarket(registry: SystemRegistry, data: GameData, coordin
     return result.state;
   });
 
+  const validatePurchase = purchaseMaterialsValidator(data);
   registry.onCommand("PURCHASE_MATERIALS", {
-    validate: (_state, command) =>
-      Number.isSafeInteger(command.quantity) && command.quantity > 0
-        ? null
-        : { code: "INVALID_QUANTITY", field: "quantity", value: command.quantity },
+    validate: (_state, command) => quantityRejection(command.quantity),
     apply: (state, command, ctx) => {
+      const rejection = judgeOrder(validatePurchase, state, data, rules, command, ctx.tick);
+      if (rejection) return { status: "rejected", reason: rejection };
       const tx = coordinator.begin(state, {
         kind: "MATERIAL_PURCHASE",
         idempotencyKey: idempotencyKey("MATERIAL_PURCHASE", ctx.envelope.id),
@@ -770,45 +771,100 @@ export function registerMarket(registry: SystemRegistry, data: GameData, coordin
       });
       if (tx.status === "duplicate") return { status: "applied", state };
 
+      // The supplier is in the live view: the validator read these same values.
       const { quantity, supplierId, materialId, facilityId } = command;
-      const supplier = tx.state.suppliers.find((s) => s.id === supplierId);
-      const stock = supplier?.stock.find((s) => s.materialId === materialId);
-      let total: Money | null = null;
-      if (!Number.isSafeInteger(quantity) || quantity <= 0) {
-        tx.reject({ code: "INVALID_QUANTITY", field: "quantity", value: quantity });
-      } else if (!tx.state.facilities.some((f) => f.id === facilityId)) {
-        tx.reject({ code: "UNKNOWN_ENTITY", kind: "Facility", id: facilityId });
-      } else if (!supplier) {
-        tx.reject({ code: "UNKNOWN_ENTITY", kind: "Supplier", id: supplierId });
-      } else if (!stock) {
-        tx.reject({ code: "MATERIAL_NOT_SOLD", supplierId, materialId });
-      } else if (stock.available < quantity) {
-        tx.reject({ code: "SUPPLIER_STOCK_LOW", materialId, requested: quantity, available: stock.available });
-      } else {
-        total = multiplyMoney(stock.unitPrice, quantity);
-        const cash = cashBalance(tx.state);
-        if (cash < total) tx.reject({ code: "INSUFFICIENT_FUNDS", required: total, available: cash });
-      }
-
-      if (total !== null && stock && tx.status === "staging") {
-        const cost = total;
-        tx.update((s) => withStockLine(s, supplierId, materialId, (st) => ({ ...st, available: st.available - quantity })));
-        tx.update((s) => addMaterial(s, facilityId, materialId, quantity, cost));
-        tx.post(materialPurchaseEntries(cost));
-        tx.emit({
-          type: "MATERIALS_PURCHASED",
-          supplierId,
-          materialId,
-          quantity,
-          unitPrice: stock.unitPrice,
-          total: cost,
-          facilityId,
-          transactionId: tx.transactionId,
-        });
-      }
+      const stock = tx.state.suppliers.find((s) => s.id === supplierId)?.stock.find((s) => s.materialId === materialId);
+      if (!stock) throw new RangeError(`PURCHASE_MATERIALS: ${supplierId} doesn't sell ${materialId}, after validation`);
+      const cost = multiplyMoney(stock.unitPrice, quantity);
+      tx.update((s) => withStockLine(s, supplierId, materialId, (st) => ({ ...st, available: st.available - quantity })));
+      tx.update((s) => addMaterial(s, facilityId, materialId, quantity, cost));
+      tx.post(materialPurchaseEntries(cost));
+      tx.emit({
+        type: "MATERIALS_PURCHASED",
+        supplierId,
+        materialId,
+        quantity,
+        unitPrice: stock.unitPrice,
+        total: cost,
+        facilityId,
+        transactionId: tx.transactionId,
+      });
 
       const result = tx.commit();
       return result.status === "committed" ? { status: "applied", state: result.state } : { status: "rejected", reason: result.reason };
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Orders (ADR 0022 decisions 1–3): the market's validators, read from the view
+// ---------------------------------------------------------------------------
+
+function quantityRejection(quantity: number): RejectionReason | null {
+  return Number.isSafeInteger(quantity) && quantity > 0 ? null : { code: "INVALID_QUANTITY", field: "quantity", value: quantity };
+}
+
+/**
+ * PURCHASE_MATERIALS against the world as seen (M001's order): quantity,
+ * facility, supplier, material sold, the supplier's stock, then cash.
+ */
+function purchaseRejection(world: WorldSlice, command: CommandOfType<"PURCHASE_MATERIALS">): RejectionReason | null {
+  const { quantity, supplierId, materialId, facilityId } = command;
+  const invalid = quantityRejection(quantity);
+  if (invalid) return invalid;
+  if (!world.facilities.some((f) => f.id === facilityId)) return { code: "UNKNOWN_ENTITY", kind: "Facility", id: facilityId };
+  const supplier = world.suppliers.find((s) => s.id === supplierId);
+  if (!supplier) return { code: "UNKNOWN_ENTITY", kind: "Supplier", id: supplierId };
+  const stock = supplier.stock.find((s) => s.materialId === materialId);
+  if (!stock) return { code: "MATERIAL_NOT_SOLD", supplierId, materialId };
+  if (stock.available < quantity) return { code: "SUPPLIER_STOCK_LOW", materialId, requested: quantity, available: stock.available };
+  const total = multiplyMoney(stock.unitPrice, quantity);
+  const cash = cashOf(world);
+  return cash < total ? { code: "INSUFFICIENT_FUNDS", required: total, available: cash } : null;
+}
+
+/**
+ * PURCHASE_MATERIALS (ADR 0022 decision 3): gate 1 is the quantity, the facility
+ * (owned) and the supplier (geography); the founder must be at the supplier,
+ * free, while it's open; then the supplier's live stock and the purse. The goods
+ * go to the named facility, which isn't checked (M001 doesn't check material
+ * storage).
+ */
+export function purchaseMaterialsValidator(data: GameData): OrderValidator<"PURCHASE_MATERIALS"> {
+  return (view, command) => {
+    if (view.founderRules) {
+      const { quantity, supplierId, facilityId } = command;
+      const invalid = quantityRejection(quantity);
+      if (invalid) return invalid;
+      if (!view.world.facilities.some((f) => f.id === facilityId)) return { code: "UNKNOWN_ENTITY", kind: "Facility", id: facilityId };
+      const def = data.suppliers.find((s) => s.id === supplierId);
+      if (!def || !view.world.suppliers.some((s) => s.id === supplierId)) return { code: "UNKNOWN_ENTITY", kind: "Supplier", id: supplierId };
+      const absent = presenceRejection(view, { locationId: def.locationId, activity: "BUY_MATERIALS", party: true });
+      if (absent) return absent;
+    }
+    return purchaseRejection(view.world, command);
+  };
+}
+
+/**
+ * AGREE_DEAL in person (ADR 0022 decisions 3 and 6): gate 1 is the quantity and
+ * the buyer (geography); the founder must be at the buyer, free, while it's
+ * open; then `quoteDeal`'s checks against the live view: reputation, the want,
+ * the quote, and liquidity (demand and budget).
+ */
+export function agreeDealValidator(data: GameData): OrderValidator<"AGREE_DEAL"> {
+  return (view, command) => {
+    const { buyerId, productId, quality, quantity, agreedUnitPrice } = command;
+    const invalid = quantityRejection(quantity);
+    if (invalid) return invalid;
+    if (view.founderRules) {
+      const def = buyerDefinition(data, buyerId);
+      if (!def || !view.world.buyers.some((b) => b.id === buyerId)) return { code: "UNKNOWN_ENTITY", kind: "Buyer", id: buyerId };
+      const absent = presenceRejection(view, { locationId: def.locationId, activity: "AGREE_DEAL", party: true });
+      if (absent) return absent;
+    }
+    const quoted = quoteDeal(view.world, data, buyerId, agreedUnitPrice, { productId, quality, quantity });
+    return "code" in quoted ? quoted : null;
+  };
+}
+
