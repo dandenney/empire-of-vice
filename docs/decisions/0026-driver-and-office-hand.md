@@ -717,7 +717,7 @@ A Driver's trip draws come from `keyedRng(seed, "employee-trip:<vehicleId>:<char
 
 ## Needs design (placeholders in this record)
 
-These are story and visual direction (factory.md §8). They stay PLACEHOLDER until the human decides, and the orchestrator files or links `needs-design` issues for them (the milestone already lists "candidate names" and "where and how you find people to hire"):
+These are story and visual direction (factory.md §8). Open items stay PLACEHOLDER until the human decides, and the orchestrator files or links `needs-design` issues for them. Items later records settled are marked "Settled":
 
 - **Candidate names and who they are:** the three Drivers and two Office Hands in decision 1. "Ruth" is the GDD's own example of who takes a message. #209's approved names are the Distiller pool's (ADR 0028 decision 4); none is moved to these roles.
 - **Where Drivers and Office Hands are found:** the freight depot for Drivers, the general store for Office Hands.

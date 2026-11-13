@@ -2,7 +2,7 @@
 
 Status: accepted (decided by the orchestrator for M002 task D5c, issue #214, from the human's design decision on #209; implemented by the contract tasks it names, EM1 #210 and ADR 0026's, and by E1 #180, E2 #182, E3 #183 and R1 #176)
 
-Amends: ADR 0025 decisions 1, 2, 3, 5, 6, 7, 16 and 17 (approved names and hiring place, a band beside each estimate, an estimate width drawn per meeting, orders to an employee off duty, the policy only in working hours, what limited a short batch, who answers the still's phone and when an employee calls in, a report delivered on arrival, the contract list, R1's numbers), ADR 0026 decisions 1, 5, 10, 15, 16 and 17 (the estimate width for the Driver, the Driver's hours, `isAvailable` for both attendant hooks, a call that outlasts a shift, relayed orders, a regular run outside the Driver's hours, the contract list and the numbers).
+Amends: ADR 0024 decision 5 (clarified: a family line whose call-in attendant hook returns null doesn't answer, and the caller tries the next number; decision 6), ADR 0025 decisions 1, 2, 3, 5, 6, 7, 16 and 17 (approved names and hiring place, a band beside each estimate, an estimate width drawn per meeting, orders to an employee off duty, the policy only in working hours, what limited a short batch, who answers the still's phone and when an employee calls in, a report delivered on arrival, the contract list, R1's numbers), ADR 0026 decisions 1, 5, 10, 15, 16 and 17 (the estimate width for the Driver, the Driver's hours, `isAvailable` for both attendant hooks, a call that outlasts a shift, relayed orders, a regular run outside the Driver's hours, the contract list and the numbers).
 
 ## Context
 
@@ -79,11 +79,15 @@ OFFICE_HAND: { /* ADR 0026's fields */ workingHours: [hours(7, 19)] },  // 07:00
 
 ```ts
 // packages/simulation/src/personnel/availability.ts (E1; E2 and E3 call it)
-/** True while the role's working hours include the minute of `tick`. */
-export function onDuty(role: EmployeeRole, tick: Tick, data: GameData): boolean {
-  const minute = minuteOfDay(tick);
+/** True while the role's working hours include `minute` (0–1439). */
+export function onDutyAtMinute(role: EmployeeRole, minute: number, data: GameData): boolean {
   return data.roleTerms[role].workingHours.some(({ opensAtMinute: open, closesAtMinute: close }) =>
     open < close ? minute >= open && minute < close : minute >= open || minute < close);
+}
+
+/** True while the role's working hours include the minute of `tick`. */
+export function onDuty(role: EmployeeRole, tick: Tick, data: GameData): boolean {
+  return onDutyAtMinute(role, minuteOfDay(tick), data);
 }
 
 /** ADR 0026 decision 10's isAvailable: at the station (startsAt reached) and on duty. */
@@ -136,7 +140,7 @@ R1's two properties:
 ### 3. The Driver's hours (fills ADR 0026 decision 5's deferral)
 
 - **Step 3** (pick the next run) runs only while `isAvailable(driver, t)`. Off duty, a waiting run order waits and a due regular run isn't taken up.
-- **Step 5** (hold) runs only on duty, so a Driver writes no `HELD_BACK` line for the night.
+- **Step 5** (hold) runs only on duty, so step 5 writes no `HELD_BACK` line at night. (Step 1 can still write one for a road found closed at a departure after the shift, below.)
 - **Step 1** (departure) isn't gated. A run taken up at 19:50 loads for `LOAD_TRUCK` (30 minutes) and sets out at 20:20. The Driver took up the run on duty, and the truck is already being loaded. A road found closed at that departure is handled as ADR 0026 decision 6 says, including its `HELD_BACK { ROUTE_CLOSED }` line.
 - **Step 2** (lapses) isn't gated: a lapse is a time fact about an agreement, and gating it would let a run order outlive its `expiresAt` by a night.
 - **The stop and the return** (`vehicles` phase) aren't gated: a truck already on the road keeps going.
@@ -150,7 +154,7 @@ R1's two properties:
 | { readonly code: "DEPARTURE_OUTSIDE_HOURS"; readonly role: EmployeeRole; readonly departMinute: number }
 ```
 
-The check is `onDuty(role, departMinute, data)` read as a minute of day. The payload is the command's own field and the role (game-data), so it leaks nothing.
+The check is `onDutyAtMinute("DRIVER", departMinute, data)`. The payload is the command's own field and the role (game-data), so it leaks nothing.
 
 **Run orders survive a night.** Load validation adds `RUN_ORDER_HOLD_TICKS ≥ TICKS_PER_DAY` (it's 2 880), so a run order without a deal always sees at least one full shift before it lapses. A deal-backed run order lapses at the deal's `expiresAt`, as ADR 0026 decides. The deal's expiry and the Driver's hours are both known to the founder when handing it over.
 
@@ -162,7 +166,7 @@ The check is `onDuty(role, departMinute, data)` read as a minute of day. The pay
 
 **Names** (#209 §2). `CANDIDATE_POOL`'s five Distiller entries keep ADR 0025's IDs and names, and their `// PLACEHOLDER (story)` comments become `// #209: approved name`. `scenario.firstCandidates` stays `["walt-hagen"]` in the M002 scenario, so Walt is on the first slate. **Names only:** `CandidateDefinition` has no biography, trait or flavour field, and this record adds none. The competence ranges stay PLACEHOLDER tuning.
 
-**Competence is never read from a face or a voice.** When candidate portraits and voices are made (visual direction, *Needs design*), they're chosen per `characterId` only. No UI asset, line or style may vary with a candidate's competence range, estimate, band or wage. The UI test for the hiring scene checks that the scene's presentation for a candidate is the same across two games whose estimates for that candidate differ.
+**Competence is never read from a face or a voice.** When candidate portraits and voices are made (visual direction, *Needs design*), they're chosen per `characterId` only. No UI asset, line or style may vary with a candidate's competence range, estimate, band or wage. The UI test for the hiring scene checks that a candidate's portrait, voice and style assets are the same across two games whose estimates for that candidate differ. The band line, the Estimate range and the wage terms are meant to differ, and the test leaves them out.
 
 **The estimate's width varies by meeting.** ADR 0025 drew every estimate with one width (`estimateSpread: 30`), so "wide" couldn't be told apart from "narrow": every Distiller estimate was 30 points wide, except where the 100 cap clipped it. #209's fourth band, "Hard to judge from a conversation", needs some conversations to tell the founder less than others.
 
@@ -327,7 +331,15 @@ readonly atArrival: boolean;
 
 **Lines without approved wording** (PLACEHOLDER, *Needs design*): `BATCH_STARTED`, `BATCH_FINISHED` with `FAILED` (no shipped recipe can fail), `HELD_BACK` for `RECIPE_NOT_SUPPORTED` and for an input other than corn, `ORDER_REFUSED` for other reasons, `limitedBy`, and ADR 0026's Driver lines.
 
-**Delivery stays on the channels.** Report lines reach the founder only through ADR 0025's four channels and ADR 0024's messages, as `REPORT` and `MESSAGE_DELIVERED` activity items in the activity feed and message ledger. They're never toasts. On `main`, toasts are raised for world events whose `EVENT_IMPORTANCE` is `"notify"` (`packages/contracts/src/events.ts`, `apps/game/src/ui/toasts/copy.ts`). So ADR 0025's world events (`EMPLOYEE_HIRED`, `STANDING_ORDER_SET`, `EMPLOYEE_DISMISSED`, `EMPLOYEE_ACTED`, `REPORT_DELIVERED`) are all `"log"` in `EVENT_IMPORTANCE`: an `EMPLOYEE_ACTED` toast would tell the founder what happened at the still the moment it happened, wherever they were. The `REPORT` activity item stays `notify` in `ACTIVITY_IMPORTANCE` (ADR 0025), which slows the rest fast-forward (ADR 0023 decision 9) and isn't a toast.
+**Delivery stays on the channels, and nothing about the still is a toast.** Report lines reach the founder only through ADR 0025's four channels and ADR 0024's messages, as `REPORT` and `MESSAGE_DELIVERED` activity items in the activity feed and message ledger (#209 §4: "not omniscient toasts").
+
+**The guarantee is ADR 0021's rule, not `EVENT_IMPORTANCE`.** ADR 0021 (Context, "Events"): "The worker stops forwarding world events to the UI, because toasts built from world events are a channel." Under founder rules the UI gets the player snapshot's `activity` feed, and **no world event reaches the UI as a toast**. That includes the events an employee's work emits through existing code: a Distiller's batch settles in the `production` phase and emits `PRODUCTION_COMPLETED` (or `PRODUCTION_FAILED` once a recipe can fail), both `"notify"` with toast mappers today; a Driver's run emits ADR 0022's delivery events; and ADR 0025's five new events. On `main` that rule isn't built yet: `apps/game/src/workers/simulation-host.ts` forwards `sim.takeEvents()` to the UI whatever `founderRules` is, and `apps/game/src/ui/toasts/toast-view.ts` toasts every `notify` event plus the `log` events in `LoggedToastEventType` (`EQUIPMENT_SOLD`). So `"log"` alone doesn't stop a toast.
+
+- **Who enforces it: K2 (#177)**, which moves every remaining surface behind knowledge and locks the non-leak property over every surface. Event forwarding and the toast host are such a surface. Under `founderRules: true` the worker forwards no world events to the UI (toasts come only from `activity` items, if at all). With the flag off, M001's toasts are unchanged.
+- **E1 must not ship ahead of it.** E1 (#180) depends on PT1 and R1, not K2. So E1's refresh either adds K2 (#177) to E1's Depends on, or moves the founder-rules gate on event forwarding into E1's owned files (`apps/game/src/workers/simulation-host.ts`). Either way, E1's acceptance includes a test: under founder rules, a Distiller's batch completing while the founder is elsewhere produces no toast.
+- **Defence in depth.** ADR 0025's five events (`EMPLOYEE_HIRED`, `STANDING_ORDER_SET`, `EMPLOYEE_DISMISSED`, `EMPLOYEE_ACTED`, `REPORT_DELIVERED`) are `"log"` in `EVENT_IMPORTANCE`, and none of them may be added to `LoggedToastEventType`. With the flag off no employee exists, so they never fire in M001 anyway.
+
+The `REPORT` activity item stays `notify` in `ACTIVITY_IMPORTANCE` (ADR 0025). That slows the rest fast-forward (ADR 0023 decision 9). It's an activity item delivered by a channel, not a world-event toast.
 
 ### 9. No supply buying; the Runner is later
 
@@ -362,7 +374,7 @@ The band lines describe a still, so they're the Distiller's. A Driver's bands us
 
 ### 11. Contract and game-data changes for EM1 (#210): ADR 0025 decision 16, restated as amended
 
-EM1 is the contract task for ADR 0025 and depends on this record. **Bold** marks what this record adds or changes. Everything else repeats ADR 0025 decision 16, so EM1 can work from this list alone. ADR 0027 changes nothing in this list (its amendment to ADR 0025 decision 7 is behaviour: Miller's as a family number, for C1 and E1). ADR 0026's own contract task follows EM1 and is listed after.
+EM1 is the contract task for ADR 0025 and depends on this record. **Bold** marks what this record adds or changes. Everything else repeats ADR 0025 decision 16, with its payloads and rows, so EM1 can work from this list alone. ADR 0027 changes nothing in this list (its amendment to ADR 0025 decision 7 is behaviour: Miller's as a family number, for C1 and E1). ADR 0026's own contract task follows EM1 and is listed after.
 
 - `ids.ts`: `"StandingOrder"` in `IdKind` and `DYNAMIC_ID_KINDS`, prefix `"standing"`; `StandingOrderId`.
 - `state.ts`: `EmployeeRole` (`"DISTILLER"`), `CompetenceEstimate`, `EmployeeState`, `EmployeeWork`, `StandingOrderState`, `StandingOrderTerms`, `DistillOrderTerms`; `GameState.employees` and `GameState.formerEmployees`; `ActivityKind` gains `HIRE` and `BRIEF_EMPLOYEE`.
@@ -370,9 +382,9 @@ EM1 is the contract task for ADR 0025 and depends on this record. **Bold** marks
   - `HireEmployeeCommand` (with `standingOrder: StandingOrderTerms | null`, **which carries the first order from the hiring conversation, decision 5**), `SetStandingOrderCommand`, `DismissEmployeeCommand` (types, `GameCommand`, `GAME_COMMAND_TYPES`);
   - `CommandIssuer = { kind: "FOUNDER" } | { kind: "EMPLOYEE"; characterId; standingOrderId }`; `CommandEnvelope.issuer` stays `{ kind: "FOUNDER" }`; `causedBy` stays `CommandId | null`;
   - the reasons `CANDIDATE_UNAVAILABLE { characterId }`, `CANDIDATE_TERMS_CHANGED { characterId, agreed, current }`, `STATION_UNSUITABLE { facilityId, role }`, `POSITION_FILLED { facilityId, role }`;
-  - `OUTSIDE_AUTHORITY`'s payload with `AuthorityLimit`.
-- `events.ts`: `EMPLOYEE_HIRED`, `STANDING_ORDER_SET`, `EMPLOYEE_DISMISSED`, `EMPLOYEE_ACTED`, `REPORT_DELIVERED`, as ADR 0025 lists them; all `null` in `EVENT_CONCERNS_PLACE`, **and all `"log"` in `EVENT_IMPORTANCE`, so none is ever a toast (decision 8)**.
-- `ledger.ts`: `TransactionKind` `PERSONNEL`, cash-flow default `WAGES`.
+  - `OUTSIDE_AUTHORITY { characterId, standingOrderId, limit: AuthorityLimit }`, with `AuthorityLimit = "COMMAND" | "STATION" | "RECIPE" | "BATCH_SIZE" | "SPENDING_CAP"`. O1a didn't add either (neither is in `commands.ts` on `main`), so EM1 adds both.
+- `events.ts`: `EMPLOYEE_HIRED { characterId, role, stationId, dailyWage, signingCost, startsAt, transactionId }`, `STANDING_ORDER_SET { characterId, standingOrderId: StandingOrderId | null, terms: StandingOrderTerms | null, transactionId }`, `EMPLOYEE_DISMISSED { characterId, transactionId }`, `EMPLOYEE_ACTED { characterId, standingOrderId, command, status: "APPLIED" | "REJECTED", reason: RejectionReason | null }` (with `causedBy: null`; it's the employee command's identity, ADR 0025 decision 6), `REPORT_DELIVERED { characterId, via, lineCount, dropped }`. The task finalises the payloads, using these fields at least. All `null` in `EVENT_CONCERNS_PLACE`, **and all `"log"` in `EVENT_IMPORTANCE`, never in `LoggedToastEventType` (defence in depth; the guarantee is ADR 0021's no-forwarding rule, enforced by K2, decision 8)**.
+- `ledger.ts`: `TransactionKind` `PERSONNEL`, cash-flow default `WAGES`. `projection/finance.ts`'s `CASH_FLOW_CATEGORY` row is E1's, not EM1's.
 - `knowledge.ts`:
   - `SUBJECT_KINDS` appends `EMPLOYEE_PERFORMANCE`; its `KnowledgeSubject` and `KnowledgeValue` members; `knowledgeSubjectKey`;
   - `HoldReason` (with `NO_CASH` and `SPENDING_CAP` as separate members, **confirmed by decision 8**), `ReportLine`, `PendingReport`, `ReportContent`;
@@ -381,16 +393,17 @@ EM1 is the contract task for ADR 0025 and depends on this record. **Bold** marks
   - `CallInReason` gains `EMPLOYEE_REPORT`; `HeldMessage.report` and `DeliveredMessage.report`;
   - `TRANSACTION_PRODUCERS` gains the five `PERSONNEL` and `PRODUCTION_START:EMPLOYEE` families, and `CASH_POSTING_REVEALS` gains `PRODUCTION_START:EMPLOYEE`.
 - `player-snapshot.ts`: `PlayerEmployee`, `PlayerHiring` (**doc: "The people available to meet at this place now"**), `PlayerCandidate`; `PlayerSnapshot.employees` and `.hiring`; **`CompetenceBand`, and `PlayerCandidate.competenceBand` and `PlayerEmployee.competenceBand: CompetenceBand` (decision 4)**.
-- `snapshot.ts` (world): `CharacterSnapshot.role` widens to `"FOUNDER" | "FOREMAN" | EmployeeRole`; `GameSnapshot.employees`.
+- `snapshot.ts` (world): `CharacterSnapshot.role` widens to `"FOUNDER" | "FOREMAN" | EmployeeRole` (an employee leader shows `skill` = true competence); `GameSnapshot.employees: readonly EmployeeSnapshot[]` (`EmployeeState` plus `name`), for the lab and the debug view.
 - `schemas.ts`, `save.ts`: Zod for all of the above; ADR 0025 decision 14's bump and migration, with an old-version fixture. **This record's fields are part of those types' first version, so they need no step of their own** (checklist §3).
 - `packages/game-data`:
   - `personnel.ts`: `CandidateDefinition`, `CANDIDATE_POOL` (**the five Distiller names approved by #209: comments say so, not PLACEHOLDER**), `HiringPlaceDefinition`, `HIRING_PLACES` (**Miller's Distiller row approved**), `RoleTerms` (**`estimateSpread: { min; max }` instead of a number, and `workingHours: readonly PlaceHoursInterval[]`, decisions 1 and 4**), `ROLE_TERMS` (**`DISTILLER.estimateSpread = { min: 20, max: 50 }`, `DISTILLER.workingHours = [06:00–20:00]`**), **`CompetenceBandThresholds`, `COMPETENCE_BANDS`**, `CANDIDATE_SLATE_TICKS`, `SPENDING_PERIOD_TICKS`, `DISTILL_ORDER_DEFAULTS`, `COMPETENCE_DURATION_PPM`, `COMPETENCE_REVEAL_BATCHES`, `REPORT_LINE_LIMIT`, with ADR 0025's load validation **plus decision 1's working-hours checks and decision 4's spread and band checks**; `GameData` gains them;
   - `scenario.ts`: `ScenarioDefinition.firstCandidates` (M001 `[]`; the M002 scenario `["walt-hagen"]`);
-  - `knowledge.ts`: ADR 0025's `KNOWLEDGE_VISIBILITY` rows;
+  - `knowledge.ts`: `KNOWLEDGE_VISIBILITY` rows `IN_PERSON.FACILITY` gains `EMPLOYEE_PERFORMANCE`, and `PHONE.FACILITY`, `MESSAGE.FACILITY` and `REPORT.FACILITY` = `FACILITY_STOCK`, `FACILITY_OPERATIONS`, `EMPLOYEE_PERFORMANCE`;
   - `ACTIVITY_DURATIONS` rows `HIRE` (60) and `BRIEF_EMPLOYEE` (15); `ACTIVITY_IMPORTANCE`: `REPORT` is `notify`.
-- `packages/simulation/src/kernel/registry.ts` and `simulation.ts`: `employees` in `PHASES` between `production` and `vehicles`; `CommandContext.issuer`, and `envelope: CommandEnvelope | null`.
+- `packages/simulation/src/kernel/registry.ts` and `simulation.ts`: `employees` in `PHASES` between `production` and `vehicles`; `CommandContext.issuer: CommandIssuer`, and `envelope: CommandEnvelope | null`. Its hooks and `applyIssued` are E1's.
+- `IssuerView`'s `EmployeeView` (simulation-internal, named here so the review can check it): the station's world subjects, its equipment, crew and storage, the cash balance, and the employee's own `EmployeeState`.
 
-**E1 (#180)** implements, beyond ADR 0025's list: `onDuty` and `isAvailable` (decision 1); the policy step only on duty (decision 2); the Distiller's call-out hook case with `isAvailable` (decision 7); calls in only on duty (decision 6); the estimate width draw and `competenceBand` projection (decision 4); `limitedBy` and `atArrival` (decision 8); and the approved copy rows for the hiring scene and reports (decision 10).
+**E1 (#180)** implements, beyond ADR 0025's list: `onDutyAtMinute`, `onDuty` and `isAvailable` (decision 1); the policy step only on duty (decision 2); the Distiller's call-out hook case with `isAvailable` (decision 7); calls in only on duty (decision 6); the estimate width draw and `competenceBand` projection (decision 4); `limitedBy` and `atArrival` (decision 8); the no-toast test under founder rules, and the event-forwarding gate if K2 (#177) hasn't landed (decision 8); and the approved copy rows for the hiring scene and reports (decision 10).
 
 **ADR 0026's contract task (after EM1)** applies ADR 0026 decision 16, with these changes:
 
@@ -434,6 +447,7 @@ Every input below is always-known state (founder whereabouts including `busy` an
 | `PlayerEmployee.competenceBand` | — | — | — | — | From the stored `competenceEstimate` (an agreement) and game-data |
 | `BATCH_STARTED.limitedBy` | — | Inside a `REPORT` item, only when a report is delivered | Delivered with the report | None | Through the report only |
 | `REPORT.atArrival` | — | `REPORT`: set from which delivery step ran (founder state) | The arrival delivery | None | Activity |
+| World events from employee work (`PRODUCTION_COMPLETED`/`PRODUCTION_FAILED` of an employee's batch, a Driver's delivery events, ADR 0025's five events) | — | None | None | Existing rows | None: under founder rules the worker forwards no world event to the UI, so none is a toast (ADR 0021, enforced by K2 #177; decision 8) |
 | The "still's running" status | — | — | — | — | None: the UI derives it from the call or live view and delivered `REPORT` items, all in the player snapshot |
 
 **The static half of ADR 0021 decision 9.** Two worlds that differ only in hidden state, given the same commands, have the same agreements, game-data, seed and clock. So `isAvailable`, the call-out hook's answer, the estimate (width and offset are keyed draws on static keys), the band, and the `DEPARTURE_OUTSIDE_HOURS` result are equal in both.
