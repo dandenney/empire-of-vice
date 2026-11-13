@@ -16,6 +16,7 @@ export const LEDGER_COPY = {
     contracts: "Contracts",
     market: "The market",
     standing: "Your standing",
+    employees: "Your people",
   },
   /** One record's heading, per subject kind. */
   subjects: {
@@ -30,6 +31,7 @@ export const LEDGER_COPY = {
     ROUTE_CONDITION: "Condition",
     VEHICLE_WHEREABOUTS: "Whereabouts",
     STANDING: "Standing",
+    EMPLOYEE_PERFORMANCE: "Their work",
   },
   /** Age and when. */
   lastUpdated: (when: string) => `last updated ${when}`,
@@ -74,5 +76,7 @@ export const LEDGER_COPY = {
     unknownPlace: "somewhere",
     reputation: (n: number) => ["Reputation", `${n}`] as const,
     tier: (name: string) => ["Tier", name] as const,
+    batchesRun: (n: number) => ["Batches run", `${n}`] as const,
+    competence: (c: number | null) => ["How good", c === null ? "Too soon to tell" : `${c}`] as const,
   },
 } as const;

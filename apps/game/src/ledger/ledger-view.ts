@@ -157,6 +157,15 @@ export function ledgerGroups(player: PlayerSnapshot): readonly LedgerGroupView[]
   const contracts = present(player.contracts.map((c) => entry(player, "CONTRACT_PROGRESS", c.id, c.progress, (v) => [C.value.contractStatus(v.status)])));
   if (contracts.length > 0) groups.push({ key: "contracts", title: C.groups.contracts, entries: contracts });
 
+  // Employees (EM1): each one's known work, headed by their name.
+  const people = present(
+    player.employees.map((emp) => {
+      const e = entry(player, "EMPLOYEE_PERFORMANCE", emp.characterId, emp.performance, (v) => [C.value.batchesRun(v.batchesRun), C.value.competence(v.competence)]);
+      return e && { ...e, title: emp.name };
+    }),
+  );
+  if (people.length > 0) groups.push({ key: "employees", title: C.groups.employees, entries: people });
+
   const market = entry(player, "MARKET_PRICES", "", player.market, (v) => v.products.map((p) => C.value.price(p.productName, formatQuality(p.quality), p.spotPrice)));
   if (market) groups.push({ key: "market", title: C.groups.market, entries: [market] });
 

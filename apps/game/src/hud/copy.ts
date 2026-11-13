@@ -43,6 +43,8 @@ export const HUD_COPY = {
     PHONE_NO_ANSWER: "Ringing",
     INSTALL_PHONE: "Having a phone put in",
     CHECK_IN: "Checking in",
+    HIRE: "Hiring",
+    BRIEF_EMPLOYEE: "Briefing a hand",
   } satisfies Readonly<Record<ActivityKind, string>>,
   unknownPlace: "somewhere",
 } as const;

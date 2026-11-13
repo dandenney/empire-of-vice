@@ -22,6 +22,7 @@ function knownCount(p: PlayerSnapshot): number {
   p.routes.forEach((r) => count(r.condition));
   p.vehicles.forEach((v) => count(v.whereabouts));
   p.contracts.forEach((c) => count(c.progress));
+  p.employees.forEach((e) => count(e.performance));
   count(p.market);
   count(p.standing);
   return n;
