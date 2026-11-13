@@ -1107,9 +1107,10 @@ describe("FIN-001 idempotency", () => {
       fromFacilityId: DISTILLERY_MAIN,
       routeId: GAME_DATA.routes[0]!.id,
       cargo: [{ productId: MOONSHINE, quality: "basic" as const, quantity: 15, cost: cents(15_600) }],
-      purpose: { kind: "SALE" as const, buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: cents(2_000) },
+      purpose: { kind: "SALE" as const, buyerId: CROSSROADS_ROADHOUSE, dealId: null },
       status: "OUTBOUND" as const,
       dealDeadline: null,
+      driver: { kind: "FOUNDER" as const },
     };
     const loaded = commitEntries(start, "DISPATCH", "DISPATCH:delivery-7", [dr("GOODS_IN_TRANSIT", 15_600), cr("OWNER_EQUITY", 15_600)], (s) => ({
       ...s,
@@ -1148,23 +1149,46 @@ const simStepArb: fc.Arbitrary<SimStep> = fc.oneof(
   { weight: 3, arbitrary: fc.record({ k: fc.constant("advance" as const), ticks: fc.integer({ min: 1, max: 720 }) }) },
 );
 
-function simCommand(state: GameState, step: Exclude<SimStep, { k: "advance" }>): GameCommand {
+function simCommand(step: Exclude<SimStep, { k: "advance" | "sell" }>): GameCommand {
   switch (step.k) {
     case "buy":
       return { type: "PURCHASE_MATERIALS", supplierId: MILLERS_FEED, materialId: step.sugar ? SUGAR : CORN, quantity: step.qty, facilityId: DISTILLERY_MAIN };
     case "produce":
       return { type: "START_PRODUCTION", facilityId: DISTILLERY_MAIN, recipeId: BASIC_MOONSHINE_RECIPE, quantity: step.qty };
-    case "sell": {
-      const quote = state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)?.wants[0]?.unitPrice ?? cents(step.price);
-      return {
-        type: "DISPATCH_DELIVERY",
-        vehicleId: MODEL_TT_TRUCK,
-        cargo: [{ productId: MOONSHINE, quality: "basic", quantity: step.qty }],
-        purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: step.atQuote ? quote : cents(step.price) },
-        routeId: null,
-      };
-    }
   }
+}
+
+/**
+ * Dispatches one step. A sale is AGREE_DEAL at the step's price, then a deal dispatch
+ * of the same cargo (ADR 0022 decision 6); a rejected agreement dispatches nothing.
+ */
+function dispatchStep(sim: ReturnType<typeof newGame>, step: Exclude<SimStep, { k: "advance" }>): void {
+  if (step.k !== "sell") {
+    sim.dispatch({ command: simCommand(step) });
+    return;
+  }
+  const quote = sim.state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)?.wants[0]?.unitPrice ?? cents(step.price);
+  const agreed = sim.dispatch({
+    command: {
+      type: "AGREE_DEAL",
+      buyerId: CROSSROADS_ROADHOUSE,
+      productId: MOONSHINE,
+      quality: "basic",
+      quantity: step.qty,
+      agreedUnitPrice: step.atQuote ? quote : cents(step.price),
+    },
+  });
+  if (agreed.status !== "applied") return;
+  sim.dispatch({
+    command: {
+      type: "DISPATCH_DELIVERY",
+      vehicleId: MODEL_TT_TRUCK,
+      cargo: [{ productId: MOONSHINE, quality: "basic", quantity: step.qty }],
+      purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: sim.state.heldDeals.at(-1)!.id },
+      routeId: null,
+      driver: { kind: "FOUNDER" },
+    },
+  });
 }
 
 describe("FIN-001 invariants through the real Simulation", () => {
@@ -1176,7 +1200,7 @@ describe("FIN-001 invariants through the real Simulation", () => {
         expectLedgerSound(sim.state);
         for (const step of steps) {
           if (step.k === "advance") sim.advance(step.ticks);
-          else sim.dispatch({ command: simCommand(sim.state, step) });
+          else dispatchStep(sim, step);
           const state = sim.state;
           expectLedgerSound(state);
           expect(ledgerBalances(state.ledger.transactions)).toEqual(fullBalances(state));
@@ -1194,9 +1218,9 @@ describe("FIN-001 invariants through the real Simulation", () => {
     for (const input of recipe.inputsPerCase) {
       sim.dispatch({ command: { type: "PURCHASE_MATERIALS", supplierId: MILLERS_FEED, materialId: input.materialId, quantity: input.quantity, facilityId: DISTILLERY_MAIN } });
     }
-    sim.dispatch({ command: simCommand(sim.state, { k: "produce", qty: 1 }) });
+    dispatchStep(sim, { k: "produce", qty: 1 });
     sim.advance(recipe.ticksPerCase + 1);
-    sim.dispatch({ command: simCommand(sim.state, { k: "sell", qty: 1, atQuote: true, price: 0 }) });
+    dispatchStep(sim, { k: "sell", qty: 1, atQuote: true, price: 0 });
     sim.advance(3 * TICKS_PER_DAY);
     const sales = sim.state.ledger.transactions.filter((t) => t.kind === "SALE");
     expect(sales).toHaveLength(1);

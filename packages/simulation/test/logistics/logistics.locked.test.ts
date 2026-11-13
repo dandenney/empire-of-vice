@@ -397,18 +397,41 @@ function wantOf(state: GameState, buyerId: BuyerId, quality: QualityTier = "basi
   return want;
 }
 
+/**
+ * A spot sale of `quantity` basic cases at the buyer's quote, split by ADR 0022 decision 6
+ * into AGREE_DEAL and a deal dispatch. Reuses a HELD deal for the same buyer, cargo and
+ * price (a rejected dispatch leaves its deal held), or agrees one now (it must apply).
+ * Returns the dispatch for the caller to run.
+ */
 function sale(
-  state: GameState,
+  g: Game,
   buyerId: BuyerId,
   quantity: number,
   options: { routeId?: RouteId | null; vehicleId?: VehicleId; cargo?: readonly CargoLine[] } = {},
 ): GameCommand {
+  const unitPrice = wantOf(g.sim.state, buyerId).unitPrice;
+  const held = g.sim.state.heldDeals.find(
+    (d) => d.status === "HELD" && d.buyerId === buyerId && d.productId === MOONSHINE && d.quality === "basic" && d.quantity === quantity && d.unitPrice === unitPrice,
+  );
+  if (!held) expectApplied(run(g, { type: "AGREE_DEAL", buyerId, productId: MOONSHINE, quality: "basic", quantity, agreedUnitPrice: unitPrice }));
   return {
     type: "DISPATCH_DELIVERY",
     vehicleId: options.vehicleId ?? MODEL_TT_TRUCK,
     cargo: options.cargo ?? [{ productId: MOONSHINE, quality: "basic", quantity }],
-    purpose: { kind: "SALE", buyerId, agreedUnitPrice: wantOf(state, buyerId).unitPrice },
+    purpose: { kind: "SALE", buyerId, dealId: held?.id ?? g.sim.state.heldDeals.at(-1)!.id },
     routeId: options.routeId ?? null,
+    driver: { kind: "FOUNDER" },
+  };
+}
+
+/**
+ * Setup for tests of the dispatch's own checks: every buyer can agree any deal today, so
+ * the buyer checks ADR 0022 decision 6 moved to AGREE_DEAL don't stand in the way.
+ */
+function withRoomyBuyers(state: GameState): GameState {
+  return {
+    ...state,
+    buyers: state.buyers.map((b) => ({ ...b, budgetRemaining: cents(100_000_000), wants: b.wants.map((w) => ({ ...w, demandRemaining: 1_000 })) })),
   };
 }
 
@@ -419,6 +442,7 @@ function deliverContract(contractId: ContractId, quantity: number, routeId: Rout
     cargo: [{ productId: MOONSHINE, quality: "basic", quantity }],
     purpose: { kind: "CONTRACT_INSTALLMENT", contractId },
     routeId,
+    driver: { kind: "FOUNDER" },
   };
 }
 
@@ -463,7 +487,7 @@ interface Trip {
 /** Dispatches a spot sale and returns what was loaded. */
 function dispatchSale(g: Game, buyerId: BuyerId, quantity: number, routeId: RouteId | null, vehicleId: VehicleId = MODEL_TT_TRUCK): Trip {
   const data = g.setup.data ?? GAME_DATA;
-  expectApplied(run(g, sale(g.sim.state, buyerId, quantity, { routeId, vehicleId })));
+  expectApplied(run(g, sale(g, buyerId, quantity, { routeId, vehicleId })));
   const trip = tripOf(g.sim.state, vehicleId);
   const delivery = deliveryOf(g.sim.state, trip.deliveryId);
   const cargo = delivery.cargo[0]!;
@@ -576,7 +600,7 @@ describe("T03 dispatch", () => {
       edit(g, (s) => withStock(s, "basic", 4));
       const route = choice === "safe" ? safeRoute(CROSSROADS_ROADHOUSE) : riskyRoute(CROSSROADS_ROADHOUSE);
       const rngBefore = g.sim.state.rng.routes;
-      const result = run(g, sale(g.sim.state, CROSSROADS_ROADHOUSE, 4, { routeId: choice === "safe" ? null : route.id }));
+      const result = run(g, sale(g, CROSSROADS_ROADHOUSE, 4, { routeId: choice === "safe" ? null : route.id }));
       expectApplied(result);
       if (result.status !== "applied") return;
       const trip = tripOf(g.sim.state);
@@ -603,14 +627,14 @@ describe("T03 dispatch", () => {
     const g = start();
     edit(g, (s) => withCash(withStock(s, "basic", 4), 0));
     expect(cashOf(g.sim.state)).toBe(0);
-    expectApplied(run(g, sale(g.sim.state, CROSSROADS_ROADHOUSE, 4, { routeId: riskyRoute(CROSSROADS_ROADHOUSE).id })));
+    expectApplied(run(g, sale(g, CROSSROADS_ROADHOUSE, 4, { routeId: riskyRoute(CROSSROADS_ROADHOUSE).id })));
     expect(truckOf(g.sim.state).trip).not.toBeNull();
   });
 
   it("rejects more than the truck's 20 cases with VEHICLE_CAPACITY_EXCEEDED and changes nothing", () => {
     const g = start();
-    edit(g, (s) => withStock(s, "basic", 30));
-    expect(expectRejected(g, sale(g.sim.state, KESSLERS_BACK_ROOM, 21), "VEHICLE_CAPACITY_EXCEEDED")).toEqual({
+    edit(g, (s) => withRoomyBuyers(withStock(s, "basic", 30)));
+    expect(expectRejected(g, sale(g, KESSLERS_BACK_ROOM, 21), "VEHICLE_CAPACITY_EXCEEDED")).toEqual({
       code: "VEHICLE_CAPACITY_EXCEEDED",
       vehicleId: MODEL_TT_TRUCK,
       requested: 21,
@@ -622,27 +646,27 @@ describe("T03 dispatch", () => {
     const g = start({ data: withRiskyRoutes(FORCE_DELAY) });
     edit(g, (s) => withStock(s, "basic", 8));
     const t = dispatchSale(g, CROSSROADS_ROADHOUSE, 2, riskyRoute(CROSSROADS_ROADHOUSE).id);
-    expectRejected(g, sale(g.sim.state, CROSSROADS_ROADHOUSE, 1), "VEHICLE_UNAVAILABLE");
+    expectRejected(g, sale(g, CROSSROADS_ROADHOUSE, 1), "VEHICLE_UNAVAILABLE");
     to(g, t.arrivesAt);
     expect(tripOf(g.sim.state).delayed).toBe(true);
-    expectRejected(g, sale(g.sim.state, CROSSROADS_ROADHOUSE, 1), "VEHICLE_UNAVAILABLE");
+    expectRejected(g, sale(g, CROSSROADS_ROADHOUSE, 1), "VEHICLE_UNAVAILABLE");
     to(g, tripOf(g.sim.state).arrivesAt);
     expect(tripOf(g.sim.state).leg).toBe("RETURN");
-    expectRejected(g, sale(g.sim.state, CROSSROADS_ROADHOUSE, 1), "VEHICLE_UNAVAILABLE");
+    expectRejected(g, sale(g, CROSSROADS_ROADHOUSE, 1), "VEHICLE_UNAVAILABLE");
   });
 
   it("rejects multi-line cargo, an unknown route, and another buyer's route, each atomically (rule 6)", () => {
     const g = start();
-    edit(g, (s) => withStock(withStock(s, "basic", 4), "standard", 4));
+    edit(g, (s) => withRoomyBuyers(withStock(withStock(s, "basic", 4), "standard", 4)));
     const twoLines: CargoLine[] = [
       { productId: MOONSHINE, quality: "basic", quantity: 1 },
       { productId: MOONSHINE, quality: "standard", quantity: 1 },
     ];
-    expectRejected(g, sale(g.sim.state, KESSLERS_BACK_ROOM, 2, { cargo: twoLines }), "INVALID_QUANTITY");
-    expectRejected(g, sale(g.sim.state, CROSSROADS_ROADHOUSE, 1, { routeId: asId("Route", "fixture-no-such-route") }), "UNKNOWN_ENTITY");
-    expectRejected(g, sale(g.sim.state, CROSSROADS_ROADHOUSE, 1, { routeId: riskyRoute(KESSLERS_BACK_ROOM).id }), "NO_ROUTE");
-    expectRejected(g, sale(g.sim.state, CROSSROADS_ROADHOUSE, 5), "INSUFFICIENT_STOCK");
-    expectApplied(run(g, sale(g.sim.state, CROSSROADS_ROADHOUSE, 4, { routeId: riskyRoute(CROSSROADS_ROADHOUSE).id })));
+    expectRejected(g, sale(g, KESSLERS_BACK_ROOM, 2, { cargo: twoLines }), "INVALID_QUANTITY");
+    expectRejected(g, sale(g, CROSSROADS_ROADHOUSE, 1, { routeId: asId("Route", "fixture-no-such-route") }), "UNKNOWN_ENTITY");
+    expectRejected(g, sale(g, CROSSROADS_ROADHOUSE, 1, { routeId: riskyRoute(KESSLERS_BACK_ROOM).id }), "NO_ROUTE");
+    expectRejected(g, sale(g, CROSSROADS_ROADHOUSE, 5), "INSUFFICIENT_STOCK");
+    expectApplied(run(g, sale(g, CROSSROADS_ROADHOUSE, 4, { routeId: riskyRoute(CROSSROADS_ROADHOUSE).id })));
   });
 });
 
@@ -1278,7 +1302,7 @@ describe("T03 route closures (decision 5)", () => {
     // The other route to the same buyer stays open.
     expect(closureOf(s, safeRoute(CROSSROADS_ROADHOUSE).id)).toBeNull();
 
-    expect(expectRejected(g, sale(s, CROSSROADS_ROADHOUSE, 4, { routeId: risky.id }), "ROUTE_CLOSED")).toEqual({
+    expect(expectRejected(g, sale(g, CROSSROADS_ROADHOUSE, 4, { routeId: risky.id }), "ROUTE_CLOSED")).toEqual({
       code: "ROUTE_CLOSED",
       routeId: risky.id,
       reopensAt: 110,
@@ -1289,7 +1313,7 @@ describe("T03 route closures (decision 5)", () => {
     expect(reopened).toMatchObject({ kind: "DAILY_SETTLEMENT", tick: 110, entries: [] });
     expect(eventsOf(g, reopened)).toEqual([{ type: "ROUTE_REOPENED", id: reopened.eventIds[0], tick: 110, causedBy: null, routeId: risky.id }]);
     expect(closureOf(g.sim.state, risky.id)).toBeNull();
-    expectApplied(run(g, sale(g.sim.state, CROSSROADS_ROADHOUSE, 4, { routeId: risky.id })));
+    expectApplied(run(g, sale(g, CROSSROADS_ROADHOUSE, 4, { routeId: risky.id })));
   });
 
   it("a closure with no duration has reopensAt null, schedules nothing, and a later ROUTE_REOPENING clears it", () => {

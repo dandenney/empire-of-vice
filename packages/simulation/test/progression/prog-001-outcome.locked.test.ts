@@ -462,13 +462,19 @@ function spotBuyerFor(state: GameState, quantity: number): { readonly buyerId: B
 function dispatchSpot(g: Game, quantity: number): { readonly deliveryId: DeliveryState["id"]; readonly arrival: number; readonly unitPrice: Money } {
   untilTruckHome(g);
   const { buyerId, unitPrice } = spotBuyerFor(g.sim.state, quantity);
+  // ADR 0022 decision 6: agree the deal at the quote, then dispatch against it.
+  expectApplied(
+    run(g, { type: "AGREE_DEAL", buyerId, productId: MOONSHINE, quality: "basic", quantity, agreedUnitPrice: unitPrice }),
+    "the spot deal",
+  );
   expectApplied(
     run(g, {
       type: "DISPATCH_DELIVERY",
       vehicleId: MODEL_TT_TRUCK,
       cargo: [{ productId: MOONSHINE, quality: "basic", quantity }],
-      purpose: { kind: "SALE", buyerId, agreedUnitPrice: unitPrice },
+      purpose: { kind: "SALE", buyerId, dealId: g.sim.state.heldDeals.at(-1)!.id },
       routeId: null,
+      driver: { kind: "FOUNDER" },
     }),
     "the spot dispatch",
   );
@@ -740,7 +746,7 @@ function policyStep(g: Game): "ACTED" | "WAIT" {
     for (const r of s.reservations) {
       if (r.holder.kind !== "CONTRACT" || r.facilityId !== pool.facilityId || r.goods.kind !== "PRODUCT") continue;
       if (r.goods.productId !== pool.productId || r.goods.quality !== pool.quality) continue;
-      expectApplied(run(g, { type: "RELEASE_RESERVATION", reservationId: r.id }), `releasing ${r.id}`);
+      expectApplied(run(g, { type: "RELEASE_RESERVATION", facilityId: r.facilityId, reservationId: r.id }), `releasing ${r.id}`);
     }
     const now = g.sim.state;
     const vehicle = byId(now.vehicles).find((v) => DATA.vehicles.find((d) => d.id === v.id)?.homeFacilityId === pool.facilityId && v.trip === null);
@@ -753,11 +759,23 @@ function policyStep(g: Game): "ACTED" | "WAIT" {
     const quantity = Math.min(availableProduct(now, pool.facilityId, pool.productId, pool.quality), capacity, acceptable);
     expectApplied(
       run(g, {
+        type: "AGREE_DEAL",
+        buyerId: target.buyer.id,
+        productId: pool.productId,
+        quality: pool.quality,
+        quantity,
+        agreedUnitPrice: target.want.unitPrice,
+      }),
+      "the policy's deal",
+    );
+    expectApplied(
+      run(g, {
         type: "DISPATCH_DELIVERY",
         vehicleId: vehicle.id,
         cargo: [{ productId: pool.productId, quality: pool.quality, quantity }],
-        purpose: { kind: "SALE", buyerId: target.buyer.id, agreedUnitPrice: target.want.unitPrice },
+        purpose: { kind: "SALE", buyerId: target.buyer.id, dealId: g.sim.state.heldDeals.at(-1)!.id },
         routeId: target.routeId,
+        driver: { kind: "FOUNDER" },
       }),
       "the policy's dispatch",
     );
@@ -1418,12 +1436,14 @@ function commandFor(state: GameState, action: Action): GameCommand | null {
       const buyer = pick(byId(state.buyers), action.buyer);
       if (!pool || !buyer) return null;
       const want = matchWant(buyer, pool.productId, pool.quality);
+      // ADR 0022 decision 6: the deal first; `saleDispatchAfter` sends the cargo against it.
       return {
-        type: "DISPATCH_DELIVERY",
-        vehicleId: MODEL_TT_TRUCK,
-        cargo: [{ productId: pool.productId, quality: pool.quality, quantity: action.quantity }],
-        purpose: { kind: "SALE", buyerId: buyer.id, agreedUnitPrice: want?.unitPrice ?? cents(1) },
-        routeId: routeFor(buyer.id, action.risky),
+        type: "AGREE_DEAL",
+        buyerId: buyer.id,
+        productId: pool.productId,
+        quality: pool.quality,
+        quantity: action.quantity,
+        agreedUnitPrice: want?.unitPrice ?? cents(1),
       };
     }
     case "accept": {
@@ -1439,6 +1459,7 @@ function commandFor(state: GameState, action: Action): GameCommand | null {
         cargo: [{ productId: contract.productId, quality: contract.minimumQuality, quantity: action.quantity }],
         purpose: { kind: "CONTRACT_INSTALLMENT", contractId: contract.id },
         routeId: routeFor(contract.buyerId, action.risky),
+        driver: { kind: "FOUNDER" },
       };
     }
     case "equip":
@@ -1449,13 +1470,26 @@ function commandFor(state: GameState, action: Action): GameCommand | null {
       return { type: "SET_WORKFORCE", facilityId: DISTILLERY_MAIN, workerCount: action.count };
     case "release": {
       const reservation = state.reservations.find((r) => r.holder.kind === "CONTRACT");
-      return reservation ? { type: "RELEASE_RESERVATION", reservationId: reservation.id } : null;
+      return reservation ? { type: "RELEASE_RESERVATION", facilityId: reservation.facilityId, reservationId: reservation.id } : null;
     }
     case "repeat": {
       const source = state.commandLog[state.commandLog.length - 1 - action.back];
       return source ? { type: "REPEAT_OPERATION", sourceCommandId: source.id } : null;
     }
   }
+}
+
+/** After a "sell" action's AGREE_DEAL applied: the dispatch of the same cargo against the new deal (ADR 0022 decision 6). */
+function saleDispatchAfter(state: GameState, applied: GameCommand, action: Action): GameCommand | null {
+  if (applied.type !== "AGREE_DEAL" || action.kind !== "sell") return null;
+  return {
+    type: "DISPATCH_DELIVERY",
+    vehicleId: MODEL_TT_TRUCK,
+    cargo: [{ productId: applied.productId, quality: applied.quality, quantity: applied.quantity }],
+    purpose: { kind: "SALE", buyerId: applied.buyerId, dealId: state.heldDeals.at(-1)!.id },
+    routeId: routeFor(applied.buyerId, action.risky),
+    driver: { kind: "FOUNDER" },
+  };
 }
 
 /** Advances to `target`, stopping at every midnight on the way to call `onMidnight` with the events since the last stop. */
@@ -1481,7 +1515,10 @@ function play(sample: Sample, onMidnight: (g: Game, events: readonly GameEvent[]
   });
   for (const step of sample.steps) {
     const command = commandFor(g.sim.state, step.action);
-    if (command) run(g, command);
+    if (command && run(g, command).status === "applied") {
+      const followUp = saleDispatchAfter(g.sim.state, command, step.action);
+      if (followUp) run(g, followUp);
+    }
     advanceTo(g, g.sim.state.tick + step.wait, onMidnight);
   }
   advanceTo(g, Math.max(g.sim.state.tick, sample.endDay * DAY), onMidnight);
