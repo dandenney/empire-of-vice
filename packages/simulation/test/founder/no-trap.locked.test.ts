@@ -369,7 +369,7 @@ describe("no traps: focused cases (ADR 0023 decisions 2a, 4, 7, 8)", () => {
     const duration = activityTicks("SET_WORKFORCE", sim.state, t);
     expectApplied(sim.dispatch({ command: { type: "SET_WORKFORCE", facilityId: DISTILLERY_MAIN, workerCount: Math.max(0, workers - 1) } }), "set workforce");
     const end = t + duration;
-    expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: { activity: "SET_WORKFORCE", until: end } });
+    expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: { activity: "SET_WORKFORCE", until: end }, call: null });
 
     // On the end tick itself, the busy gate's `≥` still holds the founder (decision 2a).
     sim.advance(end - 1 - sim.state.tick);
@@ -405,7 +405,7 @@ describe("no traps: focused cases (ADR 0023 decisions 2a, 4, 7, 8)", () => {
     const t = sim.state.tick + 1;
     expectApplied(sim.dispatch({ command: { type: "SET_WORKFORCE", facilityId: DISTILLERY_MAIN, workerCount: 2 } }), "set workforce while tired");
     const end = t + tired(ACTIVITY_DURATIONS.SET_WORKFORCE);
-    expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: { activity: "SET_WORKFORCE", until: end } });
+    expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: { activity: "SET_WORKFORCE", until: end }, call: null });
     const m = restUntilAccepted(sim);
     expect(m.acceptedAt).toBe(end + 1);
     expect(m.acceptedAt).toBeLessThanOrEqual(m.bound);
@@ -505,7 +505,7 @@ describe("no traps: focused cases (ADR 0023 decisions 2a, 4, 7, 8)", () => {
       }),
       "dispatch with the founder driving",
     );
-    expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: { activity: "LOAD_TRUCK", until: t + load } });
+    expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: { activity: "LOAD_TRUCK", until: t + load }, call: null });
     const home = t + load + 2 * routeById(STATE_HIGHWAY).durationTicks;
     const m = restUntilAccepted(sim);
     expect(m.acceptedAt).toBe(home + 1);
