@@ -8,6 +8,8 @@ Defers to: ADR 0027 (#213, earned phone access and message-taking, from the huma
 
 Amended by ADR 0027 (#213, earned phone access and message-taking): decisions 9 and 10. M002 has no calls from the road, with a binding rule for a later record (ADR 0027 decision 8); Miller's counts as a family number once it takes messages, and `CallInAttendant` gains a `tick` argument (ADR 0027 decision 9).
 
+Amended by ADR 0028 (#214, the hiring scene, the Distiller's hours and reports): decisions 1, 5, 10, 15, 16 and 17. `isAvailable(employee, tick, data)` is defined for every role from `ROLE_TERMS[role].workingHours` (ADR 0028 decision 1). A Driver takes up runs (step 3) and finds holds (step 5) only on duty; departure, lapses and a truck on the road aren't gated, and a regular run outside the Driver's hours is `DEPARTURE_OUTSIDE_HOURS` (decision 3). An answerer stays on the line until the call ends, and a relayed order applies at once and is acted on at the recipient's next on-duty step (decision 7). `estimateSpread` becomes a range or null, and a `competenceBand` sits beside the estimate (decision 4). ADR 0028 decision 11 lists the changes to decision 16.
+
 ## Context
 
 GDD §21 (PERS-001): hiring removes a responsibility, not clicks, and the design test for any role is "what can now happen without the founder there?" The M002 roles table gives two more hires after the Distiller:
@@ -715,13 +717,14 @@ A Driver's trip draws come from `keyedRng(seed, "employee-trip:<vehicleId>:<char
 
 ## Needs design (placeholders in this record)
 
-These are story and visual direction (factory.md §8). They stay PLACEHOLDER until the human decides, and the orchestrator files or links `needs-design` issues for them (the milestone already lists "candidate names" and "where and how you find people to hire"):
+These are story and visual direction (factory.md §8). Open items stay PLACEHOLDER until the human decides, and the orchestrator files or links `needs-design` issues for them. Items later records settled are marked "Settled":
 
-- **Candidate names and who they are:** the three Drivers and two Office Hands in decision 1. "Ruth" is the GDD's own example of who takes a message. #209 approved a set of M002 names, as names only; ADR 0028 (#214) places them.
+- **Candidate names and who they are:** the three Drivers and two Office Hands in decision 1. "Ruth" is the GDD's own example of who takes a message. #209's approved names are the Distiller pool's (ADR 0028 decision 4); none is moved to these roles.
 - **Where Drivers and Office Hands are found:** the freight depot for Drivers, the general store for Office Hands.
-- **Hours: when the Office Hand and the Distiller answer, and when the Driver works.** Not open for this record: #209 §5 decided people sleep, and ADR 0028 (#214) defines the deterministic availability rule both hooks apply (decision 10) and whether it gates the Driver's step (decision 5).
-- **How an Office Hand candidate reads with no competence estimate** in the hiring scene (decision 1): ADR 0028 (#214), with the rest of the scene.
+- **Hours.** Settled by ADR 0028 (#214): `isAvailable` from each role's working hours (decision 1; PLACEHOLDER tuning 07:00–19:00 for the Office Hand, 06:00–20:00 for the Driver and the Distiller), applied in both hooks (decision 10) and to the Driver's steps 3 and 5 (decision 5). How the hours are shown to the player is open in ADR 0028's *Needs design*.
+- **How an Office Hand candidate reads with no competence estimate** in the hiring scene: the visual and copy treatment only. Decision 1 settles the mechanism (no band, no range), and ADR 0028 decision 4 adds a null `competenceBand`.
+- **Band copy for Drivers:** ADR 0028's approved bands describe a still (ADR 0028 *Needs design*).
 - **Who at the still passes a message to whom:** whether a Distiller who answers should relay orders to the Driver (decision 10).
 - **The hand-over scene and copy:** giving a run order, the regular-run form, how a Driver's report reads ("Kessler took 15 of 20, paid $270; the back road was clear"), the hand-in line in the books.
 - **Calls from the road.** Settled by ADR 0027 (#213) decision 8: none in M002. A later record may add them only at a `PUBLIC` phone during its hours, never at a private line, a guest phone or under the founder's arrangement, and with the fee's own coverage row.
-- **Tuning (E2, E3, PT3, T-LAB):** every number in decision 17.
+- **Tuning (E2, E3, PT3, T-LAB):** every number in decision 17, plus ADR 0028's working hours and estimate width for these roles.

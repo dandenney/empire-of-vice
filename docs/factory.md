@@ -115,7 +115,7 @@ Agent PRs and orchestrator PRs follow the same review and merge rules: review, t
 Track these per merged task in the milestone doc:
 
 - Merged without rework? (y/n)
-- Number of review rounds
+- Number of review rounds: every review-agent verdict on the PR, the approving one included (a PR approved first time has 1). CI fix rounds aren't counted here; note them under what was caught
 - What a check or reviewer caught
 - Merged by: `auto` or `human`
 - Merged before review? (y/n), with a link to the follow-up issue if the review found something
@@ -177,7 +177,7 @@ If the agent stops with a question instead of a PR, it comments the question on 
 
 When an agent PR's or orchestrator PR's CI finishes:
 
-- **CI failed:** the implementing agent fixes it and pushes a new commit. This counts as a review round. For an orchestrator PR, the orchestrator is the implementing agent.
+- **CI failed:** the implementing agent fixes it and pushes a new commit. It doesn't count toward the round cap (§7.5), which counts requests for changes; repeated CI failure escalates under §7.7 instead. The metrics table records it under "Caught by" (§6). For an orchestrator PR, the orchestrator is the implementing agent.
 - **CI passed:** a **fresh review agent** reviews the latest commit. The orchestrator starts it for agent PRs and orchestrator PRs alike, so the orchestrator never reviews its own PRs. It checks:
   - every changed file is in the owned files, except a locked file added at the locked SHA (§5)
   - for a locked file: the locked SHA comes from the latest `Orchestrator: locked` issue comment; it is an ancestor of HEAD and changes only the locked file; and `git diff <locked SHA>..HEAD -- <locked file>` is empty
