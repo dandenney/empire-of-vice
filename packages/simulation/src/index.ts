@@ -67,6 +67,7 @@ export {
   nextUint32,
   seedRng,
   seedRngStreams,
+  tripRng,
 } from "./rng/xoshiro128.ts";
 
 // ---------------------------------------------------------------------------

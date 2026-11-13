@@ -5,7 +5,8 @@
 //    as a charge fixed by agreements (`TRANSACTION_PRODUCERS` triggers other
 //    than WORLD); or concerning what the founder observes when it posts
 //    (`concernOf` is in the live view; at a closed place only the filtered view
-//    counts, ADR 0023 decision 6).
+//    counts, ADR 0023 decision 6); or posted on the delivery the founder rides
+//    (#222: a seizure on their own run is seen on the spot).
 // 2. Otherwise, with a CASH entry: a cash posting. Known, and a channel for its
 //    cause (`CASH_POSTING_REVEALS`).
 // 3. Otherwise, with entries: pending (`PENDING_BOOKS_CONCERNS`).
@@ -103,18 +104,32 @@ export function hasCash(transaction: LedgerTransaction): boolean {
   return transaction.entries.some((e) => e.account === "CASH");
 }
 
+/** The producers whose idempotency key names the delivery they're about (`<KIND>:<deliveryId>`). */
+const DELIVERY_PRODUCERS: ReadonlySet<TransactionProducer> = new Set<TransactionProducer>(["SALE", "VEHICLE_RETURN", "CARGO_LOSS", "TRANSFER"]);
+
+/** What the founder observes at the end of a unit: the live view's subjects, the place, and the delivery they ride. */
+export interface Observed {
+  readonly subjects: readonly KnowledgeSubject[];
+  readonly locationId: LocationId | null;
+  /** The delivery the founder is aboard (ON_DELIVERY), whose road events they see on the spot (#222); null otherwise. */
+  readonly aboard: string | null;
+}
+
 /** Decision 6's rules 1–4 for one transaction, at the end of the unit that posted it. */
 export function classify(
   state: GameState,
   data: GameData,
   transaction: LedgerTransaction,
-  observed: { readonly subjects: readonly KnowledgeSubject[]; readonly locationId: LocationId | null },
+  observed: Observed,
   events: ReadonlyMap<string, GameEvent>,
 ): BookClass {
   if (transaction.entries.length === 0) return { kind: "NO_ENTRIES" };
   const producer = transactionProducerOf(transaction.idempotencyKey);
   if (producer === null) throw new KnowledgeError(`${transaction.id}: no registered producer for ${transaction.idempotencyKey}`);
   if (TRANSACTION_PRODUCERS[producer].trigger !== "WORLD") return { kind: "KNOWN" };
+  // A posting on the delivery the founder rides (a seizure on the road) is seen
+  // where it happens (#222, amending decision 7): rule 1's presence test.
+  if (observed.aboard !== null && DELIVERY_PRODUCERS.has(producer) && keyId(transaction) === observed.aboard) return { kind: "KNOWN" };
   const concern = concernOf(state, data, transaction, producer, events);
   if (concern !== null) {
     const seen =

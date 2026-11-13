@@ -9,7 +9,8 @@
 //   `lastCatchUp`. A departure clears `lastCatchUp`.
 // - At the end of every tick, in order: news (place-tagged events the founder
 //   didn't see), the books (decision 6 rules 1–4 per transaction of the tick,
-//   with cash postings as a channel), then the persist.
+//   with cash postings as a channel), then the persist. Road events on the
+//   delivery the founder rides are seen on the spot, not news (#222).
 // - The founder's own commands go into the activity feed as they apply, queue,
 //   or fail when their tick arrives.
 
@@ -37,7 +38,7 @@ import type { CommandFate } from "../kernel/registry.ts";
 import { cashMovement } from "../projection/finance.ts";
 import { cashPostingCause, classify } from "./books.ts";
 import { addActivity, addNews, addPendingBook, findRecord, learn, takeNews, withKnowledge } from "./records.ts";
-import { facilityLocation, liveEntries, liveSubjects, liveView, observation, worldValue } from "./view.ts";
+import { facilityLocation, liveEntries, liveSubjects, liveView, observation, worldValue, type LiveEntry } from "./view.ts";
 
 /** Persists the live view at `t` into the records (decision 5). */
 export function persistLiveView(state: GameState, data: GameData, t: Tick): GameState {
@@ -149,18 +150,25 @@ function tail<T extends { readonly tick: Tick }>(list: readonly T[], t: Tick): r
  */
 export function tickEnd(state: GameState, data: GameData, t: Tick): GameState {
   const obs = observation(state, t);
-  const observed = { subjects: liveSubjects(state, data, obs, t), locationId: obs.locationId };
+  const w = state.founder.whereabouts;
+  const aboard = w.kind === "ON_DELIVERY" ? w.deliveryId : null;
+  const observed = { subjects: liveSubjects(state, data, obs, t), locationId: obs.locationId, aboard };
   // The journal and the ledger are in tick order, so this tick's are at their ends.
   const events = tail(state.eventJournal, t);
   const transactions = tail(state.ledger.transactions, t);
   const byId = new Map<string, GameEvent>(events.map((e) => [e.id, e]));
   let s = state;
 
-  // News (decision 7): a place-tagged event the founder didn't see waits at its place.
+  // News (decision 7): a place-tagged event the founder didn't see waits at its
+  // place. A road event on the delivery the founder rides is seen on the spot
+  // (#222): it's never news, and the truck's whereabouts are learned now.
+  let roadEvent = false;
   for (const event of events) {
     const place = newsPlace(s, data, event);
     if (place === null) continue;
-    const seen = place.locationId === obs.locationId || (place.deliveryId !== null && obs.stop?.id === place.deliveryId);
+    const onOwnRun = place.deliveryId !== null && place.deliveryId === aboard;
+    if (onOwnRun) roadEvent = true;
+    const seen = place.locationId === obs.locationId || (place.deliveryId !== null && obs.stop?.id === place.deliveryId) || onOwnRun;
     if (!seen) s = withKnowledge(s, (k) => addNews(k, place.locationId, newsItem(event)));
   }
 
@@ -174,7 +182,24 @@ export function tickEnd(state: GameState, data: GameData, t: Tick): GameState {
     }
   }
 
-  return withKnowledge(s, (k) => learn(k, liveEntries(s, data, obs, observed.subjects), t));
+  const entries = liveEntries(s, data, obs, observed.subjects);
+  return withKnowledge(s, (k) => learn(k, roadEvent ? [...entries, ...aboardEntries(s, data, aboard!)] : entries, t));
+}
+
+/**
+ * What a founder riding a delivery learns when a road event happens to it (a
+ * seizure, a delay, a deal falling through; #222, amending ADR 0021 decision 7
+ * and ADR 0023 decision 2a step 3): the truck's VEHICLE_WHEREABOUTS, seen in
+ * person on the road. Its place is the route's start, as for a route travelled
+ * between places (`liveEntries`).
+ */
+function aboardEntries(state: GameState, data: GameData, deliveryId: string): readonly LiveEntry[] {
+  const delivery = state.deliveries.find((d) => d.id === deliveryId);
+  if (!delivery) throw new RangeError(`The founder is riding unknown delivery ${deliveryId}`);
+  const route = data.routes.find((r) => r.id === delivery.routeId);
+  if (!route) throw new RangeError(`Delivery ${deliveryId} uses unknown route ${delivery.routeId}`);
+  const subject: KnowledgeSubject = { kind: "VEHICLE_WHEREABOUTS", vehicleId: delivery.vehicleId };
+  return [{ subject, value: worldValue(state, data, subject), source: { kind: "IN_PERSON", locationId: route.fromLocationId } }];
 }
 
 /** A cash posting away from the founder: known, and a channel for its cause (decision 6). */

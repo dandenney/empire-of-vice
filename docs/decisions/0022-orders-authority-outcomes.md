@@ -230,7 +230,7 @@ A test enumerates every `RejectionCode` and, for each command that can produce i
 | On-spec arrival, `accepted > 0` (`SALE`) | Cash posting (decision 6 table row: "sale proceeds on arrival"), revealing `SPEC_SALE_SETTLED` as activity |
 | On-spec arrival, `accepted = 0` | No entries at arrival (ADR 0021 rule 4). The cargo is revealed by the `VEHICLE_RETURN` posting (its cash row), or by the books row for `VEHICLE_RETURN` at cash 0 |
 | Installment arrival at a closed contract | As above: the `VEHICLE_RETURN` posting |
-| `ROUTE_FOUND_CLOSED` | No entries. News at the delivery's origin facility (ADR 0021 decision 7 place tag). The founder learns it directly if aboard |
+| `ROUTE_FOUND_CLOSED` | At departure (the road closed while loading): the cargo goes back into the facility in a `VEHICLE_RETURN:<deliveryId>` transaction, known by rule 1 because the founder is standing there, and the route is recorded `IN_PERSON`. On the road: no entries; news at the delivery's origin facility (ADR 0021 decision 7 place tag), except that a founder aboard learns it at once (#222) |
 | Production completion or failure (prepaid) | ADR 0021 decision 7's production row (non-cash), learned on the next visit |
 | Production completion or failure (migrated, `conversionPrepaid: null`) | ADR 0021 decision 6's production cash-posting row |
 

@@ -306,16 +306,16 @@ describe("run observer (#127)", () => {
   });
 
   it("runBatchSeed computes recoveredAt as the first stop back at the pre-setback net worth", () => {
-    // Market Opportunist seed 10 loses one small cargo to a seizure on the risky route (as of game-data at #159; it was seed 4 at #127).
+    // Market Opportunist seed 23 loses one small cargo to a seizure on the risky route (since per-trip draws, SK1c-2 #226; it was seed 10 at #159 and seed 4 at #127).
     const stops: { tick: number; netWorth: number }[] = [];
     const record = (s: GameSnapshot): void => void stops.push({ tick: s.clock.tick, netWorth: s.finance.netWorth });
     // At the default threshold the seizure is too small to judge.
-    const plain = runBatchSeed("market-opportunist", 10);
+    const plain = runBatchSeed("market-opportunist", 23);
     expect(plain.setbackCount).toBeGreaterThan(0);
     expect(plain.moderateSetbackCount).toBe(0);
     expect(plain.setback).toBeNull();
     // With the threshold at 0 every loss is judged; check the recorded values against the stops.
-    const r = runBatchSeed("market-opportunist", 10, { setbackMinPercent: 0, onStop: record });
+    const r = runBatchSeed("market-opportunist", 23, { setbackMinPercent: 0, onStop: record });
     const sb = r.setback!;
     expect(sb).not.toBeNull();
     const i = stops.findIndex((s) => s.tick >= sb.tick);
