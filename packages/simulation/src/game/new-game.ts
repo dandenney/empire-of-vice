@@ -10,6 +10,7 @@
 import {
   addMoney,
   compareIds,
+  EMPTY_KNOWLEDGE,
   idempotencyKey,
   RATIO_SCALE,
   tick,
@@ -160,6 +161,8 @@ export function createInitialState(
     commandLog: [],
     scheduledEvents: [],
     eventJournal: [],
+    // Nothing is known yet; the live view shows the founder's place at once (ADR 0021 decision 5).
+    knowledge: EMPTY_KNOWLEDGE,
   };
   // The scenario's world events, in file order (ADR 0020 decision 12).
   const blank = scenario.scheduledEvents.reduce<GameState>(

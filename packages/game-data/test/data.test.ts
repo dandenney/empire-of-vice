@@ -1,6 +1,19 @@
-import { isMoney, isValidId, isWorldPoint, RATIO_SCALE } from "@eov/contracts";
+import { CASH_POSTING_REVEALS, compareIds, isMoney, isValidId, isWorldPoint, PARTY_KINDS, RATIO_SCALE, SOURCE_KINDS } from "@eov/contracts";
 import { describe, expect, it } from "vitest";
-import { FIRST_SHIPMENT_SCENARIO, GAME_DATA, GAME_DATA_VERSION, parseScenario, ScenarioError } from "../src/index.ts";
+import {
+  ACTIVITY_LIMIT,
+  FIRST_SHIPMENT_SCENARIO,
+  GAME_DATA,
+  GAME_DATA_VERSION,
+  KNOWLEDGE_VISIBILITY,
+  KnowledgeDataError,
+  LIVE_VIEW_ROUTES,
+  parseScenario,
+  PENDING_NEWS_LIMIT,
+  ScenarioError,
+  validateKnowledgeVisibility,
+  validateLiveViewRoutes,
+} from "../src/index.ts";
 import firstShipmentJson from "../src/scenarios/first-shipment.json" with { type: "json" };
 
 const has = <T extends { readonly id: string }>(list: readonly T[], id: string): boolean => list.some((x) => x.id === id);
@@ -211,5 +224,67 @@ describe("GAME_DATA_VERSION", () => {
   it("is bumped for T07h and recorded in GAME_DATA", () => {
     expect(GAME_DATA_VERSION).toBe("0.7.0-t07h-setback-tuning");
     expect(GAME_DATA.version).toBe(GAME_DATA_VERSION);
+  });
+});
+
+describe("knowledge tables (ADR 0021 decisions 5–7, K1)", () => {
+  it("has a visibility row for every source and party kind", () => {
+    for (const source of SOURCE_KINDS) for (const party of PARTY_KINDS) expect(KNOWLEDGE_VISIBILITY[source][party], `${source}.${party}`).toBeDefined();
+  });
+
+  it("reveals STANDING with every BUYER_WANTS (decision 4)", () => {
+    for (const source of SOURCE_KINDS) {
+      for (const party of PARTY_KINDS) {
+        const row = KNOWLEDGE_VISIBILITY[source][party];
+        if (row.includes("BUYER_WANTS")) expect(row, `${source}.${party}`).toContain("STANDING");
+      }
+    }
+  });
+
+  it("never lets a phone call reveal a buyer's budget (decision 6)", () => {
+    for (const party of PARTY_KINDS) expect(KNOWLEDGE_VISIBILITY.PHONE[party]).not.toContain("BUYER_BUDGET");
+  });
+
+  it("bounds every producer's cash-posting reveals by the CASH_POSTING row", () => {
+    const allowed = new Set(PARTY_KINDS.flatMap((party) => KNOWLEDGE_VISIBILITY.CASH_POSTING[party]));
+    for (const [producer, row] of Object.entries(CASH_POSTING_REVEALS)) {
+      for (const subject of row.subjects) expect(allowed.has(subject), `${producer} reveals ${subject}`).toBe(true);
+    }
+  });
+
+  it("rejects a table that reveals BUYER_WANTS without STANDING, or misses a row", () => {
+    const phoneWithoutStanding = { ...KNOWLEDGE_VISIBILITY, PHONE: { ...KNOWLEDGE_VISIBILITY.PHONE, BUYER: ["BUYER_WANTS", "CONTRACT_OFFERS"] } } as const;
+    expect(() => validateKnowledgeVisibility(phoneWithoutStanding)).toThrow(KnowledgeDataError);
+    expect(() => validateKnowledgeVisibility(phoneWithoutStanding)).toThrow(/BUYER_WANTS without STANDING/);
+    const messageWithoutStanding = { ...KNOWLEDGE_VISIBILITY, MESSAGE: { ...KNOWLEDGE_VISIBILITY.MESSAGE, BUYER: ["BUYER_WANTS"] } } as const;
+    expect(() => validateKnowledgeVisibility(messageWithoutStanding)).toThrow(KnowledgeDataError);
+    const missing: Partial<Record<string, unknown>> = { ...KNOWLEDGE_VISIBILITY };
+    delete missing["REPORT"];
+    expect(() => validateKnowledgeVisibility(missing as never)).toThrow(/no REPORT row/);
+    const unknown = { ...KNOWLEDGE_VISIBILITY, PHONE: { ...KNOWLEDGE_VISIBILITY.PHONE, SUPPLIER: ["RUMOURS"] } };
+    expect(() => validateKnowledgeVisibility(unknown as never)).toThrow(/unknown subject kind/);
+    const repeated = { ...KNOWLEDGE_VISIBILITY, PHONE: { ...KNOWLEDGE_VISIBILITY.PHONE, SUPPLIER: ["STANDING", "STANDING"] } } as const;
+    expect(() => validateKnowledgeVisibility(repeated)).toThrow(/repeats/);
+    expect(validateKnowledgeVisibility(KNOWLEDGE_VISIBILITY)).toBe(KNOWLEDGE_VISIBILITY);
+  });
+
+  it("lists, for every location, the routes that start or end there (decision 5's default)", () => {
+    expect(LIVE_VIEW_ROUTES.map((e) => e.locationId)).toEqual(GAME_DATA.locations.map((l) => l.id).sort(compareIds));
+    for (const entry of LIVE_VIEW_ROUTES) {
+      const touching = GAME_DATA.routes.filter((r) => r.fromLocationId === entry.locationId || r.toLocationId === entry.locationId);
+      expect([...entry.routeIds].sort()).toEqual(touching.map((r) => r.id).sort());
+    }
+    expect(LIVE_VIEW_ROUTES.find((e) => e.locationId === "riverside-depot")?.routeIds).toEqual(["depot-road", "depot-road-return"]);
+  });
+
+  it("rejects live-view routes that miss a location or name an unknown route", () => {
+    expect(() => validateLiveViewRoutes(LIVE_VIEW_ROUTES.slice(1))).toThrow(KnowledgeDataError);
+    const [first, ...rest] = LIVE_VIEW_ROUTES;
+    expect(() => validateLiveViewRoutes([{ ...first!, routeIds: ["no-such-road" as never] }, ...rest])).toThrow(/unknown route/);
+    expect(() => validateLiveViewRoutes([{ ...first!, routeIds: [...first!.routeIds].reverse() }, ...rest])).toThrow(/sorted/);
+  });
+
+  it("has positive integer limits", () => {
+    for (const n of [PENDING_NEWS_LIMIT, ACTIVITY_LIMIT]) expect(Number.isSafeInteger(n) && n > 0).toBe(true);
   });
 });

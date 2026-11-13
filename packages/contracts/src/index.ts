@@ -9,6 +9,8 @@ export * from "./commands.ts";
 export * from "./events.ts";
 export * from "./ledger.ts";
 export * from "./snapshot.ts";
+export * from "./knowledge.ts";
+export * from "./player-snapshot.ts";
 export * from "./state.ts";
 export * from "./save.ts";
 export * from "./coordinator.ts";

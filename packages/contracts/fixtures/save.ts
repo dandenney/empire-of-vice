@@ -188,6 +188,50 @@ export const day0Save: SaveGame = {
         transactionId: asId("Transaction", "txn-2"),
       },
     ],
+    // The founder caught up at the feed store at 09:00 and bought the corn there (ADR 0021).
+    knowledge: {
+      records: [
+        {
+          subject: { kind: "SUPPLIER_OFFER", supplierId: ids.supplier },
+          value: {
+            kind: "SUPPLIER_OFFER",
+            supplierId: ids.supplier,
+            materials: [
+              { materialId: ids.corn, materialName: "Corn", unitPrice: cents(250), available: 160, shortage: false },
+              { materialId: ids.sugar, materialName: "Sugar", unitPrice: cents(200), available: 100, shortage: false },
+            ],
+          },
+          learnedAt: tick(541),
+          source: { kind: "IN_PERSON", locationId: ids.locSupplier },
+        },
+        {
+          subject: { kind: "STANDING" },
+          value: { kind: "STANDING", reputation: 0, tierId: ids.tierStart, unlocked: [ids.unlockSpot] },
+          learnedAt: tick(541),
+          source: { kind: "IN_PERSON", locationId: ids.locSupplier },
+        },
+      ],
+      pendingNews: [],
+      pendingBooks: [],
+      activity: [
+        { kind: "CATCH_UP", tick: tick(540), locationId: ids.locSupplier, sinceTick: null },
+        { kind: "COMMAND", tick: tick(541), command: buyCorn.command, status: "APPLIED", reason: null },
+      ],
+      lastCatchUp: {
+        locationId: ids.locSupplier,
+        tick: tick(540),
+        sinceTick: null,
+        lines: [
+          {
+            subject: { kind: "STANDING" },
+            before: null,
+            after: { kind: "STANDING", reputation: 0, tierId: ids.tierStart, unlocked: [ids.unlockSpot] },
+          },
+        ],
+        news: [],
+        droppedNews: 0,
+      },
+    },
   },
 };
 

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { SAVE_SCHEMA_VERSION, type SaveFile, type SaveMeta } from "@eov/contracts";
 import { FIRST_SHIPMENT_SCENARIO, GAME_DATA_VERSION } from "@eov/game-data";
 import { journalOf, loadGame, newGame, replayJournal } from "@eov/simulation";
@@ -164,10 +166,19 @@ describe("removing", () => {
   });
 });
 
-// An older version's state is hashed raw, before migration. parseSaveFile only
-// takes that path once SAVE_SCHEMA_VERSION goes above 1, so the hash is tested
-// directly: parsed JSON that can't be canonicalized is INVALID, not a throw.
+// An older version's state is hashed raw, before migration (parseSaveFile takes
+// that path for v1 saves since K1 made the schema version 2). The hash is also
+// tested directly: parsed JSON that can't be canonicalized is INVALID, not a throw.
 describe("rawStateHash", () => {
+  it("guards an old save's integrity before migrating it", () => {
+    const v1 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v1.json", import.meta.url)), "utf8")) as {
+      save: { state: { tick: number } };
+      stateHash: string;
+    };
+    v1.save.state.tick += 1;
+    expect(parseSaveFile(JSON.stringify(v1))).toMatchObject({ ok: false, error: { code: "HASH_MISMATCH", expected: v1.stateHash } });
+  });
+
   it("hashes a raw state as the kernel does", () => {
     const state = gameInProgress().serialize().state;
     expect(rawStateHash(JSON.parse(JSON.stringify(state)))).toEqual({ ok: true, hash: hashState(state) });

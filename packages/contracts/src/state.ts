@@ -34,6 +34,7 @@ import type {
   UnlockId,
   VehicleId,
 } from "./ids.ts";
+import type { KnowledgeState } from "./knowledge.ts";
 import type { LedgerTransaction } from "./ledger.ts";
 import type { Money, Ratio } from "./money.ts";
 import type { GameOutcome } from "./snapshot.ts";
@@ -80,6 +81,12 @@ export interface GameState {
   readonly scheduledEvents: readonly ScheduledWorldEvent[];
   /** The last EVENT_JOURNAL_CAPACITY events, oldest first (ADR 0006). */
   readonly eventJournal: readonly GameEvent[];
+
+  /**
+   * What the founder knows (ADR 0021 decisions 4 and 7). Read only by the player
+   * snapshot builder. Empty in a new game and in a migrated M001 save.
+   */
+  readonly knowledge: KnowledgeState;
 }
 
 // ---------------------------------------------------------------------------

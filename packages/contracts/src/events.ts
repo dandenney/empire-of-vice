@@ -12,6 +12,7 @@
 
 import type { DeliveryPurpose, GameCommandType, RejectionReason } from "./commands.ts";
 import type { CargoLine, QualityTier } from "./goods.ts";
+import type { CatchUp } from "./knowledge.ts";
 import type {
   BuyerId,
   CommandId,
@@ -407,6 +408,16 @@ export type LossBookedEvent = GameEventOf<
 >;
 
 // ---------------------------------------------------------------------------
+// Knowledge (ADR 0021 decision 7)
+// ---------------------------------------------------------------------------
+
+/**
+ * The founder arrived somewhere and caught up on what changed while they were
+ * away. The same content is stored in `knowledge.lastCatchUp`.
+ */
+export type KnowledgeCaughtUpEvent = GameEventOf<"KNOWLEDGE_CAUGHT_UP", Omit<CatchUp, "tick">>;
+
+// ---------------------------------------------------------------------------
 // The union
 // ---------------------------------------------------------------------------
 
@@ -443,7 +454,8 @@ export type GameEvent =
   | UnlockGrantedEvent
   | VictoryAchievedEvent
   | GameLostEvent
-  | LossBookedEvent;
+  | LossBookedEvent
+  | KnowledgeCaughtUpEvent;
 
 export type GameEventType = GameEvent["type"];
 
@@ -492,9 +504,63 @@ export const EVENT_IMPORTANCE: Readonly<Record<GameEventType, "notify" | "log">>
   GAME_LOST: "notify",
   // No player-facing copy in M001 (issue #129: only the lab's setback scenario schedules one).
   LOSS_BOOKED: "log",
+  // The player sees catch-ups through the player snapshot (`catchUp`, `activity`), never as a world-event toast.
+  KNOWLEDGE_CAUGHT_UP: "log",
 };
 
 export const GAME_EVENT_TYPES = Object.keys(EVENT_IMPORTANCE) as readonly GameEventType[];
+
+/**
+ * Which place an event concerns, for pending news (ADR 0021 decision 7). While
+ * the founder isn't at that place, a tagged event becomes a `NewsItem` in its
+ * pending news; arriving there (or a channel covering it) delivers it.
+ * - `FACILITY`: the event's `facilityId`;
+ * - `DELIVERY_ORIGIN`: an event on a road concerns the origin facility of its
+ *   delivery, where the crew would bring the story home;
+ * - null: not news. A diff of the live view covers it, or a channel reports it.
+ * A `Record` over every type, so adding an event without tagging it won't compile.
+ */
+export const EVENT_CONCERNS_PLACE = {
+  COMMAND_REJECTED: null,
+  DAY_SETTLED: null,
+  MATERIALS_PURCHASED: null,
+  PRODUCTION_STARTED: null,
+  PRODUCTION_COMPLETED: null,
+  PRODUCTION_FAILED: "FACILITY",
+  EQUIPMENT_PURCHASED: null,
+  EQUIPMENT_SOLD: null,
+  WORKFORCE_CHANGED: null,
+  DELIVERY_DISPATCHED: null,
+  DELIVERY_DELAYED: "DELIVERY_ORIGIN",
+  SALE_COMPLETED: null,
+  TRANSFER_COMPLETED: null,
+  DEAL_FELL_THROUGH: "DELIVERY_ORIGIN",
+  CARGO_LOST: "DELIVERY_ORIGIN",
+  VEHICLE_RETURNED: null,
+  MARKET_UPDATED: null,
+  SHORTAGE_STARTED: null,
+  SHORTAGE_ENDED: null,
+  ROUTE_CLOSED: null,
+  ROUTE_REOPENED: null,
+  CONTRACT_OFFERED: null,
+  CONTRACT_OFFER_EXPIRED: null,
+  CONTRACT_ACCEPTED: null,
+  INSTALLMENT_SETTLED: null,
+  CONTRACT_COMPLETED: null,
+  RESERVATION_RELEASED: null,
+  REPUTATION_CHANGED: null,
+  TIER_REACHED: null,
+  UNLOCK_GRANTED: null,
+  VICTORY_ACHIEVED: null,
+  GAME_LOST: null,
+  LOSS_BOOKED: null,
+  KNOWLEDGE_CAUGHT_UP: null,
+} as const satisfies Readonly<Record<GameEventType, "FACILITY" | "DELIVERY_ORIGIN" | null>>;
+
+/** Event types that become news at the place they concern. */
+export type PlaceTaggedEventType = {
+  [T in GameEventType]: (typeof EVENT_CONCERNS_PLACE)[T] extends null ? never : T;
+}[GameEventType];
 
 /** Events kept in the journal for history and explanations (ADR 0006). Not a gameplay value. */
 export const EVENT_JOURNAL_CAPACITY = 1_000;

@@ -8,7 +8,9 @@
 // History: fnv1a64:e473f4f783ba20b5 (PR #23 initial) → fnv1a64:cfdf13437433feb0
 // (review round 1: dispatch-time rejections no longer advance the command counters)
 // → fnv1a64:0f3c258a09c81be8 (T01b, #25: the command log also holds queued commands
-// rejected when their tick arrives, here the buyCorn(500) at tick 3000).
+// rejected when their tick arrives, here the buyCorn(500) at tick 3000)
+// → fnv1a64:9735a76874ff3340 (K1, #188: `GameState.knowledge`, which day0Save fills
+// with two records, two activity items and a catch-up; nothing reads it yet).
 
 import { tick } from "@eov/contracts";
 import { ids } from "@eov/contracts/fixtures";
@@ -40,7 +42,7 @@ describe("reference scenario", () => {
   });
 
   it("has a pinned state hash", () => {
-    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:0f3c258a09c81be8"`);
+    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:9735a76874ff3340"`);
   });
 
   it("replays from its command log to the same hash", () => {
