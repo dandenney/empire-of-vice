@@ -86,6 +86,22 @@ describe("producer coverage (ADR 0021 decisions 6 and 7)", () => {
     });
     for (const row of Object.values(CASH_POSTING_REVEALS)) for (const s of row.subjects) expect(SUBJECT_KINDS).toContain(s);
   });
+
+  it("classifies production's prepaid conversion cost (ADR 0022 decision 7)", () => {
+    // PRODUCTION_START: rule 1, the founder's own command. It pays cash, or posts nothing at a zero cost.
+    expect(TRANSACTION_PRODUCERS.PRODUCTION_START).toEqual({ trigger: "FOUNDER_COMMAND", legs: ["CASH", "NO_ENTRIES"] });
+    expect(cashRows["PRODUCTION_START"]).toBeUndefined();
+    expect(bookRows["PRODUCTION_START"]).toBeUndefined();
+    // It replaces M001's entry-less RESERVATION:<jobId>, which nothing posts any more.
+    expect(Object.hasOwn(TRANSACTION_PRODUCERS, "RESERVATION")).toBe(false);
+    // A prepaid completion or failure is non-cash: ADR 0021 decision 7's books row.
+    expect(PENDING_BOOKS_CONCERNS.PRODUCTION).toBe("FACILITY_STOCK");
+    expect(PENDING_BOOKS_CONCERNS.PRODUCTION_WRITE_OFF).toBe("FACILITY_STOCK");
+    // A migrated job (conversionPrepaid: null) still pays at settlement: decision 6's cash row.
+    expect(cashRows["PRODUCTION"]).toBeDefined();
+    expect(cashRows["PRODUCTION_WRITE_OFF"]).toBeDefined();
+    for (const name of ["PRODUCTION", "PRODUCTION_WRITE_OFF"] as const) expect(TRANSACTION_PRODUCERS[name].legs).toEqual(["CASH", "NON_CASH", "NO_ENTRIES"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -231,7 +247,7 @@ describe("the producer registry matches the simulation", () => {
 
   it("every family's first tag is a transaction kind", () => {
     const kinds: readonly TransactionKind[] = [
-      "OPENING_BALANCE", "MATERIAL_PURCHASE", "PRODUCTION", "PRODUCTION_WRITE_OFF", "EQUIPMENT_PURCHASE",
+      "OPENING_BALANCE", "MATERIAL_PURCHASE", "PRODUCTION", "PRODUCTION_WRITE_OFF", "PRODUCTION_START", "EQUIPMENT_PURCHASE",
       "DISPATCH", "SALE", "TRANSFER", "CARGO_LOSS", "DAILY_SETTLEMENT", "INSTALLMENT_SETTLEMENT",
       "RESERVATION", "ASSET_SALE", "VEHICLE_RETURN", "LOSS", "PROGRESSION",
     ];
@@ -246,7 +262,7 @@ describe("transactionProducerOf", () => {
     [idempotencyKey("DISPATCH", "delivery-3", "CLEAR"), "DISPATCH:CLEAR"],
     [idempotencyKey("DAILY_SETTLEMENT", "PAYROLL", 4), "DAILY_SETTLEMENT:PAYROLL"],
     [idempotencyKey("DAILY_SETTLEMENT", "CONTRACT_OFFER_EXPIRED", "offer-2"), "DAILY_SETTLEMENT:CONTRACT_OFFER_EXPIRED"],
-    [idempotencyKey("RESERVATION", "job-4"), "RESERVATION"],
+    [idempotencyKey("PRODUCTION_START", "job-4"), "PRODUCTION_START"],
     [idempotencyKey("RESERVATION", "res-7", "RELEASE"), "RESERVATION:RELEASE"],
     [idempotencyKey("LOSS", "SHAKEDOWN", "RIVAL", 12_000, 3), "LOSS:SHAKEDOWN"],
     [idempotencyKey("EQUIPMENT_PURCHASE", "distillery-main", "copper-still", "cmd-9"), "EQUIPMENT_PURCHASE"],

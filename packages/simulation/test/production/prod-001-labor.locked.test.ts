@@ -11,6 +11,12 @@
 // Written ahead of the implementation by a separate test-writer agent
 // (factory.md §2, §7.3). Do not edit (CLAUDE.md rule 9).
 //
+// Re-locked for ADR 0022 decision 7 (issue #197): a job's conversion cost is paid
+// from cash when it starts (`PRODUCTION_START:<jobId>`, Dr PRODUCTION_IN_PROGRESS /
+// Cr CASH) and stored on the job as `conversionPrepaid`; its completion moves no
+// cash. So the cash tonight's wages see is the opening cash less the conversion,
+// spent at the start, not at completion. Fixture jobs carry `conversionPrepaid`.
+//
 // Imports are limited to `src/production/index.ts`, `src/inventory/index.ts`,
 // the public package entry `src/index.ts`, and `@eov/contracts` and
 // `@eov/game-data`.
@@ -340,6 +346,8 @@ function runningJob(quantity: number) {
       startedAt: s.tick,
       completesAt: tick(s.tick + 10 * TICKS_PER_DAY),
       reservationIds: [],
+      // Nothing was posted for it, so it prepaid nothing (ADR 0022 decision 7's invariant).
+      conversionPrepaid: ZERO_MONEY,
     };
     return { ...state, productionJobs: [...state.productionJobs, job] };
   };
@@ -1195,7 +1203,7 @@ describe("PROD-001 midnight settlement", () => {
   });
 
   // @locked
-  it("a job completing on the midnight tick is settled once, before tonight's wages, which see the cash it used", () => {
+  it("a job completing on the midnight tick is settled once, before tonight's wages; its conversion was paid at the start, and its completion moves no cash", () => {
     const Q = 5;
     const recipe = basic();
     const conversion = (recipe.laborPerCase + recipe.overheadPerCase) * Q;
@@ -1212,11 +1220,21 @@ describe("PROD-001 midnight settlement", () => {
     expectApplied(g.sim.dispatch({ command: produce(Q) }));
     const job = jobAt(g.sim.state);
     expect(job.completesAt).toBe(TICKS_PER_DAY);
+    // ADR 0022 decision 7: the conversion cost leaves cash at the start, in PRODUCTION_START:<jobId>.
+    const started = onlyTransaction(g.sim.state, idempotencyKey("PRODUCTION_START", job.id));
+    expect(started.tick).toBe(applyTick);
+    expectEntries(started.entries, [dr("PRODUCTION_IN_PROGRESS", conversion), cr("CASH", conversion)]);
+    expect(job.conversionPrepaid).toBe(conversion);
+    expect(cashBalance(g.sim.state)).toBe(cash - conversion);
+    advanceTo(g.sim, TICKS_PER_DAY - 1);
+    expect(cashBalance(g.sim.state)).toBe(cash - conversion);
     advanceTo(g.sim, 2 * TICKS_PER_DAY + 1);
 
     const s = g.sim.state;
     const done = onlyTransaction(s, idempotencyKey("PRODUCTION", job.id));
     expect(done.tick).toBe(TICKS_PER_DAY);
+    expect(done.entries.some((e) => e.account === "CASH" || e.account === "WAGES_PAYABLE")).toBe(false);
+    expectEntries(done.entries, [dr("FINISHED_GOODS", conversion), cr("PRODUCTION_IN_PROGRESS", conversion)]);
     expect(s.ledger.transactions.filter((t) => t.kind === "PRODUCTION")).toHaveLength(1);
     expect(indexOfKey(s, idempotencyKey("PRODUCTION", job.id))).toBeLessThan(indexOfKey(s, keys(0).wages));
     const left = cash - conversion;

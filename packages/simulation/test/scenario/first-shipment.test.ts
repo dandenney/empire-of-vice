@@ -108,6 +108,7 @@ describe("First Shipment: opening balance sheet (ADR 0020 decision 1)", () => {
       rawMaterials: cents(0),
       finishedGoods: cents(0),
       goodsInTransit: cents(0),
+      productionInProgress: cents(0),
       receivables: cents(0),
       equipment: cents(30_000),
       vehicles: cents(40_000),

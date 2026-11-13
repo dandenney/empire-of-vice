@@ -96,6 +96,8 @@ const CASH_FLOW_CATEGORY: Readonly<Record<TransactionKind, CashFlowCategory | nu
   MATERIAL_PURCHASE: "MATERIALS",
   PRODUCTION: "WAGES",
   PRODUCTION_WRITE_OFF: "WAGES",
+  // A job's conversion cost, paid at its start (ADR 0022 decision 7). PRODUCTION_IN_PROGRESS has no category.
+  PRODUCTION_START: "WAGES",
   EQUIPMENT_PURCHASE: "EQUIPMENT",
   DISPATCH: "TRANSPORT",
   SALE: "SALES",
@@ -180,6 +182,7 @@ export function balanceSheetOf(balances: AccountBalances): BalanceSheet {
     rawMaterials: balances.RAW_MATERIALS,
     finishedGoods: balances.FINISHED_GOODS,
     goodsInTransit: balances.GOODS_IN_TRANSIT,
+    productionInProgress: balances.PRODUCTION_IN_PROGRESS,
     receivables: balances.RECEIVABLES,
     equipment: balances.EQUIPMENT,
     vehicles: balances.VEHICLES,
