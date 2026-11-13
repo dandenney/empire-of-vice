@@ -20,6 +20,8 @@
 import {
   applyRatios,
   compareIds,
+  type EquipmentId,
+  type FacilityId,
   idempotencyKey,
   RATIO_SCALE,
   type GameState,
@@ -31,12 +33,16 @@ import {
 } from "@eov/contracts";
 import type { GameData } from "@eov/game-data";
 import { assetSaleEntries, equipmentPurchaseEntries } from "../economy/ledger/postings.ts";
-import { cashBalance } from "../economy/ledger/ledger.ts";
 import type { CommandHandler } from "../kernel/registry.ts";
+import { M001_RULES, type GameRules } from "../kernel/rules.ts";
+import type { IssuerView } from "../view/issuer-view.ts";
+import { judgeOrder, type OrderValidator } from "../view/order.ts";
+import { presenceRejection } from "../view/presence.ts";
+import { cashOf, type WorldSlice } from "../view/world.ts";
 import { facilitySpec } from "./capacity.ts";
 
 /** The first rule PURCHASE_EQUIPMENT breaks, or null. Never throws. */
-function purchaseRejection(state: GameState, command: PurchaseEquipmentCommand, data: GameData): RejectionReason | null {
+function purchaseRejection(state: WorldSlice, command: PurchaseEquipmentCommand, data: GameData): RejectionReason | null {
   const { facilityId, equipmentId } = command;
   const facility = state.facilities.find((f) => f.id === facilityId);
   if (!facility) return { code: "UNKNOWN_ENTITY", kind: "Facility", id: facilityId };
@@ -45,7 +51,7 @@ function purchaseRejection(state: GameState, command: PurchaseEquipmentCommand, 
   if (facility.equipment.some((e) => e.equipmentId === equipmentId)) return { code: "EQUIPMENT_ALREADY_OWNED", facilityId, equipmentId };
   if (item.requiredUnlockId !== null && !state.family.unlocked.includes(item.requiredUnlockId)) return { code: "LOCKED", unlockId: item.requiredUnlockId };
   if (facility.equipment.length >= facilitySpec(data, facilityId).equipmentSlots) return { code: "NO_EQUIPMENT_SLOT", facilityId, equipmentId };
-  const cash = cashBalance(state);
+  const cash = cashOf(state);
   if (cash < item.price) return { code: "INSUFFICIENT_FUNDS", required: item.price, available: cash };
   return null;
 }
@@ -64,12 +70,39 @@ function purchaseKey(state: GameState, command: PurchaseEquipmentCommand, comman
     : base;
 }
 
-export function purchaseEquipmentHandler(data: GameData, coordinator: TransactionCoordinator): CommandHandler<"PURCHASE_EQUIPMENT"> {
+/**
+ * Gate 1 and 2 for equipment work (ADR 0022 decision 3), with founder rules on:
+ * the facility (owned) and the item (game-data), then the founder present at
+ * the facility and free.
+ */
+function equipmentGates(view: IssuerView, data: GameData, facilityId: FacilityId, equipmentId: EquipmentId, activity: "BUY_EQUIPMENT" | "SELL_EQUIPMENT"): RejectionReason | null {
+  const def = data.facilities.find((f) => f.id === facilityId);
+  if (!def || !view.world.facilities.some((f) => f.id === facilityId)) return { code: "UNKNOWN_ENTITY", kind: "Facility", id: facilityId };
+  if (!data.equipment.some((e) => e.id === equipmentId)) return { code: "UNKNOWN_ENTITY", kind: "Equipment", id: equipmentId };
+  return presenceRejection(view, { locationId: def.locationId, activity, party: false });
+}
+
+/** PURCHASE_EQUIPMENT: gates 1–2, then M001's checks against the facility as seen. Tier gating reads STANDING there (ADR 0022 decision 8). */
+export function purchaseEquipmentValidator(data: GameData, rules: GameRules): OrderValidator<"PURCHASE_EQUIPMENT"> {
+  return (view, command) =>
+    (rules.founderRules ? equipmentGates(view, data, command.facilityId, command.equipmentId, "BUY_EQUIPMENT") : null) ??
+    purchaseRejection(view.world, command, data);
+}
+
+/** SELL_EQUIPMENT: gates 1–2, then M001's checks against the facility as seen. */
+export function sellEquipmentValidator(data: GameData, rules: GameRules): OrderValidator<"SELL_EQUIPMENT"> {
+  return (view, command) =>
+    (rules.founderRules ? equipmentGates(view, data, command.facilityId, command.equipmentId, "SELL_EQUIPMENT") : null) ??
+    saleRejection(view.world, command, data);
+}
+
+export function purchaseEquipmentHandler(data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): CommandHandler<"PURCHASE_EQUIPMENT"> {
+  const validate = purchaseEquipmentValidator(data, rules);
   return {
     apply: (state, command, ctx) => {
       // Checked before the transaction begins: ownership has to be judged
       // before the key is.
-      const rejection = purchaseRejection(state, command, data);
+      const rejection = judgeOrder(validate, state, data, rules, command, ctx.tick);
       if (rejection) return { status: "rejected", reason: rejection };
       const { facilityId, equipmentId } = command;
       const item = data.equipment.find((e) => e.id === equipmentId)!;
@@ -111,7 +144,7 @@ export function validateResaleRatio(data: GameData): void {
 }
 
 /** The first rule SELL_EQUIPMENT breaks, or null. Never throws. */
-function saleRejection(state: GameState, command: SellEquipmentCommand, data: GameData): RejectionReason | null {
+function saleRejection(state: WorldSlice, command: SellEquipmentCommand, data: GameData): RejectionReason | null {
   const { facilityId, equipmentId } = command;
   const facility = state.facilities.find((f) => f.id === facilityId);
   if (!facility) return { code: "UNKNOWN_ENTITY", kind: "Facility", id: facilityId };
@@ -120,11 +153,12 @@ function saleRejection(state: GameState, command: SellEquipmentCommand, data: Ga
   return null;
 }
 
-export function sellEquipmentHandler(data: GameData, coordinator: TransactionCoordinator): CommandHandler<"SELL_EQUIPMENT"> {
+export function sellEquipmentHandler(data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): CommandHandler<"SELL_EQUIPMENT"> {
   validateResaleRatio(data);
+  const validate = sellEquipmentValidator(data, rules);
   return {
     apply: (state, command, ctx) => {
-      const rejection = saleRejection(state, command, data);
+      const rejection = judgeOrder(validate, state, data, rules, command, ctx.tick);
       if (rejection) return { status: "rejected", reason: rejection };
       const { facilityId, equipmentId } = command;
       const { bookValue } = state.facilities.find((f) => f.id === facilityId)!.equipment.find((e) => e.equipmentId === equipmentId)!;

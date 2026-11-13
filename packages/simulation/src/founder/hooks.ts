@@ -20,7 +20,7 @@
 
 import type { GameState, LocationId, RouteId, Tick } from "@eov/contracts";
 import { GAME_DATA } from "@eov/game-data";
-import { arrived, departing, woke } from "../knowledge/system.ts";
+import { arrived, departing, sawRoute, woke } from "../knowledge/system.ts";
 
 /** Why the founder stops being present. */
 export type Departure = "TRAVEL" | "REST" | "DELIVERY";
@@ -39,6 +39,10 @@ export const founderDeparting = (state: GameState, locationId: LocationId, why: 
 /** The founder arrived at (or, for STOP, observes at) `locationId`: the arrival catch-up. */
 export const founderArrived = (state: GameState, locationId: LocationId, how: Arrival, tick: Tick): GameState =>
   arrived(state, GAME_DATA, locationId, how, tick);
+
+/** The founder, standing at `locationId`, sees `routeId`'s condition (a truck that can't set out, ADR 0023 decision 2a). */
+export const founderSawRoute = (state: GameState, locationId: LocationId, routeId: RouteId, tick: Tick): GameState =>
+  sawRoute(state, GAME_DATA, locationId, routeId, tick);
 
 /** The founder woke at `locationId`, `early` by WAKE: the catch-up. */
 export const founderWoke = (state: GameState, locationId: LocationId, early: boolean, tick: Tick): GameState =>

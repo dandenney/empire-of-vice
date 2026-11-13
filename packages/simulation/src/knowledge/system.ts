@@ -26,6 +26,7 @@ import {
   type LocationId,
   type NewsItem,
   type PlaceTaggedEventType,
+  type RouteId,
   type Tick,
 } from "@eov/contracts";
 import { KNOWLEDGE_VISIBILITY, type GameData } from "@eov/game-data";
@@ -89,12 +90,18 @@ export function catchUp(state: GameState, data: GameData, locationId: LocationId
 
 /** Every arrival (ADR 0023 decision 2a). A halt also records the closed route as seen there (decision 3). */
 export function arrived(state: GameState, data: GameData, locationId: LocationId, how: Arrival, t: Tick): GameState {
-  let s = catchUp(state, data, locationId, t);
-  if (how.kind === "HALTED") {
-    const subject: KnowledgeSubject = { kind: "ROUTE_CONDITION", routeId: how.routeId };
-    s = withKnowledge(s, (k) => learn(k, [{ subject, value: worldValue(s, data, subject), source: { kind: "IN_PERSON", locationId } }], t));
-  }
-  return s;
+  const s = catchUp(state, data, locationId, t);
+  return how.kind === "HALTED" ? sawRoute(s, data, locationId, how.routeId, t) : s;
+}
+
+/**
+ * The founder, standing at `locationId`, sees a route's condition whatever
+ * LIVE_VIEW_ROUTES says: a halt at a closure (ADR 0023 decision 3), or a truck
+ * that can't set out at departure (ADR 0023 decision 2a). Recorded IN_PERSON.
+ */
+export function sawRoute(state: GameState, data: GameData, locationId: LocationId, routeId: RouteId, t: Tick): GameState {
+  const subject: KnowledgeSubject = { kind: "ROUTE_CONDITION", routeId };
+  return withKnowledge(state, (k) => learn(k, [{ subject, value: worldValue(state, data, subject), source: { kind: "IN_PERSON", locationId } }], t));
 }
 
 /** Waking counts as an arrival (ADR 0023 decision 2). */

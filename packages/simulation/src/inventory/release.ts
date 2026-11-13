@@ -7,40 +7,75 @@
 // at (ADR 0022 decision 3): a reservation held anywhere else is also
 // RESERVATION_NOT_ACTIVE.
 //
+// With founder rules on (ADR 0022 decision 3) the founder must be at that
+// facility. Releasing is instant, so it's allowed while busy. The reservation
+// must be active in that facility's live view.
+//
 // Applied as a RESERVATION transaction with no ledger entries (no money moves),
 // keyed by the reservation, emitting RESERVATION_RELEASED { reason: "PLAYER" }.
 
 import {
   idempotencyKey,
   type FacilityId,
-  type GameState,
   type RejectionReason,
   type ReservationId,
   type TransactionCoordinator,
 } from "@eov/contracts";
 import type { GameData } from "@eov/game-data";
 import type { SystemRegistry } from "../kernel/registry.ts";
+import { M001_RULES, type GameRules } from "../kernel/rules.ts";
+import { judgeOrder, type OrderValidator } from "../view/order.ts";
+import { presenceRejection } from "../view/presence.ts";
+import type { WorldSlice } from "../view/world.ts";
 import { removeReservations } from "./pools.ts";
 
-/** Why the player can't release this reservation (at `facilityId`, when given), or null if they can. */
-export function releaseRejection(state: GameState, reservationId: ReservationId, facilityId: FacilityId | null = null): RejectionReason | null {
+/** Why the player can't release this reservation at `facilityId`, or null if they can. */
+export function releaseRejection(state: Pick<WorldSlice, "reservations">, reservationId: ReservationId, facilityId: FacilityId): RejectionReason | null {
   const reservation = state.reservations.find((r) => r.id === reservationId);
-  const here = facilityId === null || reservation?.facilityId === facilityId;
-  return reservation?.holder.kind === "CONTRACT" && here ? null : { code: "RESERVATION_NOT_ACTIVE", reservationId };
+  return reservation?.holder.kind === "CONTRACT" && reservation.facilityId === facilityId ? null : { code: "RESERVATION_NOT_ACTIVE", reservationId };
 }
 
-export function registerInventory(registry: SystemRegistry, _data: GameData, coordinator: TransactionCoordinator): void {
+/** Gate 1 with founder rules on: the facility the command names must be one the founder owns. */
+function facilityRejection(world: Pick<WorldSlice, "facilities">, facilityId: FacilityId): RejectionReason | null {
+  return world.facilities.some((f) => f.id === facilityId) ? null : { code: "UNKNOWN_ENTITY", kind: "Facility", id: facilityId };
+}
+
+/**
+ * RELEASE_RESERVATION (ADR 0022 decision 3), with founder rules on: the facility
+ * (owned), the founder present there (instant, so busy is fine), then the
+ * reservation active in that facility's live view.
+ */
+export function releaseReservationValidator(data: GameData, rules: GameRules): OrderValidator<"RELEASE_RESERVATION"> {
+  return (view, command) => {
+    const { reservationId, facilityId } = command;
+    if (rules.founderRules) {
+      const def = data.facilities.find((f) => f.id === facilityId);
+      if (!def) return { code: "UNKNOWN_ENTITY", kind: "Facility", id: facilityId };
+      const unknown = facilityRejection(view.world, facilityId);
+      if (unknown) return unknown;
+      const absent = presenceRejection(view, { locationId: def.locationId, activity: null, party: false });
+      if (absent) return absent;
+    }
+    return releaseRejection(view.world, reservationId, facilityId);
+  };
+}
+
+export function registerInventory(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): void {
+  const validateRelease = releaseReservationValidator(data, rules);
   registry.onCommand("RELEASE_RESERVATION", {
     // `validate` runs at dispatch time only, for commands queued for a later
     // tick (ADR 0004); the reservation may be released or consumed before then,
-    // so `apply` judges it again against the state of the tick it runs in.
-    validate: (state, command) => releaseRejection(state, command.reservationId, command.facilityId),
+    // so `apply` judges it again against the state of the tick it runs in. With
+    // founder rules on, only the facility: a reservation is known only where
+    // it's held (ADR 0022 decision 2).
+    validate: (state, command) =>
+      rules.founderRules ? facilityRejection(state, command.facilityId) : releaseRejection(state, command.reservationId, command.facilityId),
     apply: (state, command, ctx) => {
-      const { reservationId, facilityId } = command;
+      const { reservationId } = command;
       // Judged before `begin`: a reservation already released has used this
       // transaction's idempotency key, and releasing it again must be rejected
       // (it isn't active), not treated as a duplicate success.
-      const rejection = releaseRejection(state, reservationId, facilityId);
+      const rejection = judgeOrder(validateRelease, state, data, rules, command, ctx.tick);
       if (rejection) return { status: "rejected", reason: rejection };
 
       const tx = coordinator.begin(state, {

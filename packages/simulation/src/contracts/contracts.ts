@@ -33,6 +33,9 @@ import { payDownEntries, payOrAccrueEntries } from "../economy/ledger/postings.t
 import { releaseContractReservations } from "../inventory/pools.ts";
 import { allocateId, formatId } from "../kernel/ids.ts";
 import type { SystemRegistry, TickContext } from "../kernel/registry.ts";
+import { M001_RULES, type GameRules } from "../kernel/rules.ts";
+import { judgeOrder, type OrderValidator } from "../view/order.ts";
+import { presenceRejection } from "../view/presence.ts";
 import {
   acceptRejection,
   buildOffer,
@@ -175,11 +178,34 @@ function settleDue(state: GameState, coordinator: TransactionCoordinator, ctx: T
   return s;
 }
 
-export function registerContracts(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator): void {
+/**
+ * ACCEPT_CONTRACT (ADR 0022 decisions 1 and 3), with founder rules on: gate 1
+ * resolves the offer among those the founder can name (the live view and known
+ * CONTRACT_OFFERS records), else OFFER_UNAVAILABLE wherever the founder is; the
+ * founder must then be at that buyer, free, while it's open; then decision 3's
+ * checks against the live view: the offer still on the table, LOCKED, and
+ * REPUTATION_TOO_LOW.
+ */
+export function acceptContractValidator(data: GameData, rules: GameRules): OrderValidator<"ACCEPT_CONTRACT"> {
+  return (view, command) => {
+    const { contractOfferId } = command;
+    if (rules.founderRules) {
+      const known = view.world.knownOffers.find((o) => o.id === contractOfferId);
+      const buyer = known ? data.buyers.find((b) => b.id === known.buyerId) : undefined;
+      if (!buyer) return { code: "OFFER_UNAVAILABLE", contractOfferId };
+      const absent = presenceRejection(view, { locationId: buyer.locationId, activity: "ACCEPT_CONTRACT", party: true });
+      if (absent) return absent;
+    }
+    return acceptRejection(view.world, data, contractOfferId, view.at);
+  };
+}
+
+export function registerContracts(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): void {
+  const validateAccept = acceptContractValidator(data, rules);
   registry.onCommand("ACCEPT_CONTRACT", {
     apply: (state, command, ctx) => {
       const { contractOfferId } = command;
-      const rejection = acceptRejection(state, data, contractOfferId, ctx.tick);
+      const rejection = judgeOrder(validateAccept, state, data, rules, command, ctx.tick);
       if (rejection) return { status: "rejected", reason: rejection };
 
       const offer = state.contractOffers.find((o) => o.id === contractOfferId)!;

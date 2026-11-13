@@ -26,10 +26,14 @@ import {
 } from "@eov/contracts";
 import type { GameData } from "@eov/game-data";
 import type { CommandHandler } from "../kernel/registry.ts";
+import { M001_RULES, type GameRules } from "../kernel/rules.ts";
+import { judgeOrder, type OrderValidator } from "../view/order.ts";
+import { presenceRejection } from "../view/presence.ts";
+import type { WorldSlice } from "../view/world.ts";
 import { crewTerms, facilitySpec } from "./capacity.ts";
 
 /** The first rule SET_WORKFORCE breaks, or null. Never throws. */
-function workforceRejection(state: GameState, command: SetWorkforceCommand, data: GameData): RejectionReason | null {
+function workforceRejection(state: WorldSlice, command: SetWorkforceCommand, data: GameData): RejectionReason | null {
   const { facilityId, workerCount } = command;
   if (!Number.isSafeInteger(workerCount) || workerCount < 0) return { code: "INVALID_QUANTITY", field: "workerCount", value: workerCount };
   const facility = state.facilities.find((f) => f.id === facilityId);
@@ -47,15 +51,39 @@ function withWorkers(state: GameState, facilityId: FacilityId, workerCount: numb
   return { ...state, facilities: state.facilities.map((f) => (f.id === facilityId ? { ...f, workerCount } : f)) };
 }
 
-export function setWorkforceHandler(data: GameData, coordinator: TransactionCoordinator): CommandHandler<"SET_WORKFORCE"> {
+function countRejection(workerCount: number): RejectionReason | null {
+  return Number.isSafeInteger(workerCount) && workerCount >= 0 ? null : { code: "INVALID_QUANTITY", field: "workerCount", value: workerCount };
+}
+
+/**
+ * SET_WORKFORCE (ADR 0022 decision 3): gate 1 is the count's shape and the
+ * facility (owned); the founder must be at the facility and free; then the
+ * maximum and the running batch's crew against the facility as seen. A count
+ * below the running batch's crew is a check of what's seen there, not of the
+ * command's shape, so FOUNDER_BUSY comes first (orchestrator reading 7 on #200).
+ */
+export function setWorkforceValidator(data: GameData, rules: GameRules): OrderValidator<"SET_WORKFORCE"> {
+  return (view, command) => {
+    if (rules.founderRules) {
+      const { facilityId, workerCount } = command;
+      const invalid = countRejection(workerCount);
+      if (invalid) return invalid;
+      const def = data.facilities.find((f) => f.id === facilityId);
+      if (!def || !view.world.facilities.some((f) => f.id === facilityId)) return { code: "UNKNOWN_ENTITY", kind: "Facility", id: facilityId };
+      const absent = presenceRejection(view, { locationId: def.locationId, activity: "SET_WORKFORCE", party: false });
+      if (absent) return absent;
+    }
+    return workforceRejection(view.world, command, data);
+  };
+}
+
+export function setWorkforceHandler(data: GameData, coordinator: TransactionCoordinator, rules: GameRules = M001_RULES): CommandHandler<"SET_WORKFORCE"> {
+  const validateOrder = setWorkforceValidator(data, rules);
   return {
     // Dispatch time, for a command queued for a later tick: only the count's shape.
-    validate: (_state, command) =>
-      Number.isSafeInteger(command.workerCount) && command.workerCount >= 0
-        ? null
-        : { code: "INVALID_QUANTITY", field: "workerCount", value: command.workerCount },
+    validate: (_state, command) => countRejection(command.workerCount),
     apply: (state, command, ctx) => {
-      const rejection = workforceRejection(state, command, data);
+      const rejection = judgeOrder(validateOrder, state, data, rules, command, ctx.tick);
       if (rejection) return { status: "rejected", reason: rejection };
       const { facilityId } = command;
       const from = state.facilities.find((f) => f.id === facilityId)!.workerCount;

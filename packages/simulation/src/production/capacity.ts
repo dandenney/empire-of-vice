@@ -22,19 +22,19 @@ import {
   type EquipmentId,
   type FacilityId,
   type FacilityState,
-  type GameState,
   type Money,
   type Ratio,
 } from "@eov/contracts";
 import type { EquipmentDefinition, FacilityProductionDefinition, GameData, RecipeDefinition } from "@eov/game-data";
 import { storageUsed } from "../inventory/pools.ts";
+import type { WorldSlice } from "../view/world.ts";
 
 /** Labor and overhead for `quantity` cases (the run's variable conversion cost, ADR 0017 decision 7). */
 export function conversionCost(recipe: RecipeDefinition, quantity: number): Money {
   return multiplyMoney(addMoney(recipe.laborPerCase, recipe.overheadPerCase), quantity);
 }
 
-function facilityState(state: GameState, facilityId: FacilityId): FacilityState {
+function facilityState(state: WorldSlice, facilityId: FacilityId): FacilityState {
   const facility = state.facilities.find((f) => f.id === facilityId);
   if (!facility) throw new RangeError(`Unknown facility ${facilityId}`);
   return facility;
@@ -72,7 +72,7 @@ export interface CrewTerms {
   readonly staffed: number;
 }
 
-export function crewTerms(state: GameState, data: GameData, facilityId: FacilityId): CrewTerms {
+export function crewTerms(state: WorldSlice, data: GameData, facilityId: FacilityId): CrewTerms {
   const facility = facilityState(state, facilityId);
   const producing = facility.equipment.some((e) => data.recipes.some((r) => r.requiredEquipmentIds.includes(e.equipmentId)));
   let base = RATIO_SCALE;
@@ -96,7 +96,7 @@ function canProduce(t: CrewTerms): boolean {
  * crewed facility has no one staffing it. For display and
  * `productionCapacityPerDay` only: durations never pass through it.
  */
-export function throughput(state: GameState, data: GameData, facilityId: FacilityId): Ratio {
+export function throughput(state: WorldSlice, data: GameData, facilityId: FacilityId): Ratio {
   const t = crewTerms(state, data, facilityId);
   if (!canProduce(t)) return ratio(0);
   if (t.crew === 0) return ratio(t.base);
@@ -123,13 +123,13 @@ export function jobDuration(recipe: RecipeDefinition, quantity: number, throughp
 }
 
 /** Ticks a job of `quantity` cases of `recipe` takes at the facility as it stands (ADR 0017 decision 1). */
-export function facilityJobDuration(state: GameState, data: GameData, facilityId: FacilityId, recipe: RecipeDefinition, quantity: number): number {
+export function facilityJobDuration(state: WorldSlice, data: GameData, facilityId: FacilityId, recipe: RecipeDefinition, quantity: number): number {
   const t = crewTerms(state, data, facilityId);
   return jobDuration(recipe, quantity, ratio(t.base), t.crew, t.staffed);
 }
 
 /** Finished cases the facility can hold: baseStorage + Σ owned `storageBonus`. */
-export function storageCapacity(state: GameState, data: GameData, facilityId: FacilityId): number {
+export function storageCapacity(state: WorldSlice, data: GameData, facilityId: FacilityId): number {
   const facility = facilityState(state, facilityId);
   let total = facilitySpec(data, facilityId).baseStorage;
   for (const e of facility.equipment) total += equipmentDefinition(data, e.equipmentId).storageBonus;
@@ -137,14 +137,14 @@ export function storageCapacity(state: GameState, data: GameData, facilityId: Fa
 }
 
 /** Finished cases held plus the output of jobs running at the facility. Materials don't count. */
-export function storageCommitted(state: GameState, facilityId: FacilityId): number {
+export function storageCommitted(state: WorldSlice, facilityId: FacilityId): number {
   let total = storageUsed(state, facilityId);
   for (const job of state.productionJobs) if (job.facilityId === facilityId) total += job.quantity;
   return total;
 }
 
 /** Room left for new output: max(0, capacity − committed). */
-export function storageAvailable(state: GameState, data: GameData, facilityId: FacilityId): number {
+export function storageAvailable(state: WorldSlice, data: GameData, facilityId: FacilityId): number {
   return Math.max(0, storageCapacity(state, data, facilityId) - storageCommitted(state, facilityId));
 }
 
@@ -178,7 +178,7 @@ export function maxSafeQuantity(recipe: RecipeDefinition, startTick: number, ter
 }
 
 /** `maxSafeQuantity` for a start at the facility as it stands, or at 1× for an unknown facility. */
-export function facilityMaxSafeQuantity(state: GameState, data: GameData, facilityId: FacilityId, recipe: RecipeDefinition, startTick: number): number {
+export function facilityMaxSafeQuantity(state: WorldSlice, data: GameData, facilityId: FacilityId, recipe: RecipeDefinition, startTick: number): number {
   const known = state.facilities.some((f) => f.id === facilityId);
   return maxSafeQuantity(recipe, startTick, known ? crewTerms(state, data, facilityId) : ONE_X);
 }
@@ -188,7 +188,7 @@ export function facilityMaxSafeQuantity(state: GameState, data: GameData, facili
  * as if fully staffed. Workers can change before a queued command applies, so
  * dispatch-time checks use this; apply uses the exact one.
  */
-export function fullCrewMaxSafeQuantity(state: GameState, data: GameData, facilityId: FacilityId, recipe: RecipeDefinition, startTick: number): number {
+export function fullCrewMaxSafeQuantity(state: WorldSlice, data: GameData, facilityId: FacilityId, recipe: RecipeDefinition, startTick: number): number {
   if (!state.facilities.some((f) => f.id === facilityId)) return maxSafeQuantity(recipe, startTick);
   const t = crewTerms(state, data, facilityId);
   return maxSafeQuantity(recipe, startTick, { ...t, staffed: t.crew });
@@ -199,7 +199,7 @@ export function fullCrewMaxSafeQuantity(state: GameState, data: GameData, facili
  * current throughput: floor(TICKS_PER_DAY × throughput / (ticksPerCase × RATIO_SCALE)).
  * 0 if it supports none or its throughput is 0.
  */
-export function productionCapacityPerDay(state: GameState, data: GameData, facilityId: FacilityId): number {
+export function productionCapacityPerDay(state: WorldSlice, data: GameData, facilityId: FacilityId): number {
   const facility = facilityState(state, facilityId);
   const rate = throughput(state, data, facilityId);
   if (rate === 0) return 0;

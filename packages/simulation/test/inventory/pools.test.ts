@@ -86,8 +86,8 @@ describe("reservations", () => {
 
   it("lets the player release contract-held reservations only", () => {
     const s = addReservation(addProduct(blank(), F, MOONSHINE, "basic", 5, cents(500)), contractRes(1, 2));
-    expect(releaseRejection(s, contractRes(1, 2).id)).toBeNull();
+    expect(releaseRejection(s, contractRes(1, 2).id, F)).toBeNull();
     const missing = asId("Reservation", "res-2");
-    expect(releaseRejection(s, missing)).toEqual({ code: "RESERVATION_NOT_ACTIVE", reservationId: missing });
+    expect(releaseRejection(s, missing, F)).toEqual({ code: "RESERVATION_NOT_ACTIVE", reservationId: missing });
   });
 });
