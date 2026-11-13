@@ -3,6 +3,7 @@
 // on anything else, so UI state that belongs to one game can be keyed to it.
 
 import { midGameSnapshot } from "@eov/contracts/fixtures";
+import { THE_FIRST_HIRE_SCENARIO } from "@eov/game-data";
 import { MemoryStorageAdapter, writeSave } from "@eov/persistence";
 import { newGame } from "@eov/simulation";
 import { describe, expect, it } from "vitest";
@@ -87,5 +88,69 @@ describe("GatewayView.game", () => {
     const games = seen.map((v) => v.game);
     // The new game's snapshot arrives first (still marked 0), then READY moves the view on.
     expect(games).toEqual([0, 1]);
+  });
+});
+
+// SK2a (#174): under founder rules the view holds only the player snapshot,
+// and no world event reaches a listener (ADR 0021 decision 2).
+describe("GatewayClient under founder rules", () => {
+  const player = newGame({ scenario: THE_FIRST_HIRE_SCENARIO }).playerSnapshot();
+
+  /** A worker for a First Hire game: player snapshots and player results only. */
+  class FounderWorker extends FakeWorker {
+    requests: WorkerRequest[] = [];
+    override postMessage(request: WorkerRequest): void {
+      this.requests.push(request);
+      queueMicrotask(() => {
+        this.push({ type: "PLAYER_SNAPSHOT", snapshot: player, stateHash: "hash", scheduler: { speed: 1, autoPaused: false, fastForward: true } });
+        if (request.type === "DISPATCH") {
+          this.push({ type: "PLAYER_COMMAND_RESULT", requestId: request.requestId, result: { status: "applied", commandId: "cmd-1" as never, tick: player.clock.tick } });
+        } else {
+          this.push({ type: "READY", requestId: request.requestId });
+        }
+      });
+    }
+  }
+
+  const client = (worker: FounderWorker) => new GatewayClient(worker as unknown as Worker, new MemoryStorageAdapter());
+
+  it("asks for the scenario, and holds a PlayerSnapshot with no world snapshot", async () => {
+    const worker = new FounderWorker();
+    const gateway = client(worker);
+    worker.snapshot(); // a world snapshot from an earlier First Shipment game
+    expect(gateway.view.snapshot).not.toBeNull();
+    await gateway.newGame(THE_FIRST_HIRE_SCENARIO.id);
+    expect(worker.requests[0]).toMatchObject({ type: "NEW_GAME", scenarioId: THE_FIRST_HIRE_SCENARIO.id });
+    expect(gateway.view.playerSnapshot).toBe(player);
+    expect(gateway.view.snapshot).toBeNull();
+    expect(gateway.view.scheduler.fastForward).toBe(true);
+  });
+
+  it("returns the player's command result", async () => {
+    const gateway = client(new FounderWorker());
+    await gateway.newGame(THE_FIRST_HIRE_SCENARIO.id);
+    expect(await gateway.dispatch({ command: { type: "WAKE" } })).toEqual({
+      kind: "player-result",
+      result: { status: "applied", commandId: "cmd-1", tick: player.clock.tick },
+    });
+  });
+
+  it("passes no world event to a listener, even one the worker shouldn't have sent", async () => {
+    const worker = new FounderWorker();
+    const gateway = client(worker);
+    const heard: unknown[] = [];
+    gateway.onEvents((events) => heard.push(...events));
+    await gateway.newGame(THE_FIRST_HIRE_SCENARIO.id);
+    const world = newGame({ scenario: THE_FIRST_HIRE_SCENARIO });
+    world.advance(1_440);
+    const events = world.takeEvents();
+    expect(events.length).toBeGreaterThan(0);
+    worker.push({ type: "EVENTS", importance: "notify", events });
+    expect(heard).toEqual([]);
+
+    // World rules again (a First Shipment game): events are passed on as before.
+    worker.snapshot();
+    worker.push({ type: "EVENTS", importance: "notify", events });
+    expect(heard).toHaveLength(events.length);
   });
 });

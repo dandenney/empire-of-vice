@@ -59,7 +59,7 @@ describe("rest fast-forward", () => {
     const scheduler = new SpeedScheduler(clock);
     scheduler.setSpeed(2);
     expect(scheduler.fastForward).toBe(false);
-    expect(scheduler.status).toEqual({ speed: 2, autoPaused: false });
+    expect(scheduler.status).toEqual({ speed: 2, autoPaused: false, fastForward: false });
   });
 
   it("when on, runs at REST_SPEED_MULTIPLIER × 1× whatever the player's speed, without changing it", () => {

@@ -20,10 +20,9 @@
 // picked. It isn't a player Speed: `speed` stays 0 | 1 | 2 | 4. `followFounder`
 // is the rule (SK1a): on while the founder rests, off when they wake, and off
 // for the rest of that rest once a `notify` activity item lands. The host feeds
-// it from the player snapshot after each batch. That wiring waits for the
-// player snapshot (SK1b), and the `fastForward` flag on SchedulerStatus waits
-// for the host and its tests. With `founderRules` off the founder never rests,
-// so it stays inert.
+// it from the player snapshot after each batch and each publish (SK2a), and
+// `status.fastForward` says when it's running. With `founderRules` off the
+// host never feeds it and the founder never rests, so it stays inert.
 //   - Whole ticks move from the accumulator into a backlog. Each step takes at
 //     most MAX_TICKS_PER_STEP from the backlog; the rest waits for the next
 //     step. Ticks are never dropped (SIM-001).
@@ -58,6 +57,12 @@ export interface SchedulerStatus {
   readonly speed: Speed;
   /** True when the game was paused because the tab was hidden, until the player picks a speed. */
   readonly autoPaused: boolean;
+  /**
+   * The rest fast-forward is running the game (ADR 0023 decision 9): on while
+   * the founder sleeps and the game runs, whatever `speed` says. Always false
+   * under world rules, where the founder never rests.
+   */
+  readonly fastForward: boolean;
 }
 
 /**
@@ -75,7 +80,7 @@ export interface FounderPacing {
   readonly notifyLanded: boolean;
 }
 
-export const PAUSED_STATUS: SchedulerStatus = { speed: 0, autoPaused: false };
+export const PAUSED_STATUS: SchedulerStatus = { speed: 0, autoPaused: false, fastForward: false };
 
 export function isSpeed(value: unknown): value is Speed {
   return value === 0 || (SPEED_MULTIPLIERS as readonly unknown[]).includes(value);
@@ -118,7 +123,7 @@ export class SpeedScheduler {
   }
 
   get status(): SchedulerStatus {
-    return { speed: this.#speed, autoPaused: this.#autoPaused };
+    return { speed: this.#speed, autoPaused: this.#autoPaused, fastForward: this.fastForward };
   }
 
   get speed(): Speed {

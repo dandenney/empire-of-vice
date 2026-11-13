@@ -10,7 +10,7 @@
 //   - `advance(ticks)` pauses the scheduler, then runs exactly `ticks` ticks,
 //     for deterministic tests (ADR 0014 decision 7).
 
-import type { GameSnapshot } from "@eov/contracts";
+import type { GameSnapshot, PlayerSnapshot } from "@eov/contracts";
 import type { SceneShape } from "../map/scene.ts";
 import type { DispatchOutcome, GatewayClient } from "../state/gateway-client.ts";
 import type { SchedulerStatus } from "../workers/scheduler.ts";
@@ -19,7 +19,10 @@ import type { SchedulerStatus } from "../workers/scheduler.ts";
 export type MapQueries = Readonly<Record<string, (...args: never[]) => unknown>>;
 
 export interface EovTestHook {
+  /** The world snapshot (world rules); null under founder rules. */
   readonly snapshot: GameSnapshot | null;
+  /** The player snapshot (founder rules); null under world rules. */
+  readonly playerSnapshot: PlayerSnapshot | null;
   readonly stateHash: string | null;
   readonly scheduler: SchedulerStatus;
   /** The installed map's queries, or null before a map registers. */
@@ -51,6 +54,9 @@ export function installTestHook(gateway: GatewayClient): void {
   const hook: EovTestHook = {
     get snapshot() {
       return gateway.view.snapshot;
+    },
+    get playerSnapshot() {
+      return gateway.view.playerSnapshot;
     },
     get stateHash() {
       return gateway.view.stateHash;

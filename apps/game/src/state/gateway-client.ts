@@ -5,12 +5,17 @@
 // projections). It never edits it, and nothing here computes game values.
 // React reads `view` through `subscribe` (useSyncExternalStore), not through a
 // store of its own (CLAUDE.md rule 7, ADR 0014 decision 10).
+//
+// Under founder rules (the First Hire, ADR 0023 decision 9) the worker sends
+// only the player snapshot and the player's command results (ADR 0021
+// decision 2). The view then holds a `PlayerSnapshot` and no world snapshot,
+// and world events are never passed on, even if one arrived.
 // Saves go through @eov/persistence: the worker serializes, persistence wraps,
 // hashes, and stores the SaveFile; on load, persistence checks schema and hash
 // before the SaveGame goes back to the worker. Each save records the app's
 // version (`version` in apps/game/package.json) in its SaveMeta.
 
-import type { CommandResult, GameEvent, GameSnapshot, SaveLoadError, SaveMeta } from "@eov/contracts";
+import type { CommandResult, GameEvent, GameSnapshot, PlayerCommandResult, PlayerSnapshot, SaveLoadError, SaveMeta, ScenarioId } from "@eov/contracts";
 import { readSave, writeSave, type StorageAdapter } from "@eov/persistence";
 import { version as APP_VERSION } from "../../package.json";
 import { WORKER_COPY } from "../workers/copy.ts";
@@ -19,12 +24,17 @@ import { PAUSED_STATUS, type SchedulerStatus, type Speed } from "../workers/sche
 
 export type DispatchOutcome =
   | { readonly kind: "result"; readonly result: CommandResult }
+  /** Founder rules: the player's result, without `eventIds` (ADR 0021 decision 2). */
+  | { readonly kind: "player-result"; readonly result: PlayerCommandResult }
   | { readonly kind: "invalid"; readonly issues: readonly string[] };
 
 export type LoadOutcome = { readonly ok: true } | { readonly ok: false; readonly error: SaveLoadError };
 
 export interface GatewayView {
+  /** The world snapshot, under world rules (M001); null under founder rules. */
   readonly snapshot: GameSnapshot | null;
+  /** The player snapshot, under founder rules (M002); null under world rules. At most one of the two is set. */
+  readonly playerSnapshot: PlayerSnapshot | null;
   readonly stateHash: string | null;
   /** The worker's speed scheduler, as of the last snapshot. */
   readonly scheduler: SchedulerStatus;
@@ -55,7 +65,7 @@ export class GatewayClient {
   readonly #eventListeners = new Set<(events: readonly GameEvent[], importance: "notify" | "log") => void>();
   #nextRequestId: RequestId = 1;
   #game = 0;
-  #view: GatewayView = { snapshot: null, stateHash: null, scheduler: PAUSED_STATUS, fault: null, game: this.#game };
+  #view: GatewayView = { snapshot: null, playerSnapshot: null, stateHash: null, scheduler: PAUSED_STATUS, fault: null, game: this.#game };
 
   constructor(worker: Worker, storage: StorageAdapter) {
     this.#worker = worker;
@@ -82,8 +92,9 @@ export class GatewayClient {
     return () => this.#eventListeners.delete(listener);
   }
 
-  async newGame(): Promise<void> {
-    await this.#expect("READY", { type: "NEW_GAME" });
+  /** A new game in `scenarioId` (omitted: the worker's default, The First Shipment). */
+  async newGame(scenarioId?: ScenarioId): Promise<void> {
+    await this.#expect("READY", scenarioId === undefined ? { type: "NEW_GAME" } : { type: "NEW_GAME", scenarioId });
     this.#nextGame();
   }
 
@@ -91,6 +102,7 @@ export class GatewayClient {
   async dispatch(request: unknown): Promise<DispatchOutcome> {
     const response = await this.#send({ type: "DISPATCH", request });
     if (response.type === "COMMAND_RESULT") return { kind: "result", result: response.result };
+    if (response.type === "PLAYER_COMMAND_RESULT") return { kind: "player-result", result: response.result };
     if (response.type === "INVALID_REQUEST") return { kind: "invalid", issues: response.issues };
     throw this.#unexpected(response);
   }
@@ -125,12 +137,17 @@ export class GatewayClient {
   #receive(message: WorkerMessage): void {
     switch (message.type) {
       case "SNAPSHOT":
-        this.#setView({ ...this.#view, snapshot: message.snapshot, stateHash: message.stateHash, scheduler: message.scheduler });
+        this.#setView({ ...this.#view, snapshot: message.snapshot, playerSnapshot: null, stateHash: message.stateHash, scheduler: message.scheduler });
+        return;
+      case "PLAYER_SNAPSHOT":
+        this.#setView({ ...this.#view, snapshot: null, playerSnapshot: message.snapshot, stateHash: message.stateHash, scheduler: message.scheduler });
         return;
       case "FAULT":
         this.#setView({ ...this.#view, fault: message.message });
         return;
       case "EVENTS":
+        // Defence in depth: under founder rules the worker sends none (ADR 0021 decision 2).
+        if (this.#view.playerSnapshot !== null) return;
         for (const listener of this.#eventListeners) listener(message.events, message.importance);
         return;
       default: {
