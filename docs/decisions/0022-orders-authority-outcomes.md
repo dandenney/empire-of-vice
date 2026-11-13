@@ -2,6 +2,8 @@
 
 Status: accepted (decided by the orchestrator for M002 task D2, issue #169; implemented by the contract task it names, SK1, and E1–E3)
 
+Amended by ADR 0029 (#241, two-stage production), under founder rules: decisions 3 (presence rows for `SET_MASH` and `START_DISTILLATION`) and 7 (the conversion cost is paid at the mash; O1b's invariant counts washes).
+
 Amends: ADR 0005 (deals struck at dispatch), ADR 0017 (when conversion cost is paid), ADR 0019 (route randomness), ADR 0020 decisions 10–11 (recovery selling, repeating a sale), ADR 0021 decision 6 (production's cash-posting row).
 
 ## Context

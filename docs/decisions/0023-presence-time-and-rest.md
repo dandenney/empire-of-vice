@@ -3,6 +3,7 @@
 Status: accepted (decided by the orchestrator for M002 task D3, issue #170; implemented by the contract task it names and SK1)
 
 Amended by ADR 0027 (#213, earned phone access and message-taking): decisions 2a (a founder-phase checkout step 5), 4 (the `CHECK_IN` activity) and 7 (a rented room is a rest place for its stay).
+Amended by ADR 0029 (#241, two-stage production), under founder rules: decisions 4 (the `MASH` and `DISTILL` activities; the distillation busy is the run) and 8 (the no-trap bound with `DISTILL`).
 
 ## Context
 
