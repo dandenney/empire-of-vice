@@ -59,6 +59,11 @@ export interface GameState {
   readonly materialPools: readonly MaterialPoolState[];
   readonly reservations: readonly ReservationState[];
   readonly productionJobs: readonly ProductionJobState[];
+  /**
+   * Full barrels (ADR 0029 decision 3), sorted by (facilityId with compareIds,
+   * barrel). Always [] with founder rules off.
+   */
+  readonly washes: readonly WashState[];
   readonly vehicles: readonly VehicleState[];
   readonly deliveries: readonly DeliveryState[];
   /**
@@ -210,7 +215,9 @@ export type ReservedGoods =
 
 export type ReservationHolder =
   | { readonly kind: "CONTRACT"; readonly contractId: ContractId }
-  | { readonly kind: "PRODUCTION_JOB"; readonly jobId: ProductionJobId };
+  | { readonly kind: "PRODUCTION_JOB"; readonly jobId: ProductionJobId }
+  /** A full barrel's inputs, held until a distillation run takes them (ADR 0029 decision 3). Not releasable. */
+  | { readonly kind: "BARREL"; readonly facilityId: FacilityId; readonly barrel: number };
 
 /** Active reservations only. Released or consumed ones are removed (and reported as events). */
 export interface ReservationState {
@@ -221,6 +228,11 @@ export interface ReservationState {
   readonly holder: ReservationHolder;
 }
 
+/**
+ * A production job. Under founder rules (ADR 0029 decision 3) a job is a
+ * distillation run: the washes it took, settled at `completesAt` by ADR 0017's
+ * completion or failure. With founder rules off it's M001's single-stage batch.
+ */
 export interface ProductionJobState {
   readonly id: ProductionJobId;
   readonly facilityId: FacilityId;
@@ -234,10 +246,38 @@ export interface ProductionJobState {
    * The conversion cost this job paid into PRODUCTION_IN_PROGRESS when it started
    * (ADR 0022 decision 7). Completion and failure credit exactly this amount and move
    * no cash. `null` marks a job migrated from a pre-M002 save, which prepaid nothing
-   * and settles under the old rule (cash first, then WAGES_PAYABLE). Invariant: the
-   * PRODUCTION_IN_PROGRESS balance equals the sum of this over running jobs.
+   * and settles under the old rule (cash first, then WAGES_PAYABLE). Invariant (ADR 0029
+   * decision 5): the PRODUCTION_IN_PROGRESS balance equals the sum of this over running
+   * jobs plus the sum of `WashState.conversionPrepaid` over washes. A run takes its
+   * washes' prepaid amount without a posting.
    */
   readonly conversionPrepaid: Money | null;
+}
+
+/**
+ * One full barrel (ADR 0029 decision 3): a mash fermenting, or ready wash waiting to be distilled.
+ * Ready wash keeps: nothing happens to it until a run takes it. World state, learned through
+ * FACILITY_OPERATIONS.
+ */
+export interface WashState {
+  readonly facilityId: FacilityId;
+  /** Which barrel, 0-based, below the facility's FACILITY_PRODUCTION.barrels. One wash per barrel. */
+  readonly barrel: number;
+  readonly recipeId: RecipeId;
+  /** Cases it yields: the recipe's casesPerBarrel. */
+  readonly quantity: number;
+  /** When the mash was set (the end of MASH). Fermentation starts here. */
+  readonly mashedAt: Tick;
+  /**
+   * Ready from this tick on, and it stays ready. mashedAt + fermentTicks for every mash set in play.
+   * The exception is an opening wash (decision 15): its mashedAt is 0 and the scenario sets its
+   * readyAt, which can be sooner, because the mash was set before the story starts.
+   */
+  readonly readyAt: Tick;
+  /** The input reservations, held by this barrel until a run takes them. */
+  readonly reservationIds: readonly ReservationId[];
+  /** The conversion cost paid at the mash (decision 5). */
+  readonly conversionPrepaid: Money;
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +465,9 @@ export const ACTIVITY_KINDS = [
   // ADR 0025 decisions 4 and 5: hiring someone, and briefing an employee in person.
   "HIRE",
   "BRIEF_EMPLOYEE",
+  // ADR 0029 decision 10: setting a mash, and a founder's distillation run.
+  "MASH",
+  "DISTILL",
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 
@@ -515,11 +558,15 @@ export interface EmployeeState {
 
 /** An employee's own record of their work (ADR 0025 decision 6). World state. */
 export interface EmployeeWork {
-  /** The job this employee started that is still running, or null. */
+  /**
+   * The job this employee started that is still running, or null. Under founder
+   * rules it's the distillation run they operate (ADR 0029 decision 9).
+   */
   readonly currentJobId: ProductionJobId | null;
   /**
    * Jobs this person has started for the family that have finished (completed or
-   * failed), over every stint: a re-hire starts from the count in
+   * failed), over every stint (under founder rules, runs they operated; mashes
+   * aren't batches run, ADR 0029 decision 9): a re-hire starts from the count in
    * `GameState.formerEmployees`. Drives EMPLOYEE_PERFORMANCE.
    */
   readonly batchesRun: number;
@@ -558,11 +605,17 @@ export type StandingOrderTerms = DistillOrderTerms;
 export interface DistillOrderTerms {
   readonly kind: "DISTILL";
   readonly recipeId: RecipeId;
-  /** Start a batch only while unreserved cases of the recipe's product and quality at the station are below this. */
+  /**
+   * Start a batch only while unreserved cases of the recipe's product and quality at the station are below this.
+   * Under founder rules it gates setting a mash (ADR 0029 decision 9).
+   */
   readonly keepOnHand: number;
-  /** The most cases in one batch. */
+  /** The most cases in one batch. Under founder rules, the most cases in one mash (ADR 0029 decision 9). */
   readonly batchSize: number;
-  /** The most conversion cost (ADR 0022 decision 7) they may spend per SPENDING_PERIOD_TICKS. */
+  /**
+   * The most conversion cost (ADR 0022 decision 7) they may spend per SPENDING_PERIOD_TICKS.
+   * Under founder rules it's charged at the mash (ADR 0029 decisions 5 and 9).
+   */
   readonly spendingCap: Money;
   /** Whether they phone the family's numbers when something goes wrong (ADR 0025 decision 7). */
   readonly callWhen: "NEVER" | "PROBLEMS";

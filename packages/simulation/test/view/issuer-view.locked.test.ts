@@ -652,6 +652,10 @@ const NEVER_UNDER_FOUNDER_RULES: ReadonlySet<RejectionCode> = new Set<RejectionC
   "STATION_UNSUITABLE",
   "POSITION_FILLED",
   "OUTSIDE_AUTHORITY",
+  // TS1's codes (ADR 0029 decision 14): unreachable while TS1's SET_MASH and START_DISTILLATION are
+  // no-ops and START_PRODUCTION keeps its single-stage behaviour. TS2 (#244) pins them.
+  "TWO_STAGE_RECIPE",
+  "NO_READY_WASH",
 ]);
 
 const VALIDATORS = { on: orderValidators(GAME_DATA, RULES_ON), off: orderValidators(GAME_DATA, RULES_OFF) };
@@ -1561,6 +1565,10 @@ const COVERAGE: Readonly<Record<RejectionCode, Coverage>> = {
     by: "never",
     why: "an employee command's gate-4 reason (ADR 0025 decision 5), never a founder command's immediate result; E1 (#180) issues employee commands",
   },
+  // TS1's two codes (ADR 0029 decision 14). TS2 (#244) pins them once SET_MASH and START_DISTILLATION stop
+  // being no-ops and START_PRODUCTION rejects with TWO_STAGE_RECIPE under founder rules.
+  TWO_STAGE_RECIPE: { by: "never", why: "TS1's commands are no-ops and START_PRODUCTION is unchanged; TS2 (#244) pins it" },
+  NO_READY_WASH: { by: "never", why: "TS1's commands are no-ops; TS2 (#244) pins it" },
 };
 
 describe("decision 9: per RejectionCode, the verdict reads only the founder's view", () => {

@@ -44,6 +44,8 @@ export const ACTIVITY_DURATIONS: Readonly<Record<ActivityKind, number>> = {
   CHECK_IN: 15, // PLACEHOLDER (ADR 0027 decision 4): taking a room at the desk
   HIRE: 60, // PLACEHOLDER (ADR 0025 decision 4): a talk and a handshake
   BRIEF_EMPLOYEE: 15, // PLACEHOLDER (ADR 0025 decision 5): giving an employee their orders in person
+  MASH: 30, // PLACEHOLDER (ADR 0029 decision 2): filling barrels with mash; a short in-person activity
+  DISTILL: 480, // PLACEHOLDER (ADR 0029 decision 2): a distillation run at 1×, 8 h (the human's 6–12 h)
 };
 
 // ---------------------------------------------------------------------------
@@ -216,6 +218,9 @@ export interface PresenceDefinition {
  * - the rest fast-forward is a whole multiplier of at least 1;
  * - 0 < PHONE_NO_ANSWER < PHONE_CALL: an unanswered call takes less time than a
  *   connected one, but never none (ADR 0027 decision 10);
+ * - MASH ≥ 1, so setting a mash always takes time (ADR 0029 decision 2). The
+ *   DISTILL range check reads personnel's factors, so it runs in index.ts
+ *   (`validateTwoStageRuns`);
  * - rooms (ADR 0027 decision 17): known locations, one entry each, sorted by
  *   location ID; non-empty, valid desk hours; checkout a minute of the day; a
  *   minimum stay of at least 1 tick; a nightly rate of at least 1 cent, so a
@@ -249,6 +254,7 @@ export function validatePresence(data: PresenceDefinition, locations: readonly L
   if (data.startWakeTick >= TICKS_PER_DAY) throw new PresenceDataError(`START_WAKE_TICK ${data.startWakeTick} isn't within the first day`);
   wholeAtLeast("REST_SPEED_MULTIPLIER", data.restSpeedMultiplier, 1);
   wholeAtLeast("ACTIVITY_DURATIONS.PHONE_NO_ANSWER", data.activityDurations.PHONE_NO_ANSWER, 1);
+  wholeAtLeast("ACTIVITY_DURATIONS.MASH", data.activityDurations.MASH, 1);
   if (data.activityDurations.PHONE_NO_ANSWER >= data.activityDurations.PHONE_CALL) {
     throw new PresenceDataError(
       `ACTIVITY_DURATIONS.PHONE_NO_ANSWER (${data.activityDurations.PHONE_NO_ANSWER}) must be less than PHONE_CALL (${data.activityDurations.PHONE_CALL})`,

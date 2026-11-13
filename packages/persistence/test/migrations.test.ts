@@ -272,11 +272,13 @@ describe("v4 → v5: conversionPrepaid on production jobs (O1b, ADR 0022 decisio
     const transactions = save.state.ledger.transactions.map((t) =>
       t.idempotencyKey === running ? { ...t, kind: "RESERVATION", idempotencyKey: running.replace(/^PRODUCTION_START:/, "RESERVATION:"), entries: [] } : t,
     );
-    // Without v6's fields (PH1) and v7's (EM1), which a v4 save didn't have either.
+    // Without v6's fields (PH1), v7's (EM1) and v8's (TS1), which a v4 save didn't have either.
+    // The game runs with founder rules off, so no FACILITY_OPERATIONS value is saved anywhere.
     const founder = save.state["founder"] as Obj & { whereabouts: Obj };
     const counters = save.state["counters"] as Obj & { nextId: Obj };
+    expect(JSON.stringify(save.state)).not.toMatch(/FACILITY_OPERATIONS/);
     const v5State = {
-      ...omit(save.state, "arrangements", "employees", "formerEmployees"),
+      ...omit(save.state, "arrangements", "employees", "formerEmployees", "washes"),
       counters: { ...counters, nextId: omit(counters.nextId, "StandingOrder") },
       facilities: (save.state["facilities"] as Obj[]).map((f) => omit(f, "phoneLine")),
       founder: { whereabouts: omit(founder.whereabouts, "call"), awakeSince: founder["awakeSince"] },
@@ -468,7 +470,10 @@ describe("v6 → v7: employees, standing orders and reports (EM1, ADR 0025 decis
       { kind: "MESSAGE_DELIVERED", tick: 900, message: { ...delivered, report: null } },
       { kind: "MESSAGES_DROPPED", tick: 900, locationId: "millers-feed", count: 1 },
     ]);
-    expect(saveGameSchema.safeParse(result.save).success).toBe(true);
+    // Valid once migrated on to the current version (TS1's v8 adds `washes`).
+    const current = migrateSave(withMessages, 6);
+    if (!current.ok) throw new Error(JSON.stringify(current.error));
+    expect(saveGameSchema.safeParse(current.save).success).toBe(true);
   });
 
   it("changes nothing else", () => {
@@ -496,7 +501,8 @@ describe("v6 → v7: employees, standing orders and reports (EM1, ADR 0025 decis
   });
 
   it("loads, and plays on with nothing written to the new fields (founder rules off)", () => {
-    const result = migrate(v6.save);
+    // Migrated on to the current version (TS1's v8 adds `washes`) to load.
+    const result = migrateSave(v6.save, 6);
     if (!result.ok) throw new Error(JSON.stringify(result.error));
     const sim = loadGame(saveGameSchema.parse(result.save));
     sim.advance(1_440);
@@ -510,6 +516,132 @@ describe("v6 → v7: employees, standing orders and reports (EM1, ADR 0025 decis
     const result = migrateSave(v1.save, 1);
     if (!result.ok) throw new Error(JSON.stringify(result.error));
     expect(result.save["schemaVersion"]).toBe(SAVE_SCHEMA_VERSION);
+    expect(saveGameSchema.safeParse(result.save).success).toBe(true);
+  });
+});
+
+describe("v7 → v8: washes (TS1, ADR 0029 decision 13)", () => {
+  type Obj = Record<string, unknown>;
+  type RawSave = Obj & { state: Obj & { eventJournal: Obj[]; knowledge: Obj & { records: Obj[]; pendingMessages: Obj[]; lastCatchUp: Obj | null } } };
+  const v7 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v7.json", import.meta.url)), "utf8")) as { save: RawSave };
+  const migrate = (save: Readonly<Record<string, unknown>>) => migrateSave(save, 7, SAVE_MIGRATIONS, 8);
+  const withState = (patch: Obj): RawSave => ({ ...v7.save, state: { ...v7.save.state, ...patch } });
+  const withKnowledge = (patch: Obj): RawSave => withState({ knowledge: { ...v7.save.state.knowledge, ...patch } });
+
+  // v7 knowledge values as K1 and its successors shaped them.
+  const operations: Obj = { kind: "FACILITY_OPERATIONS", facilityId: "distillery-main", jobs: [], workersPresent: 1 };
+  const stock: Obj = { kind: "FACILITY_STOCK", facilityId: "distillery-main", products: [], materials: [], storageUsed: 0 };
+  const opsSubject: Obj = { kind: "FACILITY_OPERATIONS", facilityId: "distillery-main" };
+  const stockSubject: Obj = { kind: "FACILITY_STOCK", facilityId: "distillery-main" };
+  const lines: Obj[] = [
+    { subject: stockSubject, before: null, after: stock },
+    { subject: opsSubject, before: null, after: operations },
+    { subject: opsSubject, before: { ...operations, workersPresent: 0 }, after: operations },
+  ];
+  const caughtUp: Obj = {
+    id: "evt-90",
+    tick: 700,
+    causedBy: null,
+    type: "KNOWLEDGE_CAUGHT_UP",
+    locationId: "hollow-creek",
+    sinceTick: 600,
+    lines,
+    news: [],
+    droppedNews: 0,
+  };
+  const held: Obj = {
+    takenAt: 840,
+    callerLocationId: "distillery-main",
+    takenBy: null,
+    reason: "INSTALLMENT_DUE",
+    values: [
+      { subject: stockSubject, value: stock },
+      { subject: opsSubject, value: operations },
+    ],
+    report: null,
+  };
+  const full = withState({
+    eventJournal: [...v7.save.state.eventJournal, caughtUp],
+    knowledge: {
+      ...v7.save.state.knowledge,
+      records: [
+        { subject: stockSubject, value: stock, learnedAt: 600, source: { kind: "IN_PERSON", locationId: "hollow-creek" } },
+        { subject: opsSubject, value: operations, learnedAt: 600, source: { kind: "IN_PERSON", locationId: "hollow-creek" } },
+      ],
+      lastCatchUp: { locationId: "hollow-creek", sinceTick: 600, lines, news: [], droppedNews: 0, tick: 700 },
+      pendingMessages: [{ locationId: "millers-feed", items: [held], dropped: 0 }],
+    },
+  });
+  const withWashes = (value: Obj) => (value["kind"] === "FACILITY_OPERATIONS" ? { ...value, washes: [] } : value);
+  const migratedLines = lines.map((l) => ({ ...l, before: l["before"] === null ? null : withWashes(l["before"] as Obj), after: withWashes(l["after"] as Obj) }));
+
+  it("adds no washes to state", () => {
+    const result = migrate(v7.save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.save["schemaVersion"]).toBe(8);
+    expect((result.save["state"] as Obj)["washes"]).toEqual([]);
+    expect(saveGameSchema.safeParse(result.save).success).toBe(true);
+  });
+
+  it("adds washes: [] to every saved FACILITY_OPERATIONS value, and leaves other values alone", () => {
+    const result = migrate(full);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const state = result.save["state"] as RawSave["state"];
+    expect(state.knowledge.records.map((r) => r["value"])).toEqual([stock, { ...operations, washes: [] }]);
+    expect(state.knowledge.lastCatchUp).toEqual({ ...(full.state.knowledge.lastCatchUp as Obj), lines: migratedLines });
+    expect(state.knowledge.pendingMessages).toEqual([
+      { locationId: "millers-feed", items: [{ ...held, values: [{ subject: stockSubject, value: stock }, { subject: opsSubject, value: { ...operations, washes: [] } }] }], dropped: 0 },
+    ]);
+    expect(state.eventJournal.at(-1)).toEqual({ ...caughtUp, lines: migratedLines });
+    expect(state.eventJournal.slice(0, -1)).toEqual(v7.save.state.eventJournal);
+    expect(saveGameSchema.safeParse(result.save).success).toBe(true);
+  });
+
+  it("would leave the save invalid without them: every one is a place a FACILITY_OPERATIONS value is saved", () => {
+    const result = migrate(full);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const stripped = JSON.parse(JSON.stringify(result.save, (key, value: unknown) => (key === "washes" && Array.isArray(value) ? undefined : value))) as Obj;
+    const issues = saveGameSchema.safeParse({ ...stripped, state: { ...(stripped["state"] as Obj), washes: [] } });
+    expect(issues.success).toBe(false);
+  });
+
+  it("changes nothing else", () => {
+    const result = migrate(v7.save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(omit(result.save["state"] as Obj, "washes")).toEqual(v7.save.state);
+    expect(omit(result.save, "state", "schemaVersion")).toEqual(omit(v7.save, "state", "schemaVersion"));
+  });
+
+  it.each([
+    ["a state that already has washes", withState({ washes: [] }), /save.state already has washes/],
+    [
+      "a record whose value already has washes",
+      withKnowledge({ records: [{ subject: opsSubject, value: { ...operations, washes: [] }, learnedAt: 600, source: { kind: "IN_PERSON", locationId: "hollow-creek" } }] }),
+      /records\[0\].value already has washes/,
+    ],
+    ["a catch-up line that isn't an object", withKnowledge({ lastCatchUp: { locationId: "hollow-creek", sinceTick: null, lines: [3], news: [], droppedNews: 0, tick: 700 } }), /lastCatchUp.lines\[0\]/],
+    ["records that aren't a list", withKnowledge({ records: {} }), /records/],
+    ["no event journal", withState({ eventJournal: undefined }), /eventJournal/],
+  ])("fails cleanly on %s", (_label, save, message) => {
+    const result = migrate(save);
+    expect(result).toMatchObject({ ok: false, error: { code: "MIGRATION_FAILED", fromVersion: 7, toVersion: 8 } });
+    if (!result.ok && result.error.code === "MIGRATION_FAILED") expect(result.error.message).toMatch(message);
+  });
+
+  it("loads, and plays on with no washes (founder rules off)", () => {
+    const result = migrate(v7.save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const sim = loadGame(saveGameSchema.parse(result.save));
+    sim.advance(1_440);
+    expect(sim.state.washes).toEqual([]);
+  });
+
+  it("chains from v1", () => {
+    const v1 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v1.json", import.meta.url)), "utf8")) as { save: Record<string, unknown> };
+    const result = migrateSave(v1.save, 1);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.save["schemaVersion"]).toBe(SAVE_SCHEMA_VERSION);
+    expect((result.save["state"] as Obj)["washes"]).toEqual([]);
     expect(saveGameSchema.safeParse(result.save).success).toBe(true);
   });
 });

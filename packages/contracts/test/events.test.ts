@@ -14,7 +14,7 @@ describe("events", () => {
   it("classifies every event type exactly once", () => {
     expectTypeOf<keyof typeof EVENT_IMPORTANCE>().toEqualTypeOf<GameEventType>();
     expect(new Set(GAME_EVENT_TYPES).size).toBe(GAME_EVENT_TYPES.length);
-    expect(GAME_EVENT_TYPES.length).toBe(55);
+    expect(GAME_EVENT_TYPES.length).toBe(57);
   });
 
   it("has no unknown or any payloads", () => {

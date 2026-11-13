@@ -106,6 +106,7 @@ const recipes = (maxBasic: number): FacilitySnapshot["recipes"] => [
     ticksPerCase: 1_440,
     maxStartableQuantity: maxBasic,
     blockedBy: maxBasic > 0 ? null : { code: "INSUFFICIENT_MATERIALS", materialId: ids.sugar, required: 1, available: 0 },
+    twoStage: null,
   },
   {
     recipeId: ids.standardRecipe,
@@ -119,6 +120,7 @@ const recipes = (maxBasic: number): FacilitySnapshot["recipes"] => [
     ticksPerCase: 1_440,
     maxStartableQuantity: 0,
     blockedBy: { code: "LOCKED", unlockId: ids.unlockQuality },
+    twoStage: null,
   },
 ];
 
@@ -156,6 +158,7 @@ const barn: FacilitySnapshot = {
   equipmentOptions: [equipmentOptions[2]!],
   workforce: { workers: 0, maximum: 0, dailyWagePerWorker: cents(0) },
   storage: { used: 0, capacity: 60 },
+  barrels: 0,
   productionCapacityPerDay: 0,
   recipes: [],
   products: [],
@@ -239,6 +242,7 @@ export const startOfGameSnapshot: GameSnapshot = {
       equipmentOptions,
       workforce: { workers: 3, maximum: 6, dailyWagePerWorker: cents(150) },
       storage: { used: 0, capacity: 50 },
+      barrels: 4,
       productionCapacityPerDay: 10,
       recipes: recipes(0),
       products: [],
@@ -248,6 +252,7 @@ export const startOfGameSnapshot: GameSnapshot = {
     barn,
   ],
   productionJobs: [],
+  washes: [],
   vehicles: [{ id: ids.truck, name: "Model TT truck", capacity: 12, homeLocationId: ids.locDistillery, trip: null }],
   employees: [],
   market: {
@@ -472,6 +477,7 @@ export const midGameSnapshot: GameSnapshot = {
       completesAt: tick(6_240),
     },
   ],
+  washes: [],
   vehicles: [
     {
       id: ids.truck,

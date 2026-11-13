@@ -54,9 +54,11 @@ import {
   type StandingOrderState,
   type StandingOrderTerms,
   type Transport,
+  type ReservationHolder,
+  type WashState,
 } from "./state.ts";
 import { SAVE_FORMAT, SAVE_SCHEMA_VERSION } from "./save.ts";
-import type { CashFlowCategory } from "./snapshot.ts";
+import type { CashFlowCategory, RecipeTwoStageOption, WashSnapshot } from "./snapshot.ts";
 import type { Tick } from "./time.ts";
 
 // ---------------------------------------------------------------------------
@@ -289,6 +291,14 @@ export const gameCommandSchema = z.discriminatedUnion("type", [
   }),
   z.strictObject({ type: z.literal("SET_STANDING_ORDER"), characterId: idSchema("Character"), terms: standingOrderTermsSchema.nullable() }),
   z.strictObject({ type: z.literal("DISMISS_EMPLOYEE"), characterId: idSchema("Character") }),
+  // ADR 0029 decision 4.
+  z.strictObject({
+    type: z.literal("SET_MASH"),
+    facilityId: idSchema("Facility"),
+    recipeId: idSchema("Recipe"),
+    barrels: positiveQuantity,
+  }),
+  z.strictObject({ type: z.literal("START_DISTILLATION"), facilityId: idSchema("Facility"), recipeId: idSchema("Recipe") }),
 ]) satisfies z.ZodType<GameCommand>;
 
 /** What the worker gateway validates before calling `Simulation.dispatch`. */
@@ -406,6 +416,14 @@ export const rejectionReasonSchema = z.discriminatedUnion("code", [
     characterId: idSchema("Character"),
     standingOrderId: idSchema("StandingOrder"),
     limit: authorityLimitSchema,
+  }),
+  // ADR 0029 decision 14.
+  z.strictObject({ code: z.literal("TWO_STAGE_RECIPE"), facilityId: idSchema("Facility"), recipeId: idSchema("Recipe") }),
+  z.strictObject({
+    code: z.literal("NO_READY_WASH"),
+    facilityId: idSchema("Facility"),
+    recipeId: idSchema("Recipe"),
+    readyAt: tickSchema.nullable(),
   }),
 ]);
 
@@ -532,6 +550,18 @@ const facilityStockValueSchema = z.strictObject({
   storageUsed: count,
 });
 
+/** A full barrel as seen (ADR 0029 decision 8). */
+export const washSnapshotSchema = z.strictObject({
+  facilityId: idSchema("Facility"),
+  barrel: nonNegativeInt,
+  recipeId: idSchema("Recipe"),
+  productId: idSchema("Product"),
+  quality: qualitySchema,
+  quantity: positiveQuantity,
+  mashedAt: tickSchema,
+  readyAt: tickSchema,
+}) satisfies z.ZodType<WashSnapshot>;
+
 const facilityOperationsValueSchema = z.strictObject({
   kind: z.literal("FACILITY_OPERATIONS"),
   facilityId: idSchema("Facility"),
@@ -548,6 +578,7 @@ const facilityOperationsValueSchema = z.strictObject({
     }),
   ),
   workersPresent: count,
+  washes: z.array(washSnapshotSchema),
 });
 
 const supplierOfferValueSchema = z.strictObject({
@@ -1124,6 +1155,24 @@ export const gameEventSchema = z.discriminatedUnion("type", [
     reason: rejectionReasonSchema.nullable(),
   }),
   ev("REPORT_DELIVERED", { characterId: idSchema("Character"), via: reportViaSchema, lineCount: count, dropped: count }),
+  // ADR 0029 decision 4.
+  ev("MASH_SET", {
+    facilityId: idSchema("Facility"),
+    recipeId: idSchema("Recipe"),
+    barrels: z.array(nonNegativeInt).min(1),
+    quantity: positiveQuantity,
+    readyAt: tickSchema,
+    conversionPrepaid: moneySchema,
+  }),
+  ev("DISTILLATION_STARTED", {
+    jobId: idSchema("ProductionJob"),
+    facilityId: idSchema("Facility"),
+    recipeId: idSchema("Recipe"),
+    barrels: z.array(nonNegativeInt).min(1),
+    quantity: positiveQuantity,
+    operator: driverRefSchema,
+    completesAt: tickSchema,
+  }),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -1208,6 +1257,25 @@ export const formerEmployeeStateSchema = z.strictObject({
   batchesRun: count,
 }) satisfies z.ZodType<FormerEmployeeState>;
 
+/** Who holds a reservation (ADR 0029 decision 3 adds BARREL). */
+export const reservationHolderSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("CONTRACT"), contractId: idSchema("Contract") }),
+  z.strictObject({ kind: z.literal("PRODUCTION_JOB"), jobId: idSchema("ProductionJob") }),
+  z.strictObject({ kind: z.literal("BARREL"), facilityId: idSchema("Facility"), barrel: nonNegativeInt }),
+]) satisfies z.ZodType<ReservationHolder>;
+
+/** One full barrel (ADR 0029 decision 3). */
+export const washStateSchema = z.strictObject({
+  facilityId: idSchema("Facility"),
+  barrel: nonNegativeInt,
+  recipeId: idSchema("Recipe"),
+  quantity: positiveQuantity,
+  mashedAt: tickSchema,
+  readyAt: tickSchema,
+  reservationIds: z.array(idSchema("Reservation")),
+  conversionPrepaid: moneySchema,
+}) satisfies z.ZodType<WashState>;
+
 export const gameStateSchema = z.strictObject({
   scenarioId: idSchema("Scenario"),
   seed: z.number().int(),
@@ -1261,10 +1329,7 @@ export const gameStateSchema = z.strictObject({
         z.strictObject({ kind: z.literal("MATERIAL"), materialId: idSchema("Material") }),
       ]),
       quantity: positiveQuantity,
-      holder: z.discriminatedUnion("kind", [
-        z.strictObject({ kind: z.literal("CONTRACT"), contractId: idSchema("Contract") }),
-        z.strictObject({ kind: z.literal("PRODUCTION_JOB"), jobId: idSchema("ProductionJob") }),
-      ]),
+      holder: reservationHolderSchema,
     }),
   ),
   productionJobs: z.array(
@@ -1279,6 +1344,7 @@ export const gameStateSchema = z.strictObject({
       conversionPrepaid: moneySchema.nullable(),
     }),
   ),
+  washes: z.array(washStateSchema),
   vehicles: z.array(
     z.strictObject({
       id: idSchema("Vehicle"),
@@ -1539,6 +1605,16 @@ const placeGeographyShape = {
   rooms: placeRoomsSchema.nullable(),
 };
 
+/** RecipeOption's founder-rules affordances (ADR 0029 decision 8). */
+export const recipeTwoStageOptionSchema = z.strictObject({
+  casesPerBarrel: positiveQuantity,
+  fermentTicks: positiveQuantity,
+  maxMashBarrels: count,
+  mashBlockedBy: rejectionReasonSchema.nullable(),
+  readyQuantity: count,
+  distillBlockedBy: rejectionReasonSchema.nullable(),
+}) satisfies z.ZodType<RecipeTwoStageOption>;
+
 const playerFacilitySchema = z.strictObject({
   id: idSchema("Facility"),
   name: z.string(),
@@ -1568,8 +1644,10 @@ const playerFacilitySchema = z.strictObject({
       ticksPerCase: positiveQuantity,
       maxStartableQuantity: count,
       blockedBy: rejectionReasonSchema.nullable(),
+      twoStage: recipeTwoStageOptionSchema.nullable(),
     }),
   ),
+  barrels: count,
   storageCapacity: count,
   stock: known(facilityStockValueSchema),
   operations: known(facilityOperationsValueSchema),

@@ -207,7 +207,8 @@ describe("shapes (ADR 0028 decision 11)", () => {
   });
 
   it("adds the two timed activities", () => {
-    expect(ACTIVITY_KINDS.slice(-2)).toEqual(["HIRE", "BRIEF_EMPLOYEE"]);
+    // ADR 0029 (TS1) appends MASH and DISTILL after them.
+    expect(ACTIVITY_KINDS.slice(-4, -2)).toEqual(["HIRE", "BRIEF_EMPLOYEE"]);
   });
 
   it("adds the PERSONNEL transaction kind, whose producers land with their call sites in E1 (#180)", () => {
@@ -310,7 +311,8 @@ describe("HIRE_EMPLOYEE, SET_STANDING_ORDER and DISMISS_EMPLOYEE", () => {
   ];
 
   it("are commands, last in GAME_COMMAND_TYPES, and not repeatable", () => {
-    expect(GAME_COMMAND_TYPES.slice(-3)).toEqual(["HIRE_EMPLOYEE", "SET_STANDING_ORDER", "DISMISS_EMPLOYEE"]);
+    // ADR 0029 (TS1) appends SET_MASH and START_DISTILLATION after them.
+    expect(GAME_COMMAND_TYPES.slice(-5, -2)).toEqual(["HIRE_EMPLOYEE", "SET_STANDING_ORDER", "DISMISS_EMPLOYEE"]);
     expectTypeOf<Extract<RepeatableCommand, { type: "HIRE_EMPLOYEE" | "SET_STANDING_ORDER" | "DISMISS_EMPLOYEE" }>>().toBeNever();
   });
 

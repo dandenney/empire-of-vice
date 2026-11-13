@@ -43,6 +43,8 @@ describe("presence tables (PLACEHOLDER values)", () => {
       // ADR 0025 decisions 4 and 5 (EM1).
       HIRE: 60,
       BRIEF_EMPLOYEE: 15,
+      MASH: 30,
+      DISTILL: 480,
     });
   });
 
