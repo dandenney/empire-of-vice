@@ -39,10 +39,10 @@ Edit the issue in place, and list what changed in a comment, so the agent and th
 
 An ADR task's issue lists the **facts the record must account for** before anyone writes it: the code it makes claims about (file and function), the transaction producers and commands it touches, the `@locked` files it could break (`grep -rl "@locked" packages/simulation/test`), and the follow-ups other records left on the issue. M002's first three records needed 12 review rounds, and most findings were facts like these, discovered one round at a time (#187, #190, #191).
 
-Every ADR that touches simulation rules is checked against this list, by its author before review and by the reviewer:
+Every ADR that touches simulation rules is checked against the list below, by its author before review and by the reviewer (§7.4):
 
 1. **Non-leak** (ADR 0021 decision 9): for each command and surface it adds or changes (immediate result, activity item, catch-up, books row, snapshot field), nothing depends on world state outside the issuer's view.
-2. **Coverage tables:** each new transaction producer, named by idempotency-key family, is known by rule 1 or has a row in ADR 0021 decisions 6 and 7, in each table it can post to.
+2. **Coverage tables:** each new transaction producer, named by idempotency-key family, is known by ADR 0021 decision 6 rule 1 or has a row in ADR 0021 decisions 6 and 7, in each table it can post to.
 3. **Migration:** reads only the save's own fields (ADR 0009), with the source of each new field named.
 4. **Re-locks:** every `@locked` file it breaks, by path, with the reason.
 5. **Tick order:** where new behaviour runs in `PHASES`, and what happens on the tick a founder activity ends (ADR 0023 decision 2a).
@@ -50,7 +50,7 @@ Every ADR that touches simulation rules is checked against this list, by its aut
 7. **Randomness:** which RNG stream, and no new way for hidden activity to shift draws the founder sees (ADR 0022 decision 8).
 8. **Rejection reasons:** new ones named, with payloads; existing ones reused where they fit.
 
-Design records that depend on each other are written one after another, not in parallel.
+Design records that depend on each other are written one after another, not in parallel. Dispatch only waits on `Depends on` (§7.3), so the refresh (§7.2) lists the earlier record's issue under **Depends on** in the later one.
 
 ## 2. Execution
 
@@ -186,6 +186,7 @@ When an agent PR's or orchestrator PR's CI finishes:
   - the `CLAUDE.md` rules (determinism, money, game-data, atomic commands, UI state)
   - tests exercise the behavior, rather than only executing it
   - any "contract gaps" or "left out" items are real gaps, not shortcuts
+  - for a design-record task (§1): every fact the issue lists has a concrete decision, and each of the eight checklist items is applied and stated in the record
 
   It posts a single PR review. All agents act through the human's GitHub account, and GitHub doesn't let an account approve its own PR, so the review is posted as a **comment** (`gh pr review --comment`). Its **first line** is the verdict, which the orchestrator reads:
 
