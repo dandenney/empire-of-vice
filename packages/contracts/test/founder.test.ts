@@ -53,13 +53,22 @@ describe("founder state (decision 1)", () => {
       "BUY_EQUIPMENT",
       "SELL_EQUIPMENT",
       "SET_WORKFORCE",
+      // ADR 0024 decisions 2 and 3, then ADR 0027 decision 4 (PH1).
+      "PHONE_CALL",
+      "PHONE_NO_ANSWER",
+      "INSTALL_PHONE",
+      "CHECK_IN",
     ]);
     expectTypeOf<(typeof ACTIVITY_KINDS)[number]>().toEqualTypeOf<ActivityKind>();
   });
 
   const states: FounderState[] = [
-    { whereabouts: { kind: "PRESENT", locationId: ids.locDistillery, busy: null }, awakeSince: tick(0) },
-    { whereabouts: { kind: "PRESENT", locationId: ids.locDistillery, busy: { activity: "LOAD_TRUCK", until: tick(630) } }, awakeSince: tick(360) },
+    { whereabouts: { kind: "PRESENT", locationId: ids.locDistillery, busy: null, call: null }, awakeSince: tick(0), room: null },
+    {
+      whereabouts: { kind: "PRESENT", locationId: ids.locDistillery, busy: { activity: "LOAD_TRUCK", until: tick(630) }, call: null },
+      awakeSince: tick(360),
+      room: null,
+    },
     {
       whereabouts: {
         kind: "TRAVELLING",
@@ -74,13 +83,31 @@ describe("founder state (decision 1)", () => {
         destinationLocationId: ids.locRoadhouse,
       },
       awakeSince: tick(360),
+      room: null,
     },
     {
       whereabouts: { kind: "ON_DELIVERY", deliveryId: asId("Delivery", "delivery-2"), vehicleId: ids.truck, atStop: { locationId: ids.locHotel, tick: tick(900) } },
       awakeSince: tick(360),
+      room: null,
     },
-    { whereabouts: { kind: "ON_DELIVERY", deliveryId: asId("Delivery", "delivery-2"), vehicleId: ids.truck, atStop: null }, awakeSince: tick(360) },
-    { whereabouts: { kind: "RESTING", locationId: ids.locDistillery, startedAt: tick(0), until: tick(360) }, awakeSince: tick(0) },
+    { whereabouts: { kind: "ON_DELIVERY", deliveryId: asId("Delivery", "delivery-2"), vehicleId: ids.truck, atStop: null }, awakeSince: tick(360), room: null },
+    // Asleep in a room the founder holds (ADR 0027 decision 4).
+    {
+      whereabouts: { kind: "RESTING", locationId: ids.locHotel, startedAt: tick(0), until: tick(360) },
+      awakeSince: tick(0),
+      room: { locationId: ids.locHotel, until: tick(660) },
+    },
+    // On a call with Kessler from the hotel lobby (ADR 0024 decision 4).
+    {
+      whereabouts: {
+        kind: "PRESENT",
+        locationId: ids.locHotel,
+        busy: { activity: "PHONE_CALL", until: tick(915) },
+        call: { locationId: ids.locSpeakeasy, answeredBy: { kind: "PARTY", party: { kind: "BUYER", buyerId: ids.speakeasy } }, connectedAt: tick(900) },
+      },
+      awakeSince: tick(360),
+      room: { locationId: ids.locHotel, until: tick(2_100) },
+    },
   ];
 
   it.each(states.map((s) => [s.whereabouts.kind, s] as const))("%s round-trips through JSON", (_kind, state) => {
@@ -90,6 +117,17 @@ describe("founder state (decision 1)", () => {
   it.each([
     ["an unknown whereabouts", { ...states[0], whereabouts: { kind: "HIDING", locationId: ids.locDistillery } }],
     ["busy left out", { ...states[0], whereabouts: withoutKey(states[0]!.whereabouts, "busy") }],
+    ["call left out", { ...states[0], whereabouts: withoutKey(states[0]!.whereabouts, "call") }],
+    ["room left out", withoutKey(states[0], "room")],
+    ["a room without checkout", { ...states[0], room: { locationId: ids.locHotel } }],
+    [
+      "a call answered by one of the family's facilities",
+      {
+        ...states[6],
+        whereabouts: { ...states[6]!.whereabouts, call: { locationId: ids.locBarn, answeredBy: { kind: "PARTY", party: { kind: "FACILITY", facilityId: ids.barn } }, connectedAt: 900 } },
+      },
+    ],
+    ["an unknown answerer", { ...states[6], whereabouts: { ...states[6]!.whereabouts, call: { locationId: ids.locSpeakeasy, answeredBy: { kind: "OPERATOR" }, connectedAt: 900 } } }],
     ["an unknown activity", { ...states[1], whereabouts: { ...states[1]!.whereabouts, busy: { activity: "NAP", until: 630 } } }],
     ["an empty path", { ...states[2], whereabouts: { ...states[2]!.whereabouts, path: [] } }],
     ["a leg without a direction", { ...states[2], whereabouts: { ...states[2]!.whereabouts, path: [{ routeId: ids.routeSupplier }] } }],
@@ -205,7 +243,17 @@ describe("FOUNDER_* events (decision 11)", () => {
 describe("ACTIVITY_IMPORTANCE (decision 9)", () => {
   it("classifies every activity item kind, as notify or log", () => {
     expectTypeOf<keyof typeof ACTIVITY_IMPORTANCE>().toEqualTypeOf<ActivityItem["kind"]>();
-    expect(Object.keys(ACTIVITY_IMPORTANCE).sort()).toEqual(["CASH_POSTING", "CATCH_UP", "COMMAND"]);
+    expect(Object.keys(ACTIVITY_IMPORTANCE).sort()).toEqual([
+      "ARRANGEMENT_GRANTED",
+      "CALL_PLACED",
+      "CALL_RECEIVED",
+      "CASH_POSTING",
+      "CATCH_UP",
+      "COMMAND",
+      "MESSAGES_DROPPED",
+      "MESSAGE_DELIVERED",
+      "PHONE_INSTALLED",
+    ]);
     for (const value of Object.values(ACTIVITY_IMPORTANCE)) expect(["notify", "log"]).toContain(value);
   });
 });

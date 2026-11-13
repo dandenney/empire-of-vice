@@ -113,6 +113,10 @@ const CASH_FLOW_CATEGORY: Readonly<Record<TransactionKind, CashFlowCategory | nu
   LOSS: "LOSSES",
   // Reputation, tier, unlock, and outcome rows never have entries (ADR 0020 decision 14).
   PROGRESSION: null,
+  // Calls and rooms (ADR 0024 decision 15, ADR 0027 decision 17). A line's
+  // installation files under EQUIPMENT through its account's category.
+  TELEPHONE: "OVERHEAD",
+  LODGING: "OVERHEAD",
 };
 
 export class FinanceProjectionError extends Error {

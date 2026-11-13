@@ -62,7 +62,7 @@ function acceptedNoOp(state: GameState): CommandOutcome {
 const rejected = (reason: RejectionReason): CommandOutcome => ({ status: "rejected", reason });
 
 function withWhereabouts(state: GameState, whereabouts: FounderWhereabouts, awakeSince: Tick = state.founder.awakeSince): GameState {
-  const founder: FounderState = { whereabouts, awakeSince };
+  const founder: FounderState = { ...state.founder, whereabouts, awakeSince };
   return { ...state, founder };
 }
 
@@ -203,7 +203,7 @@ function wake(state: GameState, t: Tick, early: boolean, causedBy: CommandContex
   const w = state.founder.whereabouts;
   if (w.kind !== "RESTING") throw new RangeError("Only a resting founder wakes");
   const awakeSince = awakeSinceAfterRest(state.founder.awakeSince, w.locationId, w.startedAt, t);
-  let s = withWhereabouts(state, { kind: "PRESENT", locationId: w.locationId, busy: null }, awakeSince);
+  let s = withWhereabouts(state, { kind: "PRESENT", locationId: w.locationId, busy: null, call: null }, awakeSince);
   s = emit(s, { type: "FOUNDER_WOKE", locationId: w.locationId, early }, t, causedBy);
   return founderWoke(s, w.locationId, early, t);
 }
@@ -267,7 +267,7 @@ function advanceTravel(state: GameState, data: GameData, ctx: TickContext): Game
       legArrivesAt: addTicks(ctx.tick, pathLegTicks(data, next, vehicleId === null)),
     });
   }
-  let s = withWhereabouts(state, { kind: "PRESENT", locationId: at, busy: null });
+  let s = withWhereabouts(state, { kind: "PRESENT", locationId: at, busy: null, call: null });
   if (vehicleId !== null) s = withParkedAt(s, vehicleId, at);
   if (next) {
     // A vehicle leg that's closed when it should start halts the trip at the junction.
@@ -289,7 +289,7 @@ function followDelivery(state: GameState, data: GameData, ctx: TickContext): Gam
     // VEHICLE_RETURNED this tick: the founder steps down where the trip started.
     const origin = data.facilities.find((f) => f.id === delivery.fromFacilityId);
     if (!origin) throw new RangeError(`Delivery ${delivery.id} left from unknown facility ${delivery.fromFacilityId}`);
-    const s = withWhereabouts(state, { kind: "PRESENT", locationId: origin.locationId, busy: null });
+    const s = withWhereabouts(state, { kind: "PRESENT", locationId: origin.locationId, busy: null, call: null });
     return founderArrived(s, origin.locationId, { kind: "RETURNED" }, ctx.tick);
   }
   // The outbound leg resolved at its destination this tick (the truck turned home

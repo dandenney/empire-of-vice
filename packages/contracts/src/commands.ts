@@ -203,6 +203,37 @@ export interface WakeCommand {
   readonly type: "WAKE";
 }
 
+/**
+ * The founder calls a place from the phone where they stand (ADR 0024 decision 3,
+ * ADR 0027 decision 5). Phones are places, so the target is a location, not a
+ * party. Applied whether or not anyone answers. A no-op with `founderRules: false`.
+ */
+export interface PlaceCallCommand {
+  readonly type: "PLACE_CALL";
+  /** The place being called. */
+  readonly locationId: LocationId;
+}
+
+/**
+ * The family has a telephone line put in at one of its facilities (ADR 0024
+ * decision 2). A timed activity, present at the facility. A no-op with
+ * `founderRules: false`.
+ */
+export interface InstallPhoneCommand {
+  readonly type: "INSTALL_PHONE";
+  readonly facilityId: FacilityId;
+}
+
+/**
+ * The founder rents a room where they stand, paying for a stay to the next
+ * checkout (ADR 0027 decision 4). A timed activity at the desk. A no-op with
+ * `founderRules: false`.
+ */
+export interface RentRoomCommand {
+  readonly type: "RENT_ROOM";
+  readonly locationId: LocationId;
+}
+
 export type GameCommand =
   | PurchaseMaterialsCommand
   | StartProductionCommand
@@ -216,7 +247,10 @@ export type GameCommand =
   | TravelCommand
   | RestCommand
   | WakeCommand
-  | AgreeDealCommand;
+  | AgreeDealCommand
+  | PlaceCallCommand
+  | InstallPhoneCommand
+  | RentRoomCommand;
 
 export type GameCommandType = GameCommand["type"];
 
@@ -237,6 +271,9 @@ export const GAME_COMMAND_TYPES = [
   "REST",
   "WAKE",
   "AGREE_DEAL",
+  "PLACE_CALL",
+  "INSTALL_PHONE",
+  "RENT_ROOM",
 ] as const satisfies readonly GameCommandType[];
 
 // ---------------------------------------------------------------------------
@@ -358,7 +395,12 @@ export type RejectionReason =
   | { readonly code: "NOT_PRESENT"; readonly requiredLocationId: LocationId; readonly issuerLocationId: LocationId | null }
   /** A timed activity is still running: busy through `until`, inclusive (ADR 0023 decision 2a). */
   | { readonly code: "FOUNDER_BUSY"; readonly until: Tick }
-  /** An activity with a party must start during their hours. `opensAt`: the next tick the place opens, from known hours. */
+  /**
+   * An activity with a party must start during their hours. `opensAt`: the next
+   * tick the place opens, from known hours. For PLACE_CALL it comes from the
+   * phone's own hours, and for RENT_ROOM from the desk's (ADR 0027 decision 16),
+   * never from the place's PLACE_HOURS.
+   */
   | { readonly code: "PLACE_CLOSED"; readonly locationId: LocationId; readonly opensAt: Tick }
   /**
    * The truck isn't parked at the place the founder acts from. `locationId` is
@@ -374,9 +416,9 @@ export type RejectionReason =
    */
   | { readonly code: "NO_WAY_TO_REACH"; readonly characterId: CharacterId }
   // The founder's own commands: TRAVEL, REST, WAKE (ADR 0023 decision 3a).
-  /** TRAVEL or REST while the founder is travelling, riding a delivery, or resting. */
+  /** TRAVEL, REST, PLACE_CALL or RENT_ROOM while the founder is travelling, riding a delivery, or resting. */
   | { readonly code: "FOUNDER_AWAY"; readonly whereabouts: "TRAVELLING" | "ON_DELIVERY" | "RESTING" }
-  /** TRAVEL to the place the founder is already at. */
+  /** TRAVEL to, or PLACE_CALL of, the place the founder is already at. */
   | { readonly code: "ALREADY_THERE" }
   /** TRAVEL `via` isn't a simple path from the founder's place to the destination. */
   | { readonly code: "INVALID_PATH" }
@@ -385,6 +427,23 @@ export type RejectionReason =
   /** REST `untilTick` outside the valid range. `min` and `max` are absolute ticks: the earliest and latest valid `untilTick` for the apply tick. */
   | { readonly code: "INVALID_REST_LENGTH"; readonly min: Tick; readonly max: Tick }
   /** WAKE while the founder isn't resting. */
-  | { readonly code: "NOT_RESTING" };
+  | { readonly code: "NOT_RESTING" }
+  // Telephones and rooms (ADR 0024 decision 14, ADR 0027 decision 16). Every
+  // payload is phone geography, the founder's place, room and arrangements, or
+  // the founder's own facility: always known.
+  /** PLACE_CALL: there's no phone at all where the founder stands (no family line, no PHONES entry). `locationId` is the founder's place. */
+  | { readonly code: "NO_PHONE_HERE"; readonly locationId: LocationId }
+  /** PLACE_CALL: the place called has no phone (no PHONES entry, no family line). */
+  | { readonly code: "NO_PHONE_THERE"; readonly locationId: LocationId }
+  /** INSTALL_PHONE at a facility that already has a line. */
+  | { readonly code: "PHONE_ALREADY_INSTALLED"; readonly facilityId: FacilityId }
+  /**
+   * PLACE_CALL from a phone the founder may not use now, whatever the hours
+   * (ADR 0027 decision 5): a PRIVATE line, a GUEST phone with no room held there,
+   * or an ARRANGEMENT phone whose arrangement doesn't grant PHONE_USE.
+   */
+  | { readonly code: "PHONE_USE_NOT_GRANTED"; readonly locationId: LocationId; readonly rule: "PRIVATE" | "GUEST" | "ARRANGEMENT" }
+  /** RENT_ROOM where there are no rooms to rent (no ROOMS entry, ADR 0027 decision 4). */
+  | { readonly code: "NO_ROOMS_HERE"; readonly locationId: LocationId };
 
 export type RejectionCode = RejectionReason["code"];

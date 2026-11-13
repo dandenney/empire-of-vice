@@ -323,8 +323,54 @@ export const migrateV4ToV5: SaveMigration = {
   },
 };
 
+/**
+ * v5 → v6 (PH1, ADR 0024 decision 13 and ADR 0027 decision 15): phones, rooms
+ * and arrangements, from the save's own fields only (ADR 0009):
+ * - `facilities[i].phoneLine: null`: no earlier save can own a line (no command
+ *   could install one);
+ * - `founder.whereabouts.call: null` when the founder is PRESENT (the save's own
+ *   `whereabouts.kind`): no earlier save can be on a call;
+ * - `founder.room: null`: no earlier save can hold a room;
+ * - `knowledge.pendingMessages: []`: no earlier save can hold a message;
+ * - `arrangements: []`. An earlier M002 save may hold founder purchases at
+ *   Miller's in `commandLog`, but turning them into dealings would need
+ *   game-data (which supplier is at which location), which ADR 0009 forbids.
+ *   Arrangements start counting at this version.
+ * `knowledge.lastCatchUp` and journaled KNOWLEDGE_CAUGHT_UP events don't change
+ * (ADR 0024 decision 6), and the new union members are additive.
+ */
+export const migrateV5ToV6: SaveMigration = {
+  fromVersion: 5,
+  toVersion: 6,
+  migrate: (save) => {
+    const state = asObject(save["state"], "save.state");
+    if ("arrangements" in state) throw new Error("save.state already has arrangements");
+    const facilities = asArray(state["facilities"], "save.state.facilities").map((f, i) => {
+      const facility = asObject(f, `save.state.facilities[${i}]`);
+      if ("phoneLine" in facility) throw new Error(`save.state.facilities[${i}] already has phoneLine`);
+      return { ...facility, phoneLine: null };
+    });
+    const founder = asObject(state["founder"], "save.state.founder");
+    if ("room" in founder) throw new Error("save.state.founder already has room");
+    const whereabouts = asObject(founder["whereabouts"], "save.state.founder.whereabouts");
+    if ("call" in whereabouts) throw new Error("save.state.founder.whereabouts already has call");
+    const knowledge = asObject(state["knowledge"], "save.state.knowledge");
+    if ("pendingMessages" in knowledge) throw new Error("save.state.knowledge already has pendingMessages");
+    return {
+      ...save,
+      state: {
+        ...state,
+        facilities,
+        knowledge: { ...knowledge, pendingMessages: [] },
+        founder: { ...founder, whereabouts: whereabouts["kind"] === "PRESENT" ? { ...whereabouts, call: null } : whereabouts, room: null },
+        arrangements: [],
+      },
+    };
+  },
+};
+
 /** Every migration, oldest first. Add one per SAVE_SCHEMA_VERSION bump. */
-export const SAVE_MIGRATIONS: readonly SaveMigration[] = [migrateV1ToV2, migrateV2ToV3, migrateV3ToV4, migrateV4ToV5];
+export const SAVE_MIGRATIONS: readonly SaveMigration[] = [migrateV1ToV2, migrateV2ToV3, migrateV3ToV4, migrateV4ToV5, migrateV5ToV6];
 
 export type MigrationResult =
   | { readonly ok: true; readonly save: Record<string, unknown> }

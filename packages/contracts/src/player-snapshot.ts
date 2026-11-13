@@ -32,7 +32,7 @@ import type {
   VehicleSnapshot,
   VictoryProgress,
 } from "./snapshot.ts";
-import type { FounderState } from "./state.ts";
+import type { ArrangementPrivilege, FounderState } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 export interface PlayerSnapshot {
@@ -97,9 +97,72 @@ interface PlaceGeography {
   readonly id: LocationId;
   readonly name: string;
   readonly position: WorldPoint;
+  /** ADR 0024/0027: the phone here, or null. Geography and agreements, always known. */
+  readonly phone: PlacePhone | null;
+  /** ADR 0027: the family's arrangement with the contact here, or null if the place has none in game-data. */
+  readonly arrangement: PlayerArrangement | null;
+  /** ADR 0027: rooms to rent here, or null. */
+  readonly rooms: PlaceRooms | null;
 }
 
-export type PlayerPlace = FacilityPlace | SupplierPlace | BuyerPlace;
+export type PlayerPlace = FacilityPlace | SupplierPlace | BuyerPlace | EmptyPlace;
+
+/** A location with nothing of the family's or the scenario's parties on it (ADR 0024 decision 1), such as the depot. */
+export interface EmptyPlace extends PlaceGeography {
+  readonly kind: "NONE";
+}
+
+/**
+ * The phone at a place (ADR 0027 decision 12): the family's line if it has one
+ * there, otherwise the place's PHONES entry. Every field is computed from
+ * game-data, the clock, the founder's arrangements and room, and family lines.
+ * It never says whether messages are waiting (ADR 0024 decision 1).
+ */
+export interface PlacePhone {
+  readonly familyLine: boolean;
+  /** The founder may call out from here now, and on what basis. */
+  readonly use: {
+    readonly rule: "FAMILY_LINE" | "PUBLIC" | "GUEST" | "ARRANGEMENT" | "PRIVATE";
+    readonly allowed: boolean;
+  };
+  /** What a connected call from here costs: the public fee, or CALL_COST. */
+  readonly callCharge: Money;
+  /** `phoneOpen` now; and, if closed, the next tick it opens (null when open). */
+  readonly open: boolean;
+  readonly opensAt: Tick | null;
+  /**
+   * The keeper here takes messages for the family now: `takesMessages(L, now)`
+   * for a PHONES entry. false for a family line, where the Office Hand takes them
+   * (ADR 0026), as the employee's availability shows. Never whether messages are
+   * waiting (ADR 0024 decision 1).
+   */
+  readonly takesMessages: boolean;
+}
+
+/** The family's standing with the contact at a place (ADR 0027 decisions 3 and 12). */
+export interface PlayerArrangement {
+  readonly contactName: string;
+  /** 0 when there's no arrangement or it has lapsed. */
+  readonly dealingDays: number;
+  /** `lastDealingAt + lapseTicks` while it holds; null when there's none or it lapsed. */
+  readonly holdsUntil: Tick | null;
+  /** There was one, and it lapsed. */
+  readonly lapsed: boolean;
+  /** Each milestone, in ARRANGEMENT_PRIVILEGES order. */
+  readonly milestones: readonly {
+    readonly privilege: ArrangementPrivilege;
+    readonly dealingDaysNeeded: number;
+    readonly granted: boolean;
+  }[];
+}
+
+/** Rooms for rent at a place (ADR 0027 decisions 4 and 12). */
+export interface PlaceRooms {
+  readonly nightlyRate: Money;
+  readonly deskOpen: boolean;
+  /** The next tick the desk opens while it's closed; null when open. */
+  readonly deskOpensAt: Tick | null;
+}
 
 export interface FacilityPlace extends PlaceGeography {
   readonly kind: "FACILITY";

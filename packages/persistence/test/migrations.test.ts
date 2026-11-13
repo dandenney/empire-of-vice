@@ -29,7 +29,8 @@ describe("v1 → v2: empty knowledge (K1, ADR 0021 decision 10)", () => {
     if (!result.ok) throw new Error(JSON.stringify(result.error));
     const { knowledge, ...rest } = result.save["state"] as Record<string, unknown>;
     expect(knowledge).toEqual({ records: [], pendingNews: [], pendingBooks: [], activity: [], lastCatchUp: null });
-    expect(knowledge).toEqual(EMPTY_KNOWLEDGE);
+    // v2's empty knowledge: today's, without the fields later versions added (v6's pendingMessages).
+    expect(knowledge).toEqual(omit(EMPTY_KNOWLEDGE as unknown as Record<string, unknown>, "pendingMessages"));
     expect(rest).toEqual(v1.save.state);
     expect(result.save["schemaVersion"]).toBe(2);
     expect(v1.save.state).not.toHaveProperty("knowledge");
@@ -271,10 +272,18 @@ describe("v4 → v5: conversionPrepaid on production jobs (O1b, ADR 0022 decisio
     const transactions = save.state.ledger.transactions.map((t) =>
       t.idempotencyKey === running ? { ...t, kind: "RESERVATION", idempotencyKey: running.replace(/^PRODUCTION_START:/, "RESERVATION:"), entries: [] } : t,
     );
+    // Without v6's fields (PH1), which a v4 save didn't have either.
+    const founder = save.state["founder"] as Obj & { whereabouts: Obj };
+    const v5State = {
+      ...omit(save.state, "arrangements"),
+      facilities: (save.state["facilities"] as Obj[]).map((f) => omit(f, "phoneLine")),
+      founder: { whereabouts: omit(founder.whereabouts, "call"), awakeSince: founder["awakeSince"] },
+      knowledge: omit(save.state["knowledge"] as Obj, "pendingMessages"),
+    };
     return {
       ...save,
       schemaVersion: 4,
-      state: { ...save.state, productionJobs: save.state.productionJobs.map((j) => omit(j, "conversionPrepaid")), ledger: { transactions } },
+      state: { ...v5State, productionJobs: save.state.productionJobs.map((j) => omit(j, "conversionPrepaid")), ledger: { transactions } },
     };
   };
 
@@ -303,7 +312,7 @@ describe("v4 → v5: conversionPrepaid on production jobs (O1b, ADR 0022 decisio
   });
 
   it("loads, and the migrated job pays its conversion cost from cash at settlement, with nothing in PRODUCTION_IN_PROGRESS", () => {
-    const result = migrate(v4WithRunningJob());
+    const result = migrateSave(v4WithRunningJob(), 4);
     if (!result.ok) throw new Error(JSON.stringify(result.error));
     const sim = loadGame(saveGameSchema.parse(result.save));
     const job = sim.state.productionJobs[0]!;
@@ -316,6 +325,86 @@ describe("v4 → v5: conversionPrepaid on production jobs (O1b, ADR 0022 decisio
     const inProgress = (state: typeof sim.state) =>
       state.ledger.transactions.flatMap((t) => t.entries).reduce((n, e) => (e.account !== "PRODUCTION_IN_PROGRESS" ? n : e.side === "DEBIT" ? n + e.amount : n - e.amount), 0);
     expect(inProgress(sim.state)).toBe(0);
+  });
+
+  it("chains from v1", () => {
+    const v1 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v1.json", import.meta.url)), "utf8")) as { save: Record<string, unknown> };
+    const result = migrateSave(v1.save, 1);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.save["schemaVersion"]).toBe(SAVE_SCHEMA_VERSION);
+    expect(saveGameSchema.safeParse(result.save).success).toBe(true);
+  });
+});
+
+describe("v5 → v6: phones, rooms and arrangements (PH1, ADR 0024 decision 13, ADR 0027 decision 15)", () => {
+  type Obj = Record<string, unknown>;
+  type RawSave = Obj & { state: Obj & { facilities: Obj[]; founder: Obj & { whereabouts: Obj }; knowledge: Obj } };
+  const v5 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v5.json", import.meta.url)), "utf8")) as { save: RawSave };
+  const migrate = (save: Readonly<Record<string, unknown>>) => migrateSave(save, 5, SAVE_MIGRATIONS, 6);
+  const withState = (patch: Obj): RawSave => ({ ...v5.save, state: { ...v5.save.state, ...patch } });
+  const withFounder = (whereabouts: Obj): RawSave => withState({ founder: { ...v5.save.state.founder, whereabouts } });
+
+  it("adds phoneLine: null to every facility, call: null to a PRESENT founder, room: null, no messages and no arrangements", () => {
+    const result = migrate(v5.save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.save["schemaVersion"]).toBe(6);
+    const state = result.save["state"] as RawSave["state"];
+    expect(state.facilities).toEqual(v5.save.state.facilities.map((f) => ({ ...f, phoneLine: null })));
+    expect(v5.save.state.founder.whereabouts["kind"]).toBe("PRESENT");
+    expect(state.founder).toEqual({ ...v5.save.state.founder, whereabouts: { ...v5.save.state.founder.whereabouts, call: null }, room: null });
+    expect(state.knowledge).toEqual({ ...v5.save.state.knowledge, pendingMessages: [] });
+    expect(state["arrangements"]).toEqual([]);
+  });
+
+  it("changes nothing else", () => {
+    const result = migrate(v5.save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const strip = (s: Obj) => omit(s, "facilities", "founder", "knowledge", "arrangements");
+    expect(strip(result.save["state"] as Obj)).toEqual(strip(v5.save.state));
+    expect(omit(result.save, "state", "schemaVersion")).toEqual(omit(v5.save, "state", "schemaVersion"));
+  });
+
+  it.each([
+    ["TRAVELLING", { kind: "TRAVELLING", transport: { kind: "FOOT" }, path: [{ routeId: "feed-store-road", reversed: false }], legIndex: 0, legDepartedAt: 10, legArrivesAt: 40, destinationLocationId: "millers-feed" }],
+    ["ON_DELIVERY", { kind: "ON_DELIVERY", deliveryId: "delivery-1", vehicleId: "model-tt-truck", atStop: null }],
+    ["RESTING", { kind: "RESTING", locationId: "hollow-creek", startedAt: 0, until: 360 }],
+  ])("gives a %s founder no call: only PRESENT has one", (_kind, whereabouts) => {
+    const result = migrate(withFounder(whereabouts));
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect((result.save["state"] as RawSave["state"]).founder).toEqual({ ...v5.save.state.founder, whereabouts, room: null });
+  });
+
+  it("doesn't rebuild arrangements from the command log: that would need game-data's supplier locations (ADR 0009)", () => {
+    const log = (v5.save.state["commandLog"] as Obj[]).map((e) => (e["command"] as Obj)["type"]);
+    expect(log).toContain("PURCHASE_MATERIALS");
+    const result = migrate(v5.save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect((result.save["state"] as Obj)["arrangements"]).toEqual([]);
+  });
+
+  it.each([
+    ["a state that already has arrangements", withState({ arrangements: [] }), /already has arrangements/],
+    ["a facility that already has a line", withState({ facilities: v5.save.state.facilities.map((f) => ({ ...f, phoneLine: null })) }), /already has phoneLine/],
+    ["a founder who already holds a room", withState({ founder: { ...v5.save.state.founder, room: null } }), /already has room/],
+    ["a founder already on a call", withFounder({ ...v5.save.state.founder.whereabouts, call: null }), /already has call/],
+    ["knowledge that already holds messages", withState({ knowledge: { ...v5.save.state.knowledge, pendingMessages: [] } }), /already has pendingMessages/],
+    ["no founder", withState({ founder: undefined }), /founder/],
+    ["facilities that aren't a list", withState({ facilities: {} }), /facilities/],
+  ])("fails cleanly on %s", (_label, save, message) => {
+    const result = migrate(save);
+    expect(result).toMatchObject({ ok: false, error: { code: "MIGRATION_FAILED", fromVersion: 5, toVersion: 6 } });
+    if (!result.ok && result.error.code === "MIGRATION_FAILED") expect(result.error.message).toMatch(message);
+  });
+
+  it("loads, and plays on with nothing written to the new fields (founder rules off)", () => {
+    const result = migrate(v5.save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const sim = loadGame(saveGameSchema.parse(result.save));
+    sim.advance(1_440);
+    expect(sim.state.arrangements).toEqual([]);
+    expect(sim.state.facilities.every((f) => f.phoneLine === null)).toBe(true);
+    expect(sim.state.founder.room).toBeNull();
+    expect(sim.state.knowledge.pendingMessages).toEqual([]);
   });
 
   it("chains from v1", () => {

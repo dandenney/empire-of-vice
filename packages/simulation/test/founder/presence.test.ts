@@ -58,7 +58,7 @@ const foot = (id: string) => scaleUp(route(id).durationTicks, 3_000_000);
 function game(scheduledEvents: readonly ScenarioScheduledEvent[] = []): KernelSimulation {
   const sim = newGame({ scenario: { ...SCENARIO, scheduledEvents } });
   sim.advance(START_WAKE_TICK);
-  expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null });
+  expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null, call: null });
   sim.takeEvents();
   return sim;
 }
@@ -131,7 +131,7 @@ describe("TRAVEL (decisions 3, 3a)", () => {
     to(sim, t + foot(KESSLER_BACK_ROAD) - 1);
     expect(sim.state.founder.whereabouts.kind).toBe("TRAVELLING");
     sim.advance(1);
-    expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: KESSLER_PHARMACY, busy: null });
+    expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: KESSLER_PHARMACY, busy: null, call: null });
     expect(eventsOf(sim, "FOUNDER_ARRIVED")).toMatchObject([{ locationId: KESSLER_PHARMACY, tick: t + foot(KESSLER_BACK_ROAD) }]);
   });
 
@@ -182,7 +182,7 @@ describe("TRAVEL (decisions 3, 3a)", () => {
     const t = closing.state.tick + 1;
     applied(closing, { type: "TRAVEL", destinationLocationId: KESSLER_PHARMACY, transport: { kind: "VEHICLE", vehicleId: MODEL_TT_TRUCK }, via });
     to(closing, t + route(STATE_HIGHWAY).durationTicks);
-    expect(closing.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null });
+    expect(closing.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null, call: null });
     expect(truck(closing.state).parkedAt).toBe(HOLLOW_CREEK);
     expect(eventsOf(closing, "FOUNDER_HALTED")).toMatchObject([{ routeId: COUNTY_ROAD, locationId: HOLLOW_CREEK }]);
   });
@@ -268,7 +268,7 @@ describe("REST and WAKE (decision 7)", () => {
     expect(sim.state.founder.whereabouts).toEqual({ kind: "RESTING", locationId: HOLLOW_CREEK, startedAt: t, until: t + FULL_REST_TICKS });
     expect(eventsOf(sim, "FOUNDER_RESTED")).toMatchObject([{ locationId: HOLLOW_CREEK, until: t + FULL_REST_TICKS }]);
     to(sim, t + FULL_REST_TICKS);
-    expect(sim.state.founder).toEqual({ whereabouts: { kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null }, awakeSince: t + FULL_REST_TICKS });
+    expect(sim.state.founder).toEqual({ whereabouts: { kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null, call: null }, awakeSince: t + FULL_REST_TICKS, room: null });
   });
 
   it("WAKE ends a rest early and moves awakeSince forward in proportion; WAKE when awake is NOT_RESTING", () => {
@@ -281,8 +281,9 @@ describe("REST and WAKE (decision 7)", () => {
     const woke = applied(sim, { type: "WAKE" });
     expect(woke.tick).toBe(t + FULL_REST_TICKS / 2);
     expect(sim.state.founder).toEqual({
-      whereabouts: { kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null },
+      whereabouts: { kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null, call: null },
       awakeSince: Math.min(since + TIRED_AFTER_TICKS / 2, t + FULL_REST_TICKS / 2),
+      room: null,
     });
     expect(eventsOf(sim, "FOUNDER_WOKE")).toMatchObject([{ early: true }]);
   });
@@ -296,7 +297,7 @@ describe("REST and WAKE (decision 7)", () => {
   });
 
   it("a tired founder's activities take × TIRED_DURATION_PPM, rounded up; travel doesn't", () => {
-    const founder = { whereabouts: { kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null }, awakeSince: tick(0) } as const;
+    const founder = { whereabouts: { kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null, call: null }, awakeSince: tick(0), room: null } as const;
     expect(activityTicks(founder, "SET_WORKFORCE", tick(TIRED_AFTER_TICKS))).toBe(ACTIVITY_DURATIONS.SET_WORKFORCE);
     expect(activityTicks(founder, "SET_WORKFORCE", tick(TIRED_AFTER_TICKS + 1))).toBe(scaleUp(ACTIVITY_DURATIONS.SET_WORKFORCE, 1_500_000));
   });
@@ -427,7 +428,7 @@ describe("the founder as driver (decisions 2a, 5)", () => {
     const delivery = sim.state.deliveries.at(-1)!;
     expect(delivery).toMatchObject({ fromFacilityId: DISTILLERY_MAIN, driver: { kind: "FOUNDER" } });
     expect(truck(sim.state)).toMatchObject({ parkedAt: HOLLOW_CREEK, trip: { departedAt: t + load, arrivesAt: t + load + d } });
-    expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: { activity: "LOAD_TRUCK", until: t + load } });
+    expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: { activity: "LOAD_TRUCK", until: t + load }, call: null });
 
     sim.advance(t + load - 1 - sim.state.tick);
     expect(truck(sim.state).parkedAt).toBe(HOLLOW_CREEK);
@@ -443,7 +444,7 @@ describe("the founder as driver (decisions 2a, 5)", () => {
       atStop: { locationId: CROSSROADS, tick: t + load + d },
     });
     sim.advance(d);
-    expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null });
+    expect(sim.state.founder.whereabouts).toEqual({ kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null, call: null });
     expect(truck(sim.state)).toMatchObject({ parkedAt: HOLLOW_CREEK, trip: null });
     expect(sim.takeEvents().find((e) => e.type === "VEHICLE_RETURNED")).toMatchObject({ locationId: HOLLOW_CREEK });
   });

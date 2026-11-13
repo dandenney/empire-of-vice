@@ -285,7 +285,10 @@ function projectPlaces(state: GameState, data: GameData, known: KnownView, gates
   for (const location of [...data.locations].sort(byId)) {
     const occupant = occupantAt(state, data, location.id);
     if (occupant === null) continue;
-    const geography = { id: location.id, name: location.name, position: { ...location.position } };
+    // PH1 (#205) adds the phone, arrangement and rooms fields (ADR 0027 decision 12)
+    // as null; computing them, and listing places with no occupant as EmptyPlace,
+    // comes with the phone behaviour (C1, #179).
+    const geography = { id: location.id, name: location.name, position: { ...location.position }, phone: null, arrangement: null, rooms: null };
     if (occupant.kind === "FACILITY") {
       const facility = state.facilities.find((f) => f.id === occupant.facilityId)!;
       out.push({ ...geography, kind: "FACILITY", facility: projectFacility(state, data, facility, known, gates) });

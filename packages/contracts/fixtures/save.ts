@@ -82,8 +82,8 @@ export const day0Save: SaveGame = {
       consecutiveFulfilledInstallments: 0,
     },
     facilities: [
-      { id: ids.distillery, equipment: [{ equipmentId: ids.copperStill, bookValue: opening.copperStill }], workerCount: 3 },
-      { id: ids.barn, equipment: [], workerCount: 0 },
+      { id: ids.distillery, equipment: [{ equipmentId: ids.copperStill, bookValue: opening.copperStill }], workerCount: 3, phoneLine: null },
+      { id: ids.barn, equipment: [], workerCount: 0, phoneLine: null },
     ],
     productPools: [],
     materialPools: [{ facilityId: ids.distillery, materialId: ids.corn, quantity: 40, totalCost: cents(10_000) }],
@@ -220,6 +220,8 @@ export const day0Save: SaveGame = {
       activity: [
         { kind: "CATCH_UP", tick: tick(540), locationId: ids.locSupplier, sinceTick: null },
         { kind: "COMMAND", tick: tick(541), command: buyCorn.command, status: "APPLIED", reason: null },
+        // The first sack earns the use of the feed store's phone (ADR 0027 decision 3).
+        { kind: "ARRANGEMENT_GRANTED", tick: tick(541), locationId: ids.locSupplier, privilege: "PHONE_USE" },
       ],
       lastCatchUp: {
         locationId: ids.locSupplier,
@@ -235,12 +237,16 @@ export const day0Save: SaveGame = {
         news: [],
         droppedNews: 0,
       },
+      pendingMessages: [],
     },
     // Up at 06:00, and still at the feed store after buying the corn (ADR 0023).
     founder: {
-      whereabouts: { kind: "PRESENT", locationId: ids.locSupplier, busy: null },
+      whereabouts: { kind: "PRESENT", locationId: ids.locSupplier, busy: null, call: null },
       awakeSince: tick(360),
+      room: null,
     },
+    // One day of dealings at the feed store, counted inside the purchase (ADR 0027 decision 3).
+    arrangements: [{ locationId: ids.locSupplier, dealingDays: 1, lastDealingAt: tick(541) }],
   },
 };
 

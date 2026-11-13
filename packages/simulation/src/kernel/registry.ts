@@ -39,6 +39,9 @@ import type { WorldEventKind, WorldEventOfKind } from "../events/world-events.ts
  *      `resolution` (contract fulfillment, due payments), then
  *      `founder` (ADR 0023 decision 2a: busy ends, travel legs, delivery stops,
  *      waking; after this tick's arrivals and closures), then
+ *      `phones` (ADR 0024 decision 8, ADR 0027 decision 13: message delivery
+ *      where the founder is, then calls in on a window tick; after this tick's
+ *      arrivals, wakings and call endings), then
  *      `deadlines` (missed-installment penalties). Splitting step 4 this way is
  *      what makes everything due on a tick resolve before that tick's penalties,
  *      so an exact-deadline delivery counts as on time.
@@ -46,9 +49,11 @@ import type { WorldEventKind, WorldEventOfKind } from "../events/world-events.ts
  *   6. emit (the kernel: journal trim and takeEvents)
  *
  * The `founder` phase's hooks are registered only with `founderRules: true`;
- * with the flag off it does nothing (ADR 0023 decision 9).
+ * with the flag off it does nothing (ADR 0023 decision 9). The `phones` phase has
+ * no hooks yet (PH1); C1 (#179) registers them, and with the flag off it stays
+ * idle (ADR 0024 decision 12).
  */
-export const PHASES = ["production", "vehicles", "resolution", "founder", "deadlines", "midnight"] as const;
+export const PHASES = ["production", "vehicles", "resolution", "founder", "phones", "deadlines", "midnight"] as const;
 export type Phase = (typeof PHASES)[number];
 
 /** What a hook knows about the tick being processed. `state.tick` is still the previous tick. */

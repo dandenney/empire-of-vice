@@ -160,6 +160,7 @@ const barn: FacilitySnapshot = {
   recipes: [],
   products: [],
   materials: [],
+  phoneLine: null,
 };
 
 const victoryTargets = { netWorth: cents(500_000), reputation: 30, contracts: 1 };
@@ -242,6 +243,7 @@ export const startOfGameSnapshot: GameSnapshot = {
       recipes: recipes(0),
       products: [],
       materials: [],
+      phoneLine: null,
     },
     barn,
   ],

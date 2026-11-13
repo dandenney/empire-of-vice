@@ -92,7 +92,16 @@ export type TransactionKind =
    * has entries and isn't a money line: the finance ledger skips these rows, and the
    * player-facing category comes from the event, not this kind (#99 point 4).
    */
-  | "PROGRESSION";
+  | "PROGRESSION"
+  /**
+   * Telephones (ADR 0024 decisions 2, 3 and 5): installing a line (Dr EQUIPMENT /
+   * Cr CASH, filed under EQUIPMENT by its account), a connected call out (Dr
+   * OVERHEAD_EXPENSE / Cr CASH, at the public fee or CALL_COST), and the
+   * entry-less records of calls in. Its cash-flow kind default is OVERHEAD.
+   */
+  | "TELEPHONE"
+  /** A room rented for a stay (ADR 0027 decision 4): Dr OVERHEAD_EXPENSE / Cr CASH. Its cash-flow kind default is OVERHEAD. */
+  | "LODGING";
 
 /**
  * One committed coordinator transaction (ADR 0010). The ledger log doubles as the
