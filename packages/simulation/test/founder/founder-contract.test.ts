@@ -1,6 +1,6 @@
 // P1 (#193, ADR 0023 decision 11): the founder state at game creation, the
 // founder phase slot, and TRAVEL / REST / WAKE as flag-off no-ops (decision 9).
-// Flag-on behaviour is SK1a's.
+// Flag-on behaviour (SK1a) is in presence.test.ts and no-trap.locked.test.ts.
 
 import { tick, type GameCommand, type GameState } from "@eov/contracts";
 import { FIRST_SHIPMENT_SCENARIO, GAME_DATA, HOLLOW_CREEK, LAKEVIEW, MODEL_TT_TRUCK, START_WAKE_TICK, type ScenarioDefinition } from "@eov/game-data";
@@ -55,7 +55,7 @@ describe("the founder phase (decision 2a)", () => {
     expect(PHASES).toEqual(["production", "vehicles", "resolution", "founder", "deadlines", "midnight"]);
   });
 
-  it("has no hooks yet (SK1a adds them)", () => {
+  it("has no hooks with founder rules off (presence.test.ts covers them on)", () => {
     expect(createGameRegistry(GAME_DATA).hooks("founder")).toEqual([]);
   });
 });

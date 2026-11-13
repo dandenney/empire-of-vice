@@ -40,8 +40,8 @@ import type { WorldEventKind, WorldEventOfKind } from "../events/world-events.ts
  *   5. midnight (only on ticks where isMidnight(tick))
  *   6. emit (the kernel: journal trim and takeEvents)
  *
- * The `founder` phase has no hooks until SK1a, and with `founderRules: false`
- * it does nothing (ADR 0023 decision 9).
+ * The `founder` phase's hooks are registered only with `founderRules: true`;
+ * with the flag off it does nothing (ADR 0023 decision 9).
  */
 export const PHASES = ["production", "vehicles", "resolution", "founder", "deadlines", "midnight"] as const;
 export type Phase = (typeof PHASES)[number];
@@ -81,6 +81,22 @@ export interface CommandHandler<T extends GameCommandType = GameCommandType> {
   readonly apply: (state: GameState, command: CommandOfType<T>, ctx: CommandContext) => CommandOutcome;
 }
 
+/**
+ * A check every command passes before its handler, and a step after it applies
+ * (ADR 0023 decision 4: the busy gate and the time a command takes). Gates run in
+ * registration order, for queued and eager commands alike.
+ */
+export interface CommandGate {
+  /**
+   * A reason rejects the command, unless its own handler rejects it at gate 1
+   * (shape and identity: INVALID_QUANTITY, SCHEDULED_IN_PAST, UNKNOWN_ENTITY),
+   * which comes first (ADR 0022 decision 1).
+   */
+  readonly check: (state: GameState, envelope: CommandEnvelope, ctx: CommandContext) => RejectionReason | null;
+  /** After the handler applied: `before` is the state it was judged against, `after` its result. */
+  readonly after: (before: GameState, after: GameState, envelope: CommandEnvelope, ctx: CommandContext) => GameState;
+}
+
 export type WorldEventHandler<K extends WorldEventKind = WorldEventKind> = (
   state: GameState,
   event: WorldEventOfKind<K>,
@@ -107,6 +123,7 @@ export class SystemRegistry {
   readonly #hooks = new Map<Phase, NamedHook[]>(PHASES.map((phase) => [phase, []]));
   readonly #hookNames = new Set<string>();
   readonly #commands = new Map<GameCommandType, CommandHandler>();
+  readonly #gates: { readonly name: string; readonly gate: CommandGate }[] = [];
   readonly #worldEvents = new Map<WorldEventKind, WorldEventHandler>();
   #projection: Projection | null = null;
   #sealed = false;
@@ -135,6 +152,19 @@ export class SystemRegistry {
     if (this.#commands.has(type)) throw new RegistryError(`A handler for ${type} is already registered`);
     this.#commands.set(type, handler as unknown as CommandHandler);
     return this;
+  }
+
+  /** Adds a command gate. `name` identifies it in errors and must be unique among hooks and gates. */
+  onCommandGate(name: string, gate: CommandGate): this {
+    this.#assertOpen();
+    if (this.#hookNames.has(name)) throw new RegistryError(`A hook named ${name} is already registered`);
+    this.#hookNames.add(name);
+    this.#gates.push({ name, gate });
+    return this;
+  }
+
+  commandGates(): readonly { readonly name: string; readonly gate: CommandGate }[] {
+    return this.#gates;
   }
 
   onWorldEvent<K extends WorldEventKind>(kind: K, handler: WorldEventHandler<K>): this {
