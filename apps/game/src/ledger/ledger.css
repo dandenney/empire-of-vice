@@ -1,0 +1,87 @@
+/*
+ * The founder's ledger (SK2b, #234). PLACEHOLDER layout: an account book's
+ * dated entries, typewriter figures, ages always visible. Tokens only.
+ */
+
+.kledger {
+  padding: 0 var(--space-6) var(--space-8);
+}
+
+.kledger-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+}
+
+.kledger-intro {
+  margin: 0 0 var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.kledger-entries {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kledger-entry {
+  padding: var(--space-3) 0 var(--space-4);
+  border-bottom: 1px solid var(--color-rule);
+}
+
+.kledger-entry-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-5);
+}
+
+.kledger-entry-title {
+  font-weight: var(--weight-bold);
+  color: var(--color-text);
+}
+
+.kledger-entry-when {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  text-align: right;
+}
+
+.kledger-entry-age {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-accent);
+  text-align: right;
+}
+
+.kledger-lines {
+  margin: 0;
+}
+
+.kledger-line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-1) 0 var(--space-1) var(--space-5);
+}
+
+.kledger-line dt {
+  color: var(--color-text-muted);
+}
+
+.kledger-line dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.kledger-line-note dd {
+  text-align: left;
+  font-family: var(--font-ui);
+  color: var(--color-text-muted);
+  font-style: italic;
+}

@@ -1,0 +1,90 @@
+/*
+ * The founder's HUD (SK2b, #234), at the top of the dock. PLACEHOLDER layout.
+ * Tokens only.
+ */
+
+.hud {
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--color-rule-strong);
+}
+
+.hud-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-4);
+  font-family: var(--font-display);
+  font-weight: var(--weight-regular);
+  font-size: var(--text-lg);
+  letter-spacing: 0.04em;
+  color: var(--color-accent-strong);
+}
+
+.hud-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-3) var(--space-6);
+  margin: 0;
+}
+
+.hud-fact {
+  display: contents;
+}
+
+.hud-fact dt {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.hud-fact dd {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-day,
+.hud-detail,
+.hud-tired {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.hud-tired {
+  color: var(--color-loss);
+}
+
+.hud-cash {
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  color: var(--color-accent-strong);
+}
+
+.hud-progress {
+  display: block;
+  height: 4px;
+  max-width: 240px;
+  background: var(--color-rule);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.hud-progress-bar {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+}
+
+.hud .button {
+  margin-top: var(--space-4);
+}
+
+.hud-fast-forward {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--color-accent-dim);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-wash);
+  font-size: var(--text-sm);
+}
