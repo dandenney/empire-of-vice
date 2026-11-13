@@ -2,7 +2,7 @@
 
 Status: accepted (decided by the orchestrator for M002 task D5a, issue #172; implemented by the contract task it names, E1 #180 and R1 #176)
 
-Amends: ADR 0017 decisions 1 and 10 (job duration under an employee, who the leaders are), ADR 0021 decisions 4–6 and 9 (a new subject kind, the `REPORT` rows, the dynamic delivery clause), ADR 0022 decisions 5 and 8 (the employee issuer, `OUTSIDE_AUTHORITY`'s payload, production failure draws), ADR 0023 decisions 1, 2a and 4 (two activity kinds, the `employees` phase), ADR 0024 decisions 3, 5, 6, 8, 9 and 10 (an employee answering the family line, employees calling in, report messages, the `employees` phase before `phones`, the attendant hook before E3, the dynamic delivery clause).
+Amends: ADR 0017 decisions 1 and 10 (job duration under an employee, who the leaders are), ADR 0021 decisions 4–6 and 9 (a new subject kind, the `REPORT` rows, the dynamic delivery clause), ADR 0022 decisions 5 and 8 (the employee issuer, carried on the command context rather than an envelope; `OUTSIDE_AUTHORITY`'s payload; production failure draws), ADR 0023 decisions 1, 2a and 4 (two activity kinds, the `employees` phase), ADR 0024 decisions 3, 4, 5, 6, 8, 9 and 10 (an employee answering the family line, a report delivering pending news on a call, employees calling in, report messages, the `employees` phase before `phones`, the attendant hook before E3, the dynamic delivery clause).
 
 ## Context
 
@@ -17,13 +17,14 @@ GDD §21 (PERS-001): hiring removes a responsibility, not clicks. You start as t
 - **ADR 0023** owns the founder's state, `busy`, `ACTIVITY_DURATIONS` and the tick order, and leaves "employees' work" to this record (decision 4).
 - **ADR 0024** owns phones and messages. A call out to a family line is answered by whoever the **call-out attendant hook** returns, and a call in is taken as a message by the **call-in attendant hook**. Both return null until ADR 0026 (D5b) fills them. A call answered by an employee reveals the `PHONE` row for `FACILITY`, empty until this record. "Employees calling in use the same numbers and the same answering order. Their content is `REPORT` (ADR 0025)." Orders to an employee on a call pass the busy gate the same way by-phone deals do, and this record applies that to its commands. Messages' "older values never overwrite newer ones" rule may be reused for reports.
 
-**What the code has today (verified on `main` at 6336a03).**
+**What the code has today (verified on `main` at ec2f276).**
 
 - **People are static game-data.** `CharacterDefinition { id, name, role: "FOUNDER" | "FOREMAN", skill, loyalty, dailyWage }` in `packages/game-data/src/personnel.ts`, with two entries: Thomas Kerrigan (`FOUNDER`, $0.00 a day) and Walt Hagen (`FOREMAN`, skill 55, loyalty 70, $3.00 a day). `WORKFORCE.workerDailyWage` is $2.00. There's no character state in `GameState`. Skill and loyalty have no mechanical effect, and `prod-001-labor.locked.test.ts` pins that.
 - **Leaders are every game-data character.** The world snapshot's `family.leaders` maps `data.characters` (`projection/snapshot.ts`, `projectSnapshot`). `CharacterSnapshot.role` is `"FOUNDER" | "FOREMAN"` (`packages/contracts/src/snapshot.ts`).
 - **Wages.** `dailyWagesDue` in `packages/simulation/src/production/settlement.ts` is Σ `data.characters[].dailyWage` + Σ `facilities[].workerCount × workerDailyWage`, charged at midnight as `DAILY_SETTLEMENT:WAGES:<day>`. `SET_WORKFORCE` (`production/workforce.ts`) is the only thing that changes `workerCount`.
 - **Production.** `START_PRODUCTION` (`production/jobs.ts`) rejects with `PRODUCTION_CAPACITY_EXCEEDED` while any job runs at the facility, so a facility runs one job at a time. Job duration is crew-aware (`capacity.ts`, `jobDuration`). A recipe with `failureChance > 0` draws once from `rng.production` at completion; every shipped recipe has `failureChance: 0`, so nothing is drawn today.
-- **The kernel.** `PHASES` in `kernel/registry.ts` is `production, vehicles, resolution, deadlines, midnight` on `main`. ADR 0023 adds `founder` and ADR 0024 adds `phones`; neither is implemented yet. Counters in `counters.nextId` start at 1 (`game/new-game.ts`). `SAVE_SCHEMA_VERSION` is 2 (K1).
+- **The kernel.** `PHASES` in `kernel/registry.ts` is `production, vehicles, resolution, founder, deadlines, midnight` on `main`: P1 added the `founder` phase (ADR 0023). ADR 0024 adds `phones`, not yet implemented. Counters in `counters.nextId` start at 1 (`game/new-game.ts`). `SAVE_SCHEMA_VERSION` is 3 (P1).
+- **Replay.** `KernelSimulation.replay` (`kernel/simulation.ts`) places each logged envelope by raising `counters.nextId.Command` and `nextCommandSequence` to just past that envelope's, and `replayJournal` (`kernel/replay-journal.ts`) places every envelope due by a tick before advancing to it. So during a replay those two counters can run ahead of where they stood in the original run. Nothing in M001 mints from them during a tick, and decision 6 keeps it that way.
 - **K1's contract** (`packages/contracts/src/knowledge.ts`): `SOURCE_KINDS` already includes `REPORT`; `SUBJECT_KINDS` sets the record order and so the state hash; `TRANSACTION_PRODUCERS` lists M001's producers only; `CASH_POSTING_REVEALS` and `PENDING_BOOKS_CONCERNS` are decision 6's and 7's tables; `ActivityItem` has `COMMAND`, `CATCH_UP` and `CASH_POSTING`. In `packages/game-data/src/knowledge.ts`, `KNOWLEDGE_VISIBILITY.REPORT` is empty for every party and `PHONE.FACILITY` is empty.
 
 Story and visual items (candidate names, where candidates are found, report wording, the hiring and report scenes) are **PLACEHOLDER** here and listed under *Needs design* at the end. This record decides the mechanism they plug into. The Driver and the Office Hand, and the hired-driver deal case from #191, are ADR 0026's (D5b).
@@ -106,10 +107,15 @@ export interface EmployeeState {
 export interface EmployeeWork {
   /** The job this employee started that is still running, or null. */
   readonly currentJobId: ProductionJobId | null;
-  /** Jobs this employee started that have finished (completed or failed). Drives EMPLOYEE_PERFORMANCE. */
+  /**
+   * Jobs this person has started for the family that have finished (completed or failed), over every
+   * stint: a re-hire starts from the count in `GameState.formerEmployees`. Drives EMPLOYEE_PERFORMANCE.
+   */
   readonly batchesRun: number;
   /** The last reason the policy couldn't act, so a hold is reported once, not every tick. */
   readonly lastHold: HoldReason | null;
+  /** The last refusal of a command the policy issued, so a stuck refusal is reported once (decision 6). */
+  readonly lastRefusal: RejectionReason | null;
   /** Spending against the standing order's cap, per SPENDING_PERIOD_TICKS window. */
   readonly spending: { readonly periodIndex: number; readonly spent: Money };
 }
@@ -118,6 +124,11 @@ export interface GameState {
   // existing fields, plus:
   /** Sorted by characterId with compareIds. Empty with founderRules off. */
   readonly employees: readonly EmployeeState[];
+  /**
+   * People who worked for the family and were dismissed, with what they'd done, so a re-hire keeps
+   * their record (decision 8). Sorted by characterId. An entry is removed when the person is re-hired.
+   */
+  readonly formerEmployees: readonly { readonly characterId: CharacterId; readonly batchesRun: number }[];
 }
 ```
 
@@ -268,7 +279,7 @@ export interface HireEmployeeCommand {
 - **Standing order at hire.** The founder is talking to the person, so instructions given at hire reach them (communication gate: in person). It saves a trip to the still just to brief them. GDD §18: the trip is the choice, and the clicks after it should be quick.
 - **Effects,** in one transaction keyed `idempotencyKey("PERSONNEL", "HIRE", commandId)`, kind `PERSONNEL` (new):
   - Dr `WAGES_EXPENSE` / Cr `CASH` at the signing cost. A cost of 0 posts no entries. Cash-flow category `WAGES` (the kind's default).
-  - A new `EmployeeState`: the slate's terms, `hiredAt = t`, `startsAt = t + reportingDelayTicks`, empty `work` and `report`, and a `StandingOrderState` if terms were given (decision 5).
+  - A new `EmployeeState`: the slate's terms, `hiredAt = t`, `startsAt = t + reportingDelayTicks`, an empty `report`, and `work` empty except `batchesRun`, which is taken from the person's `formerEmployees` entry (removing it) if they have one, else 0. A `StandingOrderState` if terms were given (decision 5); that order's `STANDING_ORDER_SET` rides this transaction, with no separate `PERSONNEL:ORDER` one.
   - Emits `EMPLOYEE_HIRED { characterId, role, stationId, dailyWage, signingCost, startsAt, transactionId }`, and `STANDING_ORDER_SET` if terms were given.
 - **Wages** run from the first midnight after hire (decision 9).
 
@@ -284,10 +295,10 @@ export interface DismissEmployeeCommand {
 ```
 
 - **Reach:** in person at the station or on a call that reaches them (decision 5's `Reach`); otherwise `NO_WAY_TO_REACH`. In person it's timed: `BRIEF_EMPLOYEE` (below). On a call, it takes the call's time.
-- **Effects,** in a transaction keyed `idempotencyKey("PERSONNEL", "DISMISS", commandId)` with no entries: their pending report is delivered (decision 7; empty by the invariant there, but delivered for safety), the `EmployeeState` is removed, and `EMPLOYEE_DISMISSED { characterId, transactionId }` is emitted.
+- **Effects,** in a transaction keyed `idempotencyKey("PERSONNEL", "DISMISS", commandId)` with no entries: their `batchesRun` is written to `formerEmployees`, their pending report is delivered (decision 7; empty by the invariant there, but delivered for safety), the `EmployeeState` is removed, and `EMPLOYEE_DISMISSED { characterId, transactionId }` is emitted.
 - A job they started keeps running: the crew finishes it. Its completion just isn't anyone's `BATCH_FINISHED` line.
 - No severance and no notice in M002 (PLACEHOLDER). They're paid nothing that night, because wages count the employees on the books at midnight (decision 9). The signing cost makes hire-and-fire churn cost something.
-- A dismissed person goes back into the pool and can appear on a later slate. Their true competence is the same (decision 3), and the founder's `EMPLOYEE_PERFORMANCE` record of them is kept.
+- A dismissed person goes back into the pool and can appear on a later slate. Their true competence is the same (decision 3). The founder's `EMPLOYEE_PERFORMANCE` record of them is kept, and stays right if they're hired again (decision 8).
 
 ### 5. Standing orders
 
@@ -306,7 +317,13 @@ export interface StandingOrderState {
 /** One variant per role. ADR 0026 adds the Driver's and the Office Hand's. */
 export type StandingOrderTerms = DistillOrderTerms;
 
-/** GDD §21: "produce basic moonshine; keep at least 20 cases on hand; spend no more than $25 a week; report problems by phone." */
+/**
+ * After GDD §21's example ("produce basic moonshine; keep at least 20 cases on hand; spend no more than
+ * $25 a week on supplies; report problems by phone"). The Distiller doesn't buy supplies in M002, so the
+ * cap is on what they do spend: the batch's conversion cost. At basic moonshine's $4.00 a case, a still
+ * running flat out spends about $280 a week, so the GDD's $25 would allow about six cases. The order
+ * form's defaults are DISTILL_ORDER_DEFAULTS (game-data, PLACEHOLDER, R1 tunes).
+ */
 export interface DistillOrderTerms {
   readonly kind: "DISTILL";
   readonly recipeId: RecipeId;
@@ -323,6 +340,8 @@ export interface DistillOrderTerms {
 
 `SPENDING_PERIOD_TICKS` is game-data (PLACEHOLDER 10 080: a week), and periods count from tick 0: `periodIndex = floor(t / SPENDING_PERIOD_TICKS)`.
 
+`DISTILL_ORDER_DEFAULTS` (game-data, PLACEHOLDER) prefills the order form: `{ keepOnHand: 20, batchSize: 10, spendingCap: cents(30_000), callWhen: "PROBLEMS" }`. That's a week of the still's full output at basic moonshine's conversion cost, so the default cap doesn't throttle a Distiller who has corn. It's a UI convenience: the simulation reads only the terms in the command.
+
 **Giving, changing or cancelling one:**
 
 ```ts
@@ -334,7 +353,7 @@ export interface SetStandingOrderCommand {
 }
 ```
 
-A new order always gets a new `StandingOrderId`, from the `StandingOrder` counter, with `givenAt = t`. Report lines name the order they acted under (decision 7). Setting an order clears `work.lastHold`, so a hold that persists under the new order is reported again. `work.spending` carries over: the cap is per employee per period, whatever the order.
+A new order always gets a new `StandingOrderId`, from the `StandingOrder` counter, with `givenAt = t`. The command's transaction is keyed `idempotencyKey("PERSONNEL", "ORDER", commandId)`, has no entries, and emits `STANDING_ORDER_SET`. Report lines name the order they acted under (decision 7). Setting an order clears `work.lastHold` and `work.lastRefusal`, so a hold that persists under the new order is reported again. `work.spending` carries over: the cap is per employee per period, whatever the order.
 
 **The communication gate** (ADR 0022 decision 4, ADR 0024 decision 9's `Reach`). An order for employee E reaches them:
 
@@ -389,9 +408,14 @@ Sizing reads exactly what the gates read, so a command the policy issues passes 
 
 **Through the same gateway.** An employee command goes through the same handler and the same five gates as a founder's (ADR 0022 decision 1), with ADR 0022 decision 5's differences: presence is the station (`NOT_PRESENT { requiredLocationId: station's location, issuerLocationId: null }` before `startsAt`), communication passes (the standing order is already given), authority is checked against the order, and validation uses the `EmployeeView`.
 
-- **Its envelope** gets a `CommandId` and a sequence from the counters, like any command, so its events have a `causedBy`. It's **not** appended to `commandLog` or `queuedCommands`. Replay re-derives it from state, because the policy is a deterministic function of state, so logging it would apply it twice.
+- **No envelope, no command counters.** An employee command isn't a `CommandEnvelope`. It never takes a `CommandId` from `counters.nextId.Command` or a number from `nextCommandSequence`, and it's never in `commandLog` or `queuedCommands`. Replay re-derives it from state, because the policy is a deterministic function of state, so logging it would apply it twice. Minting from the founder's command counters would break exact replay: `KernelSimulation.replay` raises those counters as it places each logged envelope, ahead of the ticks in between. An employee command would then get a different ID in the replay than in the original run, and so would its events' `causedBy` and the state hash.
+  - **Options considered:** a separate counter (`EmployeeAction`) that replay never touches (works, but adds a dynamic ID kind and widens `causedBy` for no reader); an identity derived from `(characterId, tick)` (works, but `causedBy` is typed `CommandId`); **no command identity (chosen)**.
+  - The handler runs through an internal `applyIssued` path whose `CommandContext` carries `issuer: CommandIssuer` and `envelope: null`. That amends ADR 0022 decision 5, which put the `EMPLOYEE` issuer on the envelope. Handlers read the issuer from the context, never from an envelope.
+  - Its transactions and events have `causedBy: null`, like phase-driven ones. For the lab and the debug view, the employee command's identity is its `EMPLOYEE_ACTED` event, `(characterId, standingOrderId, tick)`. That's unique, because an employee issues at most one command per tick.
+  - Every ID it does mint (`ProductionJob`, `Reservation`, `Transaction`, `Event`) comes from counters that only tick processing advances, in the same order in the original run and in a replay.
+  - **E1 acceptance test:** a founder-rules run with a working Distiller is replayed from its start state and `commandLog` through `replayJournal`. The run includes batches started and finished, a hold, and an order changed by the founder. The replay gives the same `stateHash` at the end and at every journaled tick.
 - **No activity item.** `COMMAND` items are the founder's own commands (ADR 0021 decision 8). The founder hears about employee commands only through the report.
-- **A rejection** (which the sizing rule should make impossible): the command changes nothing (architecture rule 6), and the policy then writes an `ORDER_REFUSED` line with the reason, unless the report's last line is the same refusal, so a stuck order isn't repeated every tick. It's never shown at once (ADR 0022 decision 5).
+- **A rejection** (which the sizing rule should make impossible): the command changes nothing (architecture rule 6). The policy then writes an `ORDER_REFUSED` line only if the reason differs from `work.lastRefusal`, and sets `lastRefusal`, exactly as holds use `lastHold`. So a stuck order is reported once, not every tick, even while the founder stands at the still and the report is cleared every tick. An applied command clears `lastRefusal`. A rejection is never shown at once (ADR 0022 decision 5).
 - It emits a world event `EMPLOYEE_ACTED { characterId, standingOrderId, command, status: "APPLIED" | "REJECTED", reason: RejectionReason | null }` for the lab and debug view.
 - **ADR 0022's test applies:** for every employee command applied, the same command validated by a founder present at that place, with gates 1 and 5 only, also applies.
 
@@ -465,7 +489,7 @@ An empty report with no news delivers nothing, writes nothing and emits nothing.
 
 | Channel | When | Values' source | Transaction |
 |---|---|---|---|
-| **In person** | On arrival or waking at the station (founder phase, same step as ADR 0021's catch-up); and at the end of each tick's `employees` phase while the founder is `PRESENT` at the station | The live view already shows the values (`IN_PERSON`); the delivery adds the lines and news | `PERSONNEL:REPORT:<characterId>:<tick>:IN_PERSON`, no entries |
+| **In person** | On arrival or waking at the station (founder phase, same step as ADR 0021's catch-up); on an early `WAKE` at the station, inside the `WAKE` transaction with its catch-up (ADR 0023 decision 7); and at the end of each tick's `employees` phase while the founder is `PRESENT` at the station | The live view already shows the values (`IN_PERSON`); the delivery adds the lines and news | Inside `WAKE` for an early wake; otherwise `PERSONNEL:REPORT:<characterId>:<tick>:IN_PERSON`, no entries |
 | **Calls out** (the founder calls the station) | Inside the `PLACE_CALL` transaction when the call is answered by an employee stationed there; then at the end of each `employees` phase while that call is connected | The call view (`PHONE`, ADR 0024 decision 4) | Inside `PLACE_CALL`; afterwards `PERSONNEL:REPORT:<characterId>:<tick>:CALL_OUT`, no entries |
 | **Calls in** (the employee calls the founder) | In the `phones` phase, as below | `REPORT { characterId }`, `learnedAt = t` | ADR 0024's entry-less `TELEPHONE:IN` |
 | **As a message** | The employee's call in is taken by an attendant (below), and the message is delivered later (ADR 0024 decision 6) | `MESSAGE { takenAtLocationId, takenBy }`, `learnedAt = takenAt`, under ADR 0024's "older never overwrites newer" rule | ADR 0024's |
@@ -485,7 +509,10 @@ The **call-in attendant hook** is unchanged by this record. A Distiller doesn't 
 **Calls in: an employee phones the founder** (fills ADR 0024 decision 5's "employees calling in"):
 
 - **Trigger:** the standing order's `callWhen` is `PROBLEMS`, `report.callPending` is true, and the station has a family line.
-- **Common conditions,** the same as ADR 0024's: the founder isn't `PRESENT` at the station and isn't on a call with it, and the family has a number other than the station.
+- **Common conditions,** ADR 0024's plus one:
+  - the founder isn't `PRESENT` at the station and isn't on a call with it;
+  - the founder isn't `RESTING` at the station's location. They're asleep in the next room, so the Distiller tells them when they wake, rather than phoning a message to the store;
+  - the family has a number other than the station.
 - **When:** on window ticks (`tick % CALL_IN_INTERVAL_TICKS === 0`), in the `phones` phase, after the parties' rules, in `characterId` order.
 - **No draw.** Employees are reliable in M002 (reliability is inert, decision 11): if the trigger holds, they call.
 - **Numbers and answering order** are ADR 0024's: the founder first, if present at a family number; then the other numbers in `compareIds` order, skipping engaged lines; else it rings out.
@@ -501,7 +528,7 @@ The **call-in attendant hook** is unchanged by this record. A Distiller doesn't 
 - `CallInReason` gains `"EMPLOYEE_REPORT"`.
 - `HeldMessage` and `DeliveredMessage` gain `report: ReportContent | null`, non-null exactly when `reason === "EMPLOYEE_REPORT"`.
 - `HeldMessage.values` are the `MESSAGE` row for `FACILITY`, which this record fills with the same facility-party subjects, copied at `takenAt`.
-- **Replacing a message:** when a newer message from the same caller with reason `EMPLOYEE_REPORT` replaces an older one at the same place (ADR 0024's rule), the new message's `report.lines` are the older message's lines followed by the new ones, capped at `REPORT_LINE_LIMIT` with the overflow added to `dropped`. Report lines are a log, so replacing them would lose what the employee said.
+- **Replacing a message:** for reason `EMPLOYEE_REPORT`, "the same caller" in ADR 0024's replacement rule means the same `callerLocationId` **and** the same `report.characterId`, so reports from two employees at one station (ADR 0026) never merge. When a newer report message replaces an older one at the same place, the new message's `report.lines` are the older message's lines followed by the new ones, capped at `REPORT_LINE_LIMIT` with the overflow added to `dropped`. Report lines are a log, so replacing them would lose what the employee said.
 - Messages don't carry the station's pending news. That still waits for a visit, a call answered there, or a report delivered directly.
 
 **In M002, practically:** the founder gets reports by going to the still, and by calling the still from a public phone once the still has a line. A Distiller calling in needs a second family number: another family line, or a public phone that `holdsMessages` (all false in ADR 0024's PLACEHOLDER table). The mechanism is complete, and it comes alive when the human places such a phone (*Needs design*).
@@ -516,7 +543,7 @@ The **call-in attendant hook** is unchanged by this record. A Distiller doesn't 
 
 | { readonly kind: "EMPLOYEE_PERFORMANCE"; readonly characterId: CharacterId;        // KnowledgeValue
     readonly batchesRun: number;
-    /** The true competence, once batchesRun ≥ COMPETENCE_REVEAL_BATCHES (game-data, PLACEHOLDER 1); null before. */
+    /** The true competence, once batchesRun (over every stint) ≥ COMPETENCE_REVEAL_BATCHES (game-data, PLACEHOLDER 1); null before. */
     readonly competence: number | null }
 ```
 
@@ -524,7 +551,7 @@ The **call-in attendant hook** is unchanged by this record. A Distiller doesn't 
 
 - **It belongs to the station** (a facility-party subject, decision 7): it's in the live view at the station (`IN_PERSON.FACILITY` gains it), in a call answered there, and in reports and report messages.
 - **Before the reveal,** the founder still sees the work: `FACILITY_OPERATIONS` shows a running job's `startedAt` and `completesAt`. The reveal turns that into a number the UI can show beside the estimate ("Walt: 55; you guessed 40–70").
-- **A dismissed employee's record is kept,** stale, like any record. If the same person is hired again, the founder already knows them.
+- **A dismissed employee's record is kept,** stale, like any record. **A re-hire keeps what was learned:** `batchesRun` counts every stint, carried through `GameState.formerEmployees` (decisions 1 and 4). So the first visit after a re-hire writes the same or a higher `batchesRun`, with the same non-null `competence`, and the founder never "forgets" a revealed competence.
 - No transaction concerns it, so it needs no `pendingBooks` row.
 
 ### 9. Wages and ADR 0021 rule 1 (the #172 follow-up)
@@ -550,7 +577,11 @@ So `TRANSACTION_PRODUCERS["DAILY_SETTLEMENT:WAGES"]` stays `AGREED_CHARGE`, and 
   2. Deliveries, in `characterId` order: in person, if the founder is `PRESENT` at the station; or on a call, if a call answered by that employee is connected (decision 7).
 
   It runs right after `production`, so a still whose batch finished this tick is restarted on the same tick, with no idle minute.
-- **`founder`:** arrivals and wakings at a station deliver the report in the catch-up step (decision 7). A departure persists the live view, which already includes anything the Distiller did this tick, because they did it while the founder was still there.
+- **`founder`:** arrivals and wakings at a station deliver the report in the catch-up step (decision 7).
+  - A departure in this phase (the truck leaving when loading ends) persists a live view that already includes anything the Distiller did this tick, because they did it while the founder was still there.
+  - A `TRAVEL` or `REST` applied in the command step persists the live view before the `employees` phase, so that tick's lines stay pending until the next channel.
+
+  Nothing leaks either way.
 - **`phones`:** employees' calls in, after the parties' rules (decision 7).
 - **`midnight`:** wages count the employees on the books (decision 9).
 
@@ -609,24 +640,26 @@ K1's registry (`packages/contracts/src/knowledge.ts`) gains:
 ### 13. Flag off (`founderRules: false`)
 
 - **`HIRE_EMPLOYEE`, `SET_STANDING_ORDER` and `DISMISS_EMPLOYEE` apply as no-ops,** as ADR 0023 decision 9 does for `TRAVEL`: accepted, no domain state changed, no transaction. Their envelopes still go into `commandLog`. Lab strategies don't send them.
-- **`employees` stays empty,** the `employees` phase does nothing, and no employee calls in.
+- **`employees` and `formerEmployees` stay empty,** the `employees` phase does nothing, and no employee calls in.
 - **Leaders and wages are `data.characters`** (decisions 1 and 9): Walt is the static foreman, paid $3.00 a day, as in M001.
 - **Production failure draws use `rng.production`** (decision 6).
 - **No keyed draw runs:** the slate is only computed for a player snapshot at a hiring place under founder rules.
 
-So M001 and the lab play exactly as before. The new `employees` field and `StandingOrder` counter move the state hashes, and the contract task regenerates the fixtures and the Sprint Zero reference hash (the unlocked `test/sprint-zero/reference-hash.ts`), as K1 and its successors do.
+So M001 and the lab play exactly as before. The new `employees` and `formerEmployees` fields and the `StandingOrder` counter move the state hashes, and the contract task regenerates the fixtures and the Sprint Zero reference hash (the unlocked `test/sprint-zero/reference-hash.ts`), as K1 and its successors do.
 
 ### 14. Saves (ADR 0009)
 
-The required field `GameState.employees`, the counter `counters.nextId.StandingOrder`, and `HeldMessage.report` bump `SAVE_SCHEMA_VERSION`: the next version after ADR 0024's contract task (v7 if the K1 → P1 → O1a → O1b → ADR 0024 sequence holds). The migration reads only the save's own fields and never game-data:
+The required fields `GameState.employees` and `GameState.formerEmployees`, the counter `counters.nextId.StandingOrder`, and `HeldMessage.report` and `DeliveredMessage.report` bump `SAVE_SCHEMA_VERSION`: the next version after ADR 0024's contract task (v7 if the K1 → P1 → O1a → O1b → ADR 0024 sequence holds). The migration reads only the save's own fields and never game-data:
 
 | New field | Value | Source |
 |---|---|---|
 | `employees` | `[]` | None needed: no earlier save can hold an employee (no command could hire) |
 | `counters.nextId.StandingOrder` | `1` | None needed: no earlier save holds a standing order; counters start at 1 (`new-game.ts`) |
+| `formerEmployees` | `[]` | None needed: no earlier save can have dismissed an employee |
 | `knowledge.pendingMessages[].items[].report` | `null` | The message's own `reason`: no earlier save can hold an `EMPLOYEE_REPORT` message, because the reason didn't exist |
+| `knowledge.activity[i].message.report`, for every item with `kind === "MESSAGE_DELIVERED"` | `null` | The item's own `message.reason`: no earlier save can hold a delivered `EMPLOYEE_REPORT` message. `DeliveredMessage` is saved inside `knowledge.activity` (ADR 0024 decision 15) |
 
-**Fields that don't change:** `knowledge.records` (no earlier save holds an `EMPLOYEE_PERFORMANCE` record, and appending the kind last to `SUBJECT_KINDS` keeps every existing record's sort position); `ProductionJobState` (decision 6 tracks an employee's job on the employee, not the job); `CatchUp`. New union members (commands, events, rejection reasons, `ActivityKind`, `ActivityItem`, `CallInReason`, `TransactionKind`, the `EMPLOYEE` issuer) are additive, so existing saves satisfy them (ADR 0009). `ScenarioDefinition.firstCandidates` is game-data, not saved. The task adds the old-version fixture save and migration test, as K1 and its successors do.
+**Fields that don't change:** `knowledge.records` (no earlier save holds an `EMPLOYEE_PERFORMANCE` record, and appending the kind last to `SUBJECT_KINDS` keeps every existing record's sort position); `ProductionJobState` (decision 6 tracks an employee's job on the employee, not the job); `CatchUp`. `CommandEnvelope.issuer`: only `FOUNDER` is ever stored (decision 6). New union members (commands, events, rejection reasons, `ActivityKind`, `ActivityItem`, `CallInReason`, `TransactionKind`) are additive, so existing saves satisfy them (ADR 0009). `ScenarioDefinition.firstCandidates` is game-data, not saved. The task adds the old-version fixture save and migration test, as K1 and its successors do.
 
 ### 15. Rejection reasons
 
@@ -668,13 +701,13 @@ Every new payload is always-known or in the founder's view: the candidate's ID a
 One contract-change task, filed when this ADR merges, after ADR 0024's in the contract sequence (it shares `state.ts`, `commands.ts`, `events.ts`, `knowledge.ts`, `schemas.ts`, `save.ts` and the hash fixtures):
 
 - `ids.ts`: `"StandingOrder"` in `IdKind` and `DYNAMIC_ID_KINDS`, prefix `"standing"`; `StandingOrderId`.
-- `state.ts`: `EmployeeRole`, `CompetenceEstimate`, `EmployeeState`, `EmployeeWork`, `StandingOrderState`, `StandingOrderTerms`, `DistillOrderTerms`; `GameState.employees`; `ActivityKind` gains `HIRE` and `BRIEF_EMPLOYEE`.
+- `state.ts`: `EmployeeRole`, `CompetenceEstimate`, `EmployeeState`, `EmployeeWork`, `StandingOrderState`, `StandingOrderTerms`, `DistillOrderTerms`; `GameState.employees` and `GameState.formerEmployees`; `ActivityKind` gains `HIRE` and `BRIEF_EMPLOYEE`.
 - `commands.ts`:
   - `HireEmployeeCommand`, `SetStandingOrderCommand`, `DismissEmployeeCommand` (types, `GameCommand`, `GAME_COMMAND_TYPES`);
-  - `CommandEnvelope.issuer` gains `{ kind: "EMPLOYEE"; characterId: CharacterId; standingOrderId: StandingOrderId }` (ADR 0022 decision 5);
+  - `CommandIssuer = { kind: "FOUNDER" } | { kind: "EMPLOYEE"; characterId: CharacterId; standingOrderId: StandingOrderId }`, exported for the simulation's `CommandContext.issuer` and for `EMPLOYEE_ACTED`. `CommandEnvelope.issuer` stays `{ kind: "FOUNDER" }` (O1a's shape), because employee commands have no envelope (decision 6, amending ADR 0022 decision 5). `causedBy` keeps its type `CommandId | null`;
   - the reasons `CANDIDATE_UNAVAILABLE { characterId }`, `CANDIDATE_TERMS_CHANGED { characterId, agreed, current }`, `STATION_UNSUITABLE { facilityId, role }`, `POSITION_FILLED { facilityId, role }`;
   - `OUTSIDE_AUTHORITY`'s payload with `AuthorityLimit` (added here if O1a hasn't, finalised here if it has).
-- `events.ts`: `EMPLOYEE_HIRED { characterId, role, stationId, dailyWage, signingCost, startsAt, transactionId }`, `STANDING_ORDER_SET { characterId, standingOrderId: StandingOrderId | null, terms: StandingOrderTerms | null, transactionId }`, `EMPLOYEE_DISMISSED { characterId, transactionId }`, `EMPLOYEE_ACTED { characterId, standingOrderId, command, status, reason }`, `REPORT_DELIVERED { characterId, via, lineCount, dropped }`. All `null` in `EVENT_CONCERNS_PLACE`: they never become news. The task finalises the payloads, using these fields at least.
+- `events.ts`: `EMPLOYEE_HIRED { characterId, role, stationId, dailyWage, signingCost, startsAt, transactionId }`, `STANDING_ORDER_SET { characterId, standingOrderId: StandingOrderId | null, terms: StandingOrderTerms | null, transactionId }`, `EMPLOYEE_DISMISSED { characterId, transactionId }`, `EMPLOYEE_ACTED { characterId, standingOrderId, command, status, reason }` (with `causedBy: null`; it's the employee command's identity, decision 6), `REPORT_DELIVERED { characterId, via, lineCount, dropped }`. All `null` in `EVENT_CONCERNS_PLACE`: they never become news. The task finalises the payloads, using these fields at least.
 - `ledger.ts`: `TransactionKind` `PERSONNEL`, cash-flow default `WAGES` (`projection/finance.ts`'s `CASH_FLOW_CATEGORY` is E1's).
 - `knowledge.ts`:
   - `SUBJECT_KINDS` appends `EMPLOYEE_PERFORMANCE`; its `KnowledgeSubject` and `KnowledgeValue` members; `knowledgeSubjectKey`;
@@ -686,11 +719,11 @@ One contract-change task, filed when this ADR merges, after ADR 0024's in the co
 - `snapshot.ts` (world): `CharacterSnapshot.role` widens to `"FOUNDER" | "FOREMAN" | EmployeeRole` (an employee leader shows `skill` = true competence); `GameSnapshot.employees: readonly EmployeeSnapshot[]` (`EmployeeState` plus `name`), for the lab and the debug view.
 - `schemas.ts`, `save.ts`: Zod for all of the above; the bump and migration in decision 14, with an old-version fixture.
 - `packages/game-data`:
-  - `personnel.ts`: `CandidateDefinition`, `CANDIDATE_POOL`, `HiringPlaceDefinition`, `HIRING_PLACES`, `RoleTerms`, `ROLE_TERMS`, `CANDIDATE_SLATE_TICKS`, `SPENDING_PERIOD_TICKS`, `COMPETENCE_DURATION_PPM`, `COMPETENCE_REVEAL_BATCHES`, `REPORT_LINE_LIMIT`, with the load validation in decisions 1 and 3; `GameData` gains them;
+  - `personnel.ts`: `CandidateDefinition`, `CANDIDATE_POOL`, `HiringPlaceDefinition`, `HIRING_PLACES`, `RoleTerms`, `ROLE_TERMS`, `CANDIDATE_SLATE_TICKS`, `SPENDING_PERIOD_TICKS`, `DISTILL_ORDER_DEFAULTS`, `COMPETENCE_DURATION_PPM`, `COMPETENCE_REVEAL_BATCHES`, `REPORT_LINE_LIMIT`, with the load validation in decisions 1 and 3; `GameData` gains them;
   - `scenario.ts`: `ScenarioDefinition.firstCandidates` (M001 `[]`; the M002 scenario `["walt-hagen"]`);
   - `knowledge.ts`: `KNOWLEDGE_VISIBILITY` rows `IN_PERSON.FACILITY` + `EMPLOYEE_PERFORMANCE`, and `PHONE.FACILITY`, `MESSAGE.FACILITY` and `REPORT.FACILITY` = `FACILITY_STOCK`, `FACILITY_OPERATIONS`, `EMPLOYEE_PERFORMANCE`;
   - `ACTIVITY_DURATIONS` rows `HIRE` (60) and `BRIEF_EMPLOYEE` (15); `ACTIVITY_IMPORTANCE`: `REPORT` is `notify` (PLACEHOLDER).
-- `packages/simulation/src/kernel/registry.ts` and `simulation.ts`: `employees` in `PHASES` between `production` and `vehicles`. Its hooks are E1's.
+- `packages/simulation/src/kernel/registry.ts` and `simulation.ts`: `employees` in `PHASES` between `production` and `vehicles`; `CommandContext` gains `issuer: CommandIssuer`, and its `envelope` becomes `CommandEnvelope | null` (decision 6). Its hooks and `applyIssued` are E1's.
 - `IssuerView`'s `EmployeeView` (simulation-internal, named here so the review can check it): the station's world subjects, its equipment, crew and storage, the cash balance, and the employee's own `EmployeeState`.
 
 E1 (#180) implements the behaviour: the commands, the slate, the policy and the `employees` phase, competence timing, keyed failure draws under founder rules, report delivery on every channel, the call-out hook's Distiller case, employees' calls in, the wage rule, the projections, and the producer coverage rows. R1 (#176) uses the numbers in decision 17.
@@ -711,6 +744,7 @@ GDD §16 rule 1 and R1 (#176): from the starting position, a founder playing sen
 | Briefing | 15 min in person, or on a call | `ACTIVITY_DURATIONS.BRIEF_EMPLOYEE` |
 | Pace | 1.4× (competence 0) to 0.8× (competence 100) of the founder's batch time | `COMPETENCE_DURATION_PPM` |
 | Spending period | 7 days | `SPENDING_PERIOD_TICKS` |
+| Order form defaults | keep 20 on hand, batches of 10, cap $300 a week, phone about problems | `DISTILL_ORDER_DEFAULTS` |
 
 **What R1 checks against them:**
 
@@ -740,9 +774,9 @@ The inputs to every surface below are always-known state (founder whereabouts in
 | Report message delivered | — | `MESSAGE_DELIVERED` carrying `report` | Unchanged | ADR 0024's message books rule | Records with source `MESSAGE`, under "older never overwrites newer" |
 | Hiring slate | — | — | — | — | `hiring`, only while `PRESENT` at an open hiring place; seed, tick, game-data and agreements only |
 
-**Hidden employee state** (`competence`, `reliability`, `loyalty`, `work`, `report`) never reaches the player snapshot except through `EMPLOYEE_PERFORMANCE` in the live view, a call view, a report or a message, and through cash postings.
+**Hidden employee state** (`competence`, `reliability`, `loyalty`, `work`, `report`, and `formerEmployees`) never reaches the player snapshot except through `EMPLOYEE_PERFORMANCE` in the live view, a call view, a report or a message, and through cash postings.
 
-**Amendment to ADR 0021 decision 9** (with ADR 0024 decision 10's): the dynamic half's delivery clause reads "…until the first tick at which a channel delivers a subject in D_t, news, a held message **or a report** whose content differs between the runs, or a cash posting that differs." An employee's call in is triggered by `callPending`, which is set only by a line in the report the call delivers, so a call that differs between runs delivers a differing report. K2's generators perturb employees' `work`, `report` and `competence`, as they perturb pending news and held messages. The static half needs no change: employee hidden fields aren't in the player view.
+**Amendment to ADR 0021 decision 9** (with ADR 0024 decision 10's): the dynamic half's delivery clause reads "…until the first tick at which a channel delivers a subject in D_t, news, a held message **or a report** whose content differs between the runs, or a cash posting that differs." An employee's call in is triggered by `callPending`, which is set only by a line in the report the call delivers, so a call that differs between runs delivers a differing report. K2's generators perturb employees' `work`, `report` and `competence`, and `formerEmployees`, as they perturb pending news and held messages. The static half needs no change: employee hidden fields aren't in the player view.
 
 ### 2. Coverage tables (ADR 0021 decisions 6 and 7)
 
@@ -750,7 +784,7 @@ Decision 12. One new cash-posting row (`PRODUCTION_START:EMPLOYEE`, revealing no
 
 ### 3. Migration
 
-From save fields only (decision 14): `employees: []`, `counters.nextId.StandingOrder: 1`, and `report: null` on held messages, read from the message's own `reason`. No game-data reads.
+From save fields only (decision 14): `employees: []`, `formerEmployees: []`, `counters.nextId.StandingOrder: 1`, and `report: null` on held messages and on the `DeliveredMessage` of every saved `MESSAGE_DELIVERED` activity item, each read from the message's own `reason`. No game-data reads.
 
 ### 4. Re-locks
 
@@ -759,14 +793,14 @@ From save fields only (decision 14): `employees: []`, `counters.nextId.StandingO
 - **`production/prod-001-labor.locked.test.ts`** pins leaders and wages: `GAME_DATA.characters` roles are exactly `FOREMAN` and `FOUNDER` (line 536); wages are Σ `data.characters[].dailyWage` + workers (lines 251–252, 912, 978–984); `family.leaders` lists every `GAME_DATA.characters` entry (lines 1293–1297); skill and loyalty are inert. All of it builds games from `FIRST_SHIPMENT_SCENARIO` (`scenarioWith`, line 305), which keeps `founderRules: false` (ADR 0023 decision 9). Decisions 1 and 9 change leaders and wages only with founder rules on, `CHARACTERS` is unchanged, and the candidate pool is a separate list. Its `runningJob` helper builds a `ProductionJobState` literal (line 335); this record adds no field to it (decision 6 tracks an employee's job on the employee). **If a later re-lock pass moves this file to a founder-rules scenario, it must re-lock the leader and wage tests for decisions 1 and 9.**
 - **`progression/prog-001-outcome.locked.test.ts`**'s `dailyCost` sums `data.characters` (line 407), on the M001 scenario: unchanged for the same reason.
 - **`economy/fin-001.locked.test.ts`**'s `KIND_DEFAULT` is a `Partial<Record<TransactionKind, …>>`, so `PERSONNEL` doesn't break it. No new ledger account.
-- **No locked file builds a `GameState` from scratch** (they spread `sim.state`), so `employees` doesn't break them. None enumerates `PHASES`, `DYNAMIC_ID_KINDS`, `GameCommandType`, `RejectionCode` or `SUBJECT_KINDS` exhaustively; `fin-001.locked.test.ts` reads only `counters.nextId.Transaction`.
+- **No locked file builds a `GameState` from scratch** (they spread `sim.state`), so `employees` and `formerEmployees` don't break them. None enumerates `PHASES`, `DYNAMIC_ID_KINDS`, `GameCommandType`, `RejectionCode` or `SUBJECT_KINDS` exhaustively; `fin-001.locked.test.ts` reads only `counters.nextId.Transaction`.
 - **No locked test draws from a stream this record touches:** production failure draws change only with founder rules on, and every shipped recipe has `failureChance: 0`.
 
 The Sprint Zero reference hash (`test/sprint-zero/reference-hash.ts`, not locked; `contracts/eco-001-contracts.locked.test.ts` imports it) and the state-hash fixtures move with the new fields. The contract task regenerates them, as its predecessors do.
 
 ### 5. Tick order
 
-`employees` runs between `production` and `vehicles` (decision 10). Employees never read or change founder state, so the tick a founder activity ends has nothing to race: a departure at `u` persists a live view that already includes the Distiller's step at `u`, and an arrival at `u` delivers that step's lines with the catch-up. Orders to an employee in person are `FOUNDER_BUSY` while busy; on a call they use ADR 0024 decision 4's exemption through `busy.until`.
+`employees` runs between `production` and `vehicles` (decision 10). Employees never read or change founder state, so the tick a founder activity ends has nothing to race: a departure in the founder phase at `u` (the truck leaving) persists a live view that already includes the Distiller's step at `u` (a `TRAVEL` or `REST` command persists before it, leaving that step's lines pending), and an arrival at `u` delivers that step's lines with the catch-up. Orders to an employee in person are `FOUNDER_BUSY` while busy; on a call they use ADR 0024 decision 4's exemption through `busy.until`.
 
 ### 6. Flag off
 
@@ -775,6 +809,8 @@ M001 and the lab are unchanged (decision 13): the three commands are no-ops, `em
 ### 7. Randomness
 
 Keyed one-shot draws (ADR 0024 decision 7) for the slate, true competence, the estimate, and, under founder rules, production failure (decisions 3 and 6), never a shared stream. Their keys are static strings and IDs, and their ordinals are the slate index, 0, or a job's `startedAt`, none of which hidden activity can change. The policy and employees' calls in draw nothing. With founder rules off, `rng.production` is drawn exactly as in M001.
+
+**Replay.** Employee commands mint nothing from the command counters that `KernelSimulation.replay` advances at placement (decision 6), and every counter they do use advances only during tick processing. So a replay derives the same employee commands, IDs and hash, and E1's acceptance test checks it.
 
 ### 8. Rejection reasons
 
