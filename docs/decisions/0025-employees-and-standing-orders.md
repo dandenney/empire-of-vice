@@ -4,6 +4,10 @@ Status: accepted (decided by the orchestrator for M002 task D5a, issue #172; imp
 
 Amends: ADR 0017 decisions 1 and 10 (job duration under an employee, who the leaders are), ADR 0021 decisions 4–6 and 9 (a new subject kind, the `REPORT` rows, the dynamic delivery clause), ADR 0022 decisions 5 and 8 (the employee issuer, carried on the command context rather than an envelope; `OUTSIDE_AUTHORITY`'s payload; production failure draws), ADR 0023 decisions 1, 2a and 4 (two activity kinds, the `employees` phase), ADR 0024 decisions 3, 4, 5, 6, 8, 9 and 10 (an employee answering the family line, a report delivering pending news on a call, employees calling in, report messages, the `employees` phase before `phones`, the attendant hook before E3, the dynamic delivery clause).
 
+Amended by ADR 0027 (#213, earned phone access and message-taking): decision 7. "A public phone that `holdsMessages`" becomes a place that takes messages under an arrangement: a Distiller's report call in reaches Miller's as a family number once it takes messages, while its phone is open (ADR 0027 decisions 6 and 9).
+
+Amended by ADR 0028 (#214, the hiring scene, the Distiller's hours and reports): decisions 1, 2, 3, 5, 6, 7, 16 and 17. The candidate names and Miller's are approved (#209). Employees start batches, answer the still's phone and call in only within their role's working hours (`isAvailable`), and the "answers day and night" placeholder is gone. Orders still reach them at any hour. An estimate's width is drawn per meeting and is shown as one of four bands. `BATCH_STARTED` says what limited a short batch, and a report delivered on arrival is marked `atArrival`. ADR 0028 decision 11 restates decision 16 as amended.
+
 ## Context
 
 GDD §21 (PERS-001): hiring removes a responsibility, not clicks. You start as the whole business and hire your way out of being everywhere. The design test for any role is "what can now happen without the founder there?" The **Distiller** (M001's foreman) runs batches at the still while you're away, following a standing order. They report when you visit, or by phone if the still has one, and their output depends on competence. Named employees have competence, reliability and loyalty. M002 uses competence only: candidates show an estimate, and you learn the real value by working with them. Wages, candidate pools and competence ranges are game-data. Where you find candidates is story. GDD §16 rule 1 says the first hire must be reachable, and rule 3 says hiring must add choices, not just remove them.
@@ -832,12 +836,12 @@ Keyed one-shot draws (ADR 0024 decision 7) for the slate, true competence, the e
 
 ## Needs design (placeholders in this record)
 
-These are story and visual direction (factory.md §8). They stay PLACEHOLDER until the human decides, and the orchestrator files or links `needs-design` issues for them (the milestone already lists "candidate names" and "where and how you find people to hire"):
+These are story and visual direction (factory.md §8). The human answered most of them on #209, and ADR 0028 (#214) records the answers. What's settled, and what's still open:
 
-- **Candidate names and who they are.** `CANDIDATE_POOL`'s four new names are stand-ins. Walt Hagen keeps his M001 name and ID.
-- **Where and how candidates are found** (`HIRING_PLACES`): the general store, by word of mouth, during its hours. A buyer's recommendation or the hotel bar are alternatives the mechanism already supports.
-- **The hiring scene and copy:** how a candidate is presented, how the estimate reads ("handy with a still", or a number range), and the briefing form for a standing order.
-- **Report wording:** how report lines read ("Out of corn since Tuesday", "Ran 20 cases, all good"), in person, on the phone and in a message.
-- **Whether the Distiller lives at the still** and answers its phone day and night (decision 7).
-- **Whether any public phone holds messages** (ADR 0024's open item), which decides whether a Distiller can call in during M002.
-- **Tuning (R1, PT2, T-LAB):** every number in decision 17, plus `COMPETENCE_REVEAL_BATCHES` and `REPORT_LINE_LIMIT`.
+- **Candidate names and who they are.** Settled (#209 §2, ADR 0028 decision 4): Walt Hagen, Eddie Novak, Mae Brennan, Gus Lindqvist and Otto Krause are approved, as names only. Walt keeps his M001 name and ID and is on the first slate. Their appearances and voices are open (ADR 0028's *Needs design*).
+- **Where and how candidates are found** (`HIRING_PLACES`). Settled (#209 §1, ADR 0028 decision 4): Miller's Feed & Seed, by word of mouth, during its hours. The slate is the people available to meet there.
+- **The hiring scene and copy.** Settled in part (#209 §3, ADR 0028 decisions 4, 5 and 10): four approved bands, the inspectable range labelled "Estimate", wage terms before hiring, and the first standing order set in the hiring conversation. The rest is open in ADR 0028's *Needs design*.
+- **Report wording.** Settled for six lines (#209 §4, ADR 0028 decisions 8 and 10). The lines without approved wording are open in ADR 0028's *Needs design*.
+- **Whether the Distiller lives at the still and answers day and night** (decision 7). Settled (#209 §5, ADR 0028 decisions 1, 2 and 7): they live on-site, with no commuting, and they don't answer day and night. They work, answer and call in only within the role's working hours.
+- **Whether any public phone holds messages.** Settled by ADR 0027 (#213): Miller's takes messages once its arrangement grants `TAKES_MESSAGES`, so a Distiller can call in during M002 once the still has a line.
+- **Tuning (R1, PT2, T-LAB):** every number in decision 17 as ADR 0028 decision 12 amends it, plus `COMPETENCE_REVEAL_BATCHES`, `REPORT_LINE_LIMIT`, the working hours, the estimate width and the band thresholds.
