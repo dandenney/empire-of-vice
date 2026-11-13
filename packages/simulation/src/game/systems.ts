@@ -10,6 +10,7 @@ import { registerRepeat } from "../commands/repeat.ts";
 import { registerContracts } from "../contracts/index.ts";
 import { registerShakedown } from "../events/shakedown.ts";
 import { createCoordinator } from "../economy/coordinator/coordinator.ts";
+import { registerFounder } from "../founder/founder.ts";
 import { registerMarket } from "../economy/market/market.ts";
 import { registerInventory } from "../inventory/release.ts";
 import { createRegistry, type SystemRegistry } from "../kernel/registry.ts";
@@ -36,6 +37,7 @@ export const SYSTEMS: readonly SystemEntry[] = [
   { name: "repeat orders (T05c)", register: registerRepeat },
   { name: "progression (T05e)", register: registerProgression },
   { name: "shakedown (T07f)", register: registerShakedown },
+  { name: "founder (P1: flag-off no-ops; SK1a)", register: registerFounder },
 ];
 
 /** A registry with every system in SYSTEMS, sharing one coordinator. */

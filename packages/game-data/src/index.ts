@@ -31,6 +31,7 @@ export * from "./map.ts";
 export * from "./markets.ts";
 export * from "./pacing.ts";
 export * from "./personnel.ts";
+export * from "./presence.ts";
 export * from "./products.ts";
 export * from "./progression.ts";
 export * from "./recipes.ts";

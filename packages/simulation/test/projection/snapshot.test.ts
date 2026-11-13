@@ -160,6 +160,7 @@ describe("snapshot projection", () => {
     expect(s.routes.map((r) => [r.id, r.status])).toEqual([
       ["county-road", { open: true }],
       ["crossroads-back-road", { open: true }],
+      ["feed-store-road", { open: true }], // the founder's road to the feed store (ADR 0023 decision 3)
       ["kessler-back-road", { open: true }],
       ["lake-shore-drive", { open: true }],
       ["lakeview-back-road", { open: true }],

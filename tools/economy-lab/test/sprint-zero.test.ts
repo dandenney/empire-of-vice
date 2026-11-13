@@ -58,8 +58,12 @@ describe("sprint-zero runner", () => {
   // roadhouse's daily budget rise. The path itself still costs $11.00 a case);
   // fnv1a64:d3b2228b80705018 (K1, issue #188: state gains `knowledge`, empty in a new game and
   // untouched by any system yet. Hashing the same final state without that field gives
-  // a462fc3c3433c143 again, so nothing else moved).
+  // a462fc3c3433c143 again, so nothing else moved);
+  // fnv1a64:c0347e40711dd8bc (P1, issue #193: state gains `founder`, present at Hollow Creek and
+  // never changing with founder rules off; every vehicle gains `parkedAt`; and the new feed-store
+  // road, which joins two occupied places, gets a RouteState. Hashing the same final state without
+  // those three gives d3b2228b80705018 again, so nothing else moved).
   it("has a pinned replay hash", async () => {
-    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:d3b2228b80705018"`);
+    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:c0347e40711dd8bc"`);
   });
 });

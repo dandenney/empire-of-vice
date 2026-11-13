@@ -7,10 +7,14 @@
 // contracts) come from game-data (`progression.victory`), through `victoryOf`.
 
 import { TICKS_PER_DAY, TICKS_PER_HOUR } from "@eov/contracts";
-import { GAME_DATA, REAL_MS_PER_GAME_HOUR_AT_1X, type GameData } from "@eov/game-data";
+import { FIRST_SHIPMENT_SCENARIO, GAME_DATA, type GameData } from "@eov/game-data";
 
-/** Ticks per real minute at 1× (GDD §5: 720), derived from the pacing data. */
-export const TICKS_PER_REAL_MINUTE = (TICKS_PER_HOUR * 60_000) / REAL_MS_PER_GAME_HOUR_AT_1X;
+/**
+ * Ticks per real minute at 1× (GDD §5: 720), from the M001 scenario's pacing
+ * (ADR 0023 decision 9), so the M001 targets keep their meaning until T-LAB
+ * (#184) adds M002 targets.
+ */
+export const TICKS_PER_REAL_MINUTE = (TICKS_PER_HOUR * 60_000) / FIRST_SHIPMENT_SCENARIO.realMsPerGameHourAt1x;
 
 /** GDD §13 targets. Times are ticks at 1×; rates and gaps are whole percentages. */
 export const TARGETS = {

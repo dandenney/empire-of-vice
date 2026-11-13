@@ -10,7 +10,10 @@
 // → fnv1a64:0f3c258a09c81be8 (T01b, #25: the command log also holds queued commands
 // rejected when their tick arrives, here the buyCorn(500) at tick 3000)
 // → fnv1a64:9735a76874ff3340 (K1, #188: `GameState.knowledge`, which day0Save fills
-// with two records, two activity items and a catch-up; nothing reads it yet).
+// with two records, two activity items and a catch-up; nothing reads it yet)
+// → fnv1a64:50e6c1bee8ce01c8 (P1, #193: `GameState.founder` and
+// `VehicleState.parkedAt`, which day0Save now carries; the fake systems never
+// read or write them).
 
 import { tick } from "@eov/contracts";
 import { ids } from "@eov/contracts/fixtures";
@@ -42,7 +45,7 @@ describe("reference scenario", () => {
   });
 
   it("has a pinned state hash", () => {
-    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:9735a76874ff3340"`);
+    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:50e6c1bee8ce01c8"`);
   });
 
   it("replays from its command log to the same hash", () => {

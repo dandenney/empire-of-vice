@@ -167,7 +167,7 @@ describe("removing", () => {
 });
 
 // An older version's state is hashed raw, before migration (parseSaveFile takes
-// that path for v1 saves since K1 made the schema version 2). The hash is also
+// that path for every save older than SAVE_SCHEMA_VERSION). The hash is also
 // tested directly: parsed JSON that can't be canonicalized is INVALID, not a throw.
 describe("rawStateHash", () => {
   it("guards an old save's integrity before migrating it", () => {

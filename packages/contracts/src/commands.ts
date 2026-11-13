@@ -16,6 +16,7 @@ import type {
   FacilityId,
   Id,
   IdKind,
+  LocationId,
   MaterialId,
   ProductId,
   RecipeId,
@@ -26,6 +27,7 @@ import type {
   VehicleId,
 } from "./ids.ts";
 import type { Money } from "./money.ts";
+import type { RouteLeg, Transport } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 // ---------------------------------------------------------------------------
@@ -137,6 +139,37 @@ export interface RepeatOperationCommand {
   readonly sourceCommandId: CommandId;
 }
 
+/**
+ * The founder sets out for another place (ADR 0023 decision 3), on foot or
+ * driving a truck parked where they are. With `founderRules: false` it's
+ * accepted and changes nothing (decision 9).
+ */
+export interface TravelCommand {
+  readonly type: "TRAVEL";
+  readonly destinationLocationId: LocationId;
+  readonly transport: Transport;
+  /**
+   * A simple path from the founder's place to the destination. null: the
+   * shortest by total duration, avoiding routes known to be closed when driving.
+   */
+  readonly via: readonly RouteLeg[] | null;
+}
+
+/**
+ * The founder rests where they are until `untilTick` (ADR 0023 decision 7),
+ * which must be within [apply tick + MIN_REST_TICKS, apply tick + MAX_REST_TICKS].
+ * With `founderRules: false` it's accepted and changes nothing (decision 9).
+ */
+export interface RestCommand {
+  readonly type: "REST";
+  readonly untilTick: Tick;
+}
+
+/** Ends a rest early (ADR 0023 decision 7). Instant. A no-op with `founderRules: false`. */
+export interface WakeCommand {
+  readonly type: "WAKE";
+}
+
 export type GameCommand =
   | PurchaseMaterialsCommand
   | StartProductionCommand
@@ -146,7 +179,10 @@ export type GameCommand =
   | SetWorkforceCommand
   | ReleaseReservationCommand
   | RepeatOperationCommand
-  | SellEquipmentCommand;
+  | SellEquipmentCommand
+  | TravelCommand
+  | RestCommand
+  | WakeCommand;
 
 export type GameCommandType = GameCommand["type"];
 
@@ -163,6 +199,9 @@ export const GAME_COMMAND_TYPES = [
   "RELEASE_RESERVATION",
   "REPEAT_OPERATION",
   "SELL_EQUIPMENT",
+  "TRAVEL",
+  "REST",
+  "WAKE",
 ] as const satisfies readonly GameCommandType[];
 
 // ---------------------------------------------------------------------------
@@ -265,6 +304,36 @@ export type RejectionReason =
   | { readonly code: "CONTRACT_NOT_ACTIVE"; readonly contractId: ContractId }
   | { readonly code: "CARGO_DOES_NOT_MATCH_CONTRACT"; readonly contractId: ContractId }
   // Repeat orders
-  | { readonly code: "NOT_REPEATABLE"; readonly sourceCommandId: CommandId };
+  | { readonly code: "NOT_REPEATABLE"; readonly sourceCommandId: CommandId }
+  // Presence, shared by ADR 0022 and ADR 0023. Each depends only on always-known
+  // state (the founder's whereabouts, place hours, the founder's own place), so
+  // showing it leaks nothing (ADR 0021 decision 9).
+  /** Not at the place the command needs. Travelling, riding or resting count as not present (ADR 0022 decision 3). */
+  | { readonly code: "NOT_PRESENT"; readonly requiredLocationId: LocationId; readonly issuerLocationId: LocationId | null }
+  /** A timed activity is still running: busy through `until`, inclusive (ADR 0023 decision 2a). */
+  | { readonly code: "FOUNDER_BUSY"; readonly until: Tick }
+  /** An activity with a party must start during their hours. `opensAt`: the next tick the place opens, from known hours. */
+  | { readonly code: "PLACE_CLOSED"; readonly locationId: LocationId; readonly opensAt: Tick }
+  /**
+   * The truck isn't parked at the place the founder acts from. `locationId` is
+   * that place, never the truck's, so the reason reveals no VEHICLE_WHEREABOUTS
+   * (ADR 0022 decision 3). VEHICLE_UNAVAILABLE stays for `founderRules: false`.
+   */
+  | { readonly code: "VEHICLE_NOT_AT"; readonly vehicleId: VehicleId; readonly locationId: LocationId }
+  /** The named driver can't drive, or a new dispatch names none while founder rules are on (ADR 0022 decision 3). */
+  | { readonly code: "NO_DRIVER"; readonly vehicleId: VehicleId }
+  // The founder's own commands: TRAVEL, REST, WAKE (ADR 0023 decision 3a).
+  /** TRAVEL or REST while the founder is travelling, riding a delivery, or resting. */
+  | { readonly code: "FOUNDER_AWAY"; readonly whereabouts: "TRAVELLING" | "ON_DELIVERY" | "RESTING" }
+  /** TRAVEL to the place the founder is already at. */
+  | { readonly code: "ALREADY_THERE" }
+  /** TRAVEL `via` isn't a simple path from the founder's place to the destination. */
+  | { readonly code: "INVALID_PATH" }
+  /** TRAVEL by vehicle: no path avoids the routes the founder knows to be closed. */
+  | { readonly code: "NO_PATH"; readonly destinationLocationId: LocationId }
+  /** REST `untilTick` outside the valid range. `min` and `max` are absolute ticks: the earliest and latest valid `untilTick` for the apply tick. */
+  | { readonly code: "INVALID_REST_LENGTH"; readonly min: Tick; readonly max: Tick }
+  /** WAKE while the founder isn't resting. */
+  | { readonly code: "NOT_RESTING" };
 
 export type RejectionCode = RejectionReason["code"];

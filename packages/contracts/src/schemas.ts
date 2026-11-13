@@ -26,7 +26,7 @@ import {
 } from "./knowledge.ts";
 import { LEDGER_ACCOUNTS, type LedgerAccount, type TransactionKind } from "./ledger.ts";
 import { isMoney, type Money, type Ratio } from "./money.ts";
-import { RNG_STREAMS } from "./state.ts";
+import { ACTIVITY_KINDS, RNG_STREAMS, type DriverRef, type FounderState, type RouteLeg, type Transport } from "./state.ts";
 import { SAVE_FORMAT, SAVE_SCHEMA_VERSION } from "./save.ts";
 import type { CashFlowCategory } from "./snapshot.ts";
 import type { Tick } from "./time.ts";
@@ -74,6 +74,57 @@ const contractTermsShape = {
 const reputationSchema = z.number().int().min(0).max(100);
 
 // ---------------------------------------------------------------------------
+// The founder (ADR 0023 decision 1)
+// ---------------------------------------------------------------------------
+
+export const transportSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("FOOT") }),
+  z.strictObject({ kind: z.literal("VEHICLE"), vehicleId: idSchema("Vehicle") }),
+]) satisfies z.ZodType<Transport>;
+
+export const routeLegSchema = z.strictObject({ routeId: idSchema("Route"), reversed: z.boolean() }) satisfies z.ZodType<RouteLeg>;
+
+export const activityKindSchema = z.enum(ACTIVITY_KINDS);
+
+export const founderStateSchema = z.strictObject({
+  whereabouts: z.discriminatedUnion("kind", [
+    z.strictObject({
+      kind: z.literal("PRESENT"),
+      locationId: idSchema("Location"),
+      busy: z.strictObject({ activity: activityKindSchema, until: tickSchema }).nullable(),
+    }),
+    z.strictObject({
+      kind: z.literal("TRAVELLING"),
+      transport: transportSchema,
+      path: z.array(routeLegSchema).min(1),
+      legIndex: nonNegativeInt,
+      legDepartedAt: tickSchema,
+      legArrivesAt: tickSchema,
+      destinationLocationId: idSchema("Location"),
+    }),
+    z.strictObject({
+      kind: z.literal("ON_DELIVERY"),
+      deliveryId: idSchema("Delivery"),
+      vehicleId: idSchema("Vehicle"),
+      atStop: z.strictObject({ locationId: idSchema("Location"), tick: tickSchema }).nullable(),
+    }),
+    z.strictObject({
+      kind: z.literal("RESTING"),
+      locationId: idSchema("Location"),
+      startedAt: tickSchema,
+      until: tickSchema,
+    }),
+  ]),
+  awakeSince: tickSchema,
+}) satisfies z.ZodType<FounderState>;
+
+/** `DriverRef` (ADR 0023 decision 5). `DISPATCH_DELIVERY.driver` and `DeliveryState.driver` use it from O1a. */
+export const driverRefSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("FOUNDER") }),
+  z.strictObject({ kind: z.literal("EMPLOYEE"), characterId: idSchema("Character") }),
+]) satisfies z.ZodType<DriverRef>;
+
+// ---------------------------------------------------------------------------
 // Commands (ADR 0004)
 // ---------------------------------------------------------------------------
 
@@ -118,6 +169,14 @@ export const gameCommandSchema = z.discriminatedUnion("type", [
     facilityId: idSchema("Facility"),
     equipmentId: idSchema("Equipment"),
   }),
+  z.strictObject({
+    type: z.literal("TRAVEL"),
+    destinationLocationId: idSchema("Location"),
+    transport: transportSchema,
+    via: z.array(routeLegSchema).min(1).nullable(),
+  }),
+  z.strictObject({ type: z.literal("REST"), untilTick: tickSchema }),
+  z.strictObject({ type: z.literal("WAKE") }),
 ]) satisfies z.ZodType<GameCommand>;
 
 /** What the worker gateway validates before calling `Simulation.dispatch`. */
@@ -187,6 +246,21 @@ export const rejectionReasonSchema = z.discriminatedUnion("code", [
   z.strictObject({ code: z.literal("CONTRACT_NOT_ACTIVE"), contractId: idSchema("Contract") }),
   z.strictObject({ code: z.literal("CARGO_DOES_NOT_MATCH_CONTRACT"), contractId: idSchema("Contract") }),
   z.strictObject({ code: z.literal("NOT_REPEATABLE"), sourceCommandId: idSchema("Command") }),
+  z.strictObject({
+    code: z.literal("NOT_PRESENT"),
+    requiredLocationId: idSchema("Location"),
+    issuerLocationId: idSchema("Location").nullable(),
+  }),
+  z.strictObject({ code: z.literal("FOUNDER_BUSY"), until: tickSchema }),
+  z.strictObject({ code: z.literal("PLACE_CLOSED"), locationId: idSchema("Location"), opensAt: tickSchema }),
+  z.strictObject({ code: z.literal("VEHICLE_NOT_AT"), vehicleId: idSchema("Vehicle"), locationId: idSchema("Location") }),
+  z.strictObject({ code: z.literal("NO_DRIVER"), vehicleId: idSchema("Vehicle") }),
+  z.strictObject({ code: z.literal("FOUNDER_AWAY"), whereabouts: z.enum(["TRAVELLING", "ON_DELIVERY", "RESTING"]) }),
+  z.strictObject({ code: z.literal("ALREADY_THERE") }),
+  z.strictObject({ code: z.literal("INVALID_PATH") }),
+  z.strictObject({ code: z.literal("NO_PATH"), destinationLocationId: idSchema("Location") }),
+  z.strictObject({ code: z.literal("INVALID_REST_LENGTH"), min: tickSchema, max: tickSchema }),
+  z.strictObject({ code: z.literal("NOT_RESTING") }),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -688,6 +762,11 @@ export const gameEventSchema = z.discriminatedUnion("type", [
     transactionId: idSchema("Transaction"),
   }),
   ev("KNOWLEDGE_CAUGHT_UP", catchUpShape),
+  ev("FOUNDER_DEPARTED", { from: idSchema("Location"), to: idSchema("Location"), transport: transportSchema }),
+  ev("FOUNDER_ARRIVED", { locationId: idSchema("Location") }),
+  ev("FOUNDER_HALTED", { routeId: idSchema("Route"), locationId: idSchema("Location") }),
+  ev("FOUNDER_RESTED", { locationId: idSchema("Location"), until: tickSchema }),
+  ev("FOUNDER_WOKE", { locationId: idSchema("Location"), early: z.boolean() }),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -813,6 +892,7 @@ export const gameStateSchema = z.strictObject({
   vehicles: z.array(
     z.strictObject({
       id: idSchema("Vehicle"),
+      parkedAt: idSchema("Location").nullable(),
       trip: z
         .strictObject({
           deliveryId: idSchema("Delivery"),
@@ -960,6 +1040,7 @@ export const gameStateSchema = z.strictObject({
   ),
   eventJournal: z.array(gameEventSchema),
   knowledge: knowledgeStateSchema,
+  founder: founderStateSchema,
 });
 
 export const saveGameSchema = z.strictObject({
@@ -1124,6 +1205,17 @@ export const playerSnapshotSchema = z.strictObject({
     }),
   }),
   outcome: outcomeStateSchema,
+  founder: z.strictObject({
+    ...founderStateSchema.shape,
+    tired: z.boolean(),
+    currentLeg: z
+      .strictObject({
+        routeId: idSchema("Route"),
+        waypoints: z.array(worldPointSchema),
+        progressPpm: z.number().int().min(0).max(1_000_000),
+      })
+      .nullable(),
+  }),
   here: idSchema("Location").nullable(),
   places: z.array(playerPlaceSchema),
   routes: z.array(playerRouteSchema),

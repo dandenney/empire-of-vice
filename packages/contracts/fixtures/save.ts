@@ -86,7 +86,7 @@ export const day0Save: SaveGame = {
     materialPools: [{ facilityId: ids.distillery, materialId: ids.corn, quantity: 40, totalCost: cents(10_000) }],
     reservations: [],
     productionJobs: [],
-    vehicles: [{ id: ids.truck, trip: null }],
+    vehicles: [{ id: ids.truck, parkedAt: ids.locDistillery, trip: null }],
     deliveries: [],
     markets: [
       { productId: ids.moonshine, quality: "basic", demand: 30, supply: 30, eventRatio: RATIO_ONE, spotPrice: cents(1_400), previousSpotPrice: null },
@@ -231,6 +231,11 @@ export const day0Save: SaveGame = {
         news: [],
         droppedNews: 0,
       },
+    },
+    // Up at 06:00, and still at the feed store after buying the corn (ADR 0023).
+    founder: {
+      whereabouts: { kind: "PRESENT", locationId: ids.locSupplier, busy: null },
+      awakeSince: tick(360),
     },
   },
 };

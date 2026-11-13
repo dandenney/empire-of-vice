@@ -45,6 +45,64 @@ describe("v1 → v2: empty knowledge (K1, ADR 0021 decision 10)", () => {
   });
 });
 
+describe("v2 → v3: the founder and parked vehicles (P1, ADR 0023 decision 10)", () => {
+  type RawSave = Record<string, unknown> & { state: Record<string, unknown> & { tick: number; vehicles: Record<string, unknown>[] } };
+  const v2 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v2.json", import.meta.url)), "utf8")) as { save: RawSave };
+  const migrate = (save: Readonly<Record<string, unknown>>) => migrateSave(save, 2, SAVE_MIGRATIONS, 3);
+  const withState = (patch: Record<string, unknown>): RawSave => ({ ...v2.save, state: { ...v2.save.state, ...patch } });
+
+  it("puts the founder at Hollow Creek, not busy, awake since the save's tick, and changes nothing else", () => {
+    const result = migrate(v2.save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const { founder, vehicles, ...rest } = result.save["state"] as Record<string, unknown>;
+    expect(founder).toEqual({ whereabouts: { kind: "PRESENT", locationId: "hollow-creek", busy: null }, awakeSince: v2.save.state.tick });
+    const { vehicles: oldVehicles, ...oldRest } = v2.save.state;
+    expect(rest).toEqual(oldRest);
+    expect(result.save["schemaVersion"]).toBe(3);
+    expect(v2.save.state).not.toHaveProperty("founder");
+    // The fixture's truck is out on a delivery: on the road, not parked.
+    expect(oldVehicles.map((v) => v["trip"] === null)).toEqual([false]);
+    expect(vehicles).toEqual(oldVehicles.map((v) => ({ ...v, parkedAt: null })));
+  });
+
+  it("parks an idle truck at Hollow Creek", () => {
+    const idle = withState({ vehicles: v2.save.state.vehicles.map((v) => ({ ...v, trip: null })) });
+    const result = migrate(idle);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect((result.save["state"] as RawSave["state"]).vehicles).toEqual([{ id: "model-tt-truck", parkedAt: "hollow-creek", trip: null }]);
+  });
+
+  it("reads only the save: the placement is a frozen literal and the founder is awake since the save's own tick", () => {
+    const result = migrate(withState({ tick: 9_999 }));
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect((result.save["state"] as Record<string, unknown>)["founder"]).toEqual({
+      whereabouts: { kind: "PRESENT", locationId: "hollow-creek", busy: null },
+      awakeSince: 9_999,
+    });
+  });
+
+  it.each([
+    ["another scenario", withState({ scenarioId: "the-first-hire" }), /only first-shipment saves migrate/],
+    ["a state that already has a founder", withState({ founder: {} }), /already has founder/],
+    ["a vehicle that already has parkedAt", withState({ vehicles: [{ id: "model-tt-truck", parkedAt: null, trip: null }] }), /already has parkedAt/],
+    ["a missing tick", withState({ tick: undefined }), /tick/],
+    ["vehicles that aren't a list", withState({ vehicles: {} }), /vehicles/],
+  ])("fails cleanly on %s", (_label, save, message) => {
+    const result = migrate(save);
+    expect(result).toMatchObject({ ok: false, error: { code: "MIGRATION_FAILED", fromVersion: 2, toVersion: 3 } });
+    if (!result.ok && result.error.code === "MIGRATION_FAILED") expect(result.error.message).toMatch(message);
+  });
+
+  it("chains from v1 through v2", () => {
+    const v1 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v1.json", import.meta.url)), "utf8")) as { save: Record<string, unknown> };
+    const result = migrateSave(v1.save, 1);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.save["schemaVersion"]).toBe(SAVE_SCHEMA_VERSION);
+    expect(result.save["state"]).toHaveProperty("knowledge");
+    expect(result.save["state"]).toHaveProperty("founder");
+  });
+});
+
 describe("migrateSave", () => {
   it("has one n → n + 1 step for every version below the current one", () => {
     expect(SAVE_MIGRATIONS.map((m) => [m.fromVersion, m.toVersion])).toEqual(

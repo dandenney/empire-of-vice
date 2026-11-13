@@ -48,6 +48,14 @@ import {
   type NewsItem,
   type PlayerCommandResult,
   type PlayerSnapshot,
+  driverRefSchema,
+  founderStateSchema,
+  routeLegSchema,
+  transportSchema,
+  type DriverRef,
+  type FounderState,
+  type RouteLeg,
+  type Transport,
 } from "../src/index.ts";
 
 /** Strips readonly all the way down, so a schema's (mutable) output can be compared to a readonly contract type. */
@@ -78,6 +86,11 @@ describe("schemas match the contract types exactly", () => {
     expectTypeOf<z.infer<typeof knowledgeStateSchema>>().toEqualTypeOf<DeepMutable<KnowledgeState>>();
     expectTypeOf<z.infer<typeof playerCommandResultSchema>>().toEqualTypeOf<DeepMutable<PlayerCommandResult>>();
     expectTypeOf<z.infer<typeof playerSnapshotSchema>>().toEqualTypeOf<DeepMutable<PlayerSnapshot>>();
+    // The founder (ADR 0023 decision 11).
+    expectTypeOf<z.infer<typeof founderStateSchema>>().toEqualTypeOf<DeepMutable<FounderState>>();
+    expectTypeOf<z.infer<typeof transportSchema>>().toEqualTypeOf<DeepMutable<Transport>>();
+    expectTypeOf<z.infer<typeof routeLegSchema>>().toEqualTypeOf<DeepMutable<RouteLeg>>();
+    expectTypeOf<z.infer<typeof driverRefSchema>>().toEqualTypeOf<DeepMutable<DriverRef>>();
   });
 
   it("and the comparison really detects drift", () => {
@@ -124,6 +137,15 @@ const commands: GameCommand[] = [
   { type: "RELEASE_RESERVATION", reservationId: "res-4" as never },
   { type: "REPEAT_OPERATION", sourceCommandId: "cmd-1" as never },
   { type: "SELL_EQUIPMENT", facilityId: ids.distillery, equipmentId: ids.copperStill },
+  { type: "TRAVEL", destinationLocationId: ids.locSupplier, transport: { kind: "FOOT" }, via: null },
+  {
+    type: "TRAVEL",
+    destinationLocationId: ids.locSpeakeasy,
+    transport: { kind: "VEHICLE", vehicleId: ids.truck },
+    via: [{ routeId: ids.routeSpeakeasyBack, reversed: false }],
+  },
+  { type: "REST", untilTick: tick(1_800) },
+  { type: "WAKE" },
 ];
 
 describe("commands", () => {

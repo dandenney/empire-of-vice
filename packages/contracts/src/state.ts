@@ -15,6 +15,7 @@ import type { GameEvent, InstallmentOutcome } from "./events.ts";
 import type { QualityTier } from "./goods.ts";
 import type {
   BuyerId,
+  CharacterId,
   ContractId,
   ContractOfferId,
   DeliveryId,
@@ -22,6 +23,7 @@ import type {
   EquipmentId,
   FacilityId,
   FamilyId,
+  LocationId,
   MaterialId,
   ProductId,
   ProductionJobId,
@@ -87,6 +89,13 @@ export interface GameState {
    * snapshot builder. Empty in a new game and in a migrated M001 save.
    */
   readonly knowledge: KnowledgeState;
+
+  /**
+   * Where the founder is and what they're doing (ADR 0023 decision 1). Always
+   * known (ADR 0021 decision 3). With `founderRules: false` (the M001 scenario
+   * and the lab) it never changes (ADR 0023 decision 9).
+   */
+  readonly founder: FounderState;
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +205,14 @@ export interface ProductionJobState {
 
 export interface VehicleState {
   readonly id: VehicleId;
+  /**
+   * Where the truck stands (ADR 0023 decision 1): null from its departure until
+   * its return (or, on TRAVEL, from setting out until arrival or a halt),
+   * otherwise the location it's parked at. A truck being loaded already has its
+   * `trip` but is still parked; the founder phase sets this to null when it
+   * departs (ADR 0023 decision 2a).
+   */
+  readonly parkedAt: LocationId | null;
   readonly trip: {
     readonly deliveryId: DeliveryId;
     readonly routeId: RouteId;
@@ -225,6 +242,94 @@ export interface DeliveryState {
   /** For SALE: the latest arrival tick before the deal falls through (rules in T02d/T03). */
   readonly dealDeadline: Tick | null;
 }
+
+// ---------------------------------------------------------------------------
+// The founder (ADR 0023 decisions 1, 3, 4, 5, 7)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GameState.founder`: dynamic state only (ADR 0008). The founder's identity is
+ * the personnel entry with role FOUNDER in game-data, so no character ID here.
+ */
+export interface FounderState {
+  readonly whereabouts: FounderWhereabouts;
+  /**
+   * The effective start of the founder's waking day: the tick a full rest ended,
+   * moved forward by partial rests (ADR 0023 decision 7). Drives tiredness.
+   */
+  readonly awakeSince: Tick;
+}
+
+/**
+ * Where the founder is (ADR 0023 decision 1). The founder is present at L
+ * exactly when this is PRESENT at L, busy or not (decision 2).
+ */
+export type FounderWhereabouts =
+  | {
+      readonly kind: "PRESENT";
+      readonly locationId: LocationId;
+      /** A timed activity (decision 4), busy through `until`, inclusive (decision 2a). */
+      readonly busy: { readonly activity: ActivityKind; readonly until: Tick } | null;
+    }
+  | {
+      readonly kind: "TRAVELLING";
+      readonly transport: Transport;
+      /** A simple path (decision 3): consecutive legs connect and no location repeats. */
+      readonly path: readonly RouteLeg[];
+      /** Index into `path` of the leg under way. */
+      readonly legIndex: number;
+      readonly legDepartedAt: Tick;
+      readonly legArrivesAt: Tick;
+      readonly destinationLocationId: LocationId;
+    }
+  | {
+      readonly kind: "ON_DELIVERY";
+      readonly deliveryId: DeliveryId;
+      readonly vehicleId: VehicleId;
+      /** Set on the tick the outbound leg resolves at its destination (decision 2). */
+      readonly atStop: { readonly locationId: LocationId; readonly tick: Tick } | null;
+    }
+  | {
+      readonly kind: "RESTING";
+      readonly locationId: LocationId;
+      readonly startedAt: Tick;
+      readonly until: Tick;
+    };
+
+export type FounderWhereaboutsKind = FounderWhereabouts["kind"];
+
+/** How the founder travels (ADR 0023 decision 3). VEHICLE: a truck parked at the founder's place. */
+export type Transport = { readonly kind: "FOOT" } | { readonly kind: "VEHICLE"; readonly vehicleId: VehicleId };
+
+/** One leg of a founder's path: a route, driven or walked in either direction (ADR 0023 decision 3). */
+export interface RouteLeg {
+  readonly routeId: RouteId;
+  /** True when the leg runs from the route's `toLocationId` to its `fromLocationId`. */
+  readonly reversed: boolean;
+}
+
+/**
+ * Timed activities (ADR 0023 decision 4). Each has a duration in game-data
+ * (`ACTIVITY_DURATIONS`). Travel, riding a delivery and rest take their own
+ * time and aren't activities.
+ */
+export const ACTIVITY_KINDS = [
+  "BUY_MATERIALS",
+  "START_BATCH",
+  "LOAD_TRUCK",
+  "AGREE_DEAL",
+  "ACCEPT_CONTRACT",
+  "BUY_EQUIPMENT",
+  "SELL_EQUIPMENT",
+  "SET_WORKFORCE",
+] as const;
+export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
+
+/**
+ * Who drives a delivery (ADR 0023 decision 5); the same shape as ADR 0022's
+ * issuer. `DISPATCH_DELIVERY.driver` and `DeliveryState.driver` use it from O1a.
+ */
+export type DriverRef = { readonly kind: "FOUNDER" } | { readonly kind: "EMPLOYEE"; readonly characterId: CharacterId };
 
 // ---------------------------------------------------------------------------
 // Market, suppliers, buyers, routes (ECO-001). Quotes are fixed at midnight.

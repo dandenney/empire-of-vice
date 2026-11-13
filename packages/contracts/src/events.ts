@@ -36,6 +36,7 @@ import type {
   VehicleId,
 } from "./ids.ts";
 import type { Money } from "./money.ts";
+import type { Transport } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 /** Fields every event has. */
@@ -418,6 +419,31 @@ export type LossBookedEvent = GameEventOf<
 export type KnowledgeCaughtUpEvent = GameEventOf<"KNOWLEDGE_CAUGHT_UP", Omit<CatchUp, "tick">>;
 
 // ---------------------------------------------------------------------------
+// The founder (ADR 0023). None fires with `founderRules: false`.
+// ---------------------------------------------------------------------------
+
+/** The founder set out (TRAVEL, ADR 0023 decision 3). */
+export type FounderDepartedEvent = GameEventOf<
+  "FOUNDER_DEPARTED",
+  { readonly from: LocationId; readonly to: LocationId; readonly transport: Transport }
+>;
+
+/** The founder reached the destination of a TRAVEL (ADR 0023 decision 3). */
+export type FounderArrivedEvent = GameEventOf<"FOUNDER_ARRIVED", { readonly locationId: LocationId }>;
+
+/**
+ * A vehicle leg's route was closed when the leg should start, so the trip
+ * stopped at the junction `locationId` (ADR 0023 decision 3).
+ */
+export type FounderHaltedEvent = GameEventOf<"FOUNDER_HALTED", { readonly routeId: RouteId; readonly locationId: LocationId }>;
+
+/** The founder lay down to rest until `until` (REST, ADR 0023 decision 7). */
+export type FounderRestedEvent = GameEventOf<"FOUNDER_RESTED", { readonly locationId: LocationId; readonly until: Tick }>;
+
+/** The founder woke: at the rest's end, or `early` by WAKE (ADR 0023 decision 7). */
+export type FounderWokeEvent = GameEventOf<"FOUNDER_WOKE", { readonly locationId: LocationId; readonly early: boolean }>;
+
+// ---------------------------------------------------------------------------
 // The union
 // ---------------------------------------------------------------------------
 
@@ -455,7 +481,12 @@ export type GameEvent =
   | VictoryAchievedEvent
   | GameLostEvent
   | LossBookedEvent
-  | KnowledgeCaughtUpEvent;
+  | KnowledgeCaughtUpEvent
+  | FounderDepartedEvent
+  | FounderArrivedEvent
+  | FounderHaltedEvent
+  | FounderRestedEvent
+  | FounderWokeEvent;
 
 export type GameEventType = GameEvent["type"];
 
@@ -506,6 +537,13 @@ export const EVENT_IMPORTANCE: Readonly<Record<GameEventType, "notify" | "log">>
   LOSS_BOOKED: "log",
   // The player sees catch-ups through the player snapshot (`catchUp`, `activity`), never as a world-event toast.
   KNOWLEDGE_CAUGHT_UP: "log",
+  // The founder's own comings and goings: the player sees them through the
+  // player snapshot's `founder` section, not as world-event toasts.
+  FOUNDER_DEPARTED: "log",
+  FOUNDER_ARRIVED: "log",
+  FOUNDER_HALTED: "log",
+  FOUNDER_RESTED: "log",
+  FOUNDER_WOKE: "log",
 };
 
 export const GAME_EVENT_TYPES = Object.keys(EVENT_IMPORTANCE) as readonly GameEventType[];
@@ -555,6 +593,11 @@ export const EVENT_CONCERNS_PLACE = {
   GAME_LOST: null,
   LOSS_BOOKED: null,
   KNOWLEDGE_CAUGHT_UP: null,
+  FOUNDER_DEPARTED: null,
+  FOUNDER_ARRIVED: null,
+  FOUNDER_HALTED: null,
+  FOUNDER_RESTED: null,
+  FOUNDER_WOKE: null,
 } as const satisfies Readonly<Record<GameEventType, "FACILITY" | "DELIVERY_ORIGIN" | null>>;
 
 /** Event types that become news at the place they concern. */

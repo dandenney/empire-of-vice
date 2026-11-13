@@ -81,4 +81,8 @@ export const COMMAND_COPY: Readonly<Record<GameCommandType, string>> = {
   RELEASE_RESERVATION: "Release a reservation",
   REPEAT_OPERATION: "Repeat",
   SELL_EQUIPMENT: "Sell equipment",
+  // The founder's commands (ADR 0023, P1 #193). No-ops in M001. PLACEHOLDER copy.
+  TRAVEL: "Travel",
+  REST: "Rest",
+  WAKE: "Wake",
 };
