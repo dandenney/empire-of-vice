@@ -7,6 +7,7 @@
 // number is a PLACEHOLDER until T05g/T07 tune it, unless its file says otherwise.
 
 import firstShipmentJson from "./scenarios/first-shipment.json" with { type: "json" };
+import theFirstHireJson from "./scenarios/the-first-hire.json" with { type: "json" };
 import { BUYERS, type BuyerDefinition } from "./buyers.ts";
 import { CONTRACTS, type ContractsDefinition } from "./contracts.ts";
 import { EQUIPMENT, type EquipmentDefinition } from "./equipment.ts";
@@ -99,3 +100,10 @@ export const GAME_DATA: GameData = {
 
 /** The First Shipment scenario (GDD §4; ADR 0020 decisions 1, 2, 12). */
 export const FIRST_SHIPMENT_SCENARIO: ScenarioDefinition = parseScenario(firstShipmentJson);
+
+/**
+ * The M002 scenario (milestone 002; ADR 0023): founder rules on, the founder
+ * alone at Hollow Creek. Id and name PLACEHOLDER pending #232; every number is
+ * PLACEHOLDER for R1 (#176).
+ */
+export const THE_FIRST_HIRE_SCENARIO: ScenarioDefinition = parseScenario(theFirstHireJson);
