@@ -17,5 +17,8 @@
   "buyerIds": ["crossroads-roadhouse", "kesslers-back-room", "lakeview-hotel"],
   "scheduledEvents": [
     { "kind": "ROUTE_CLOSURE", "tick": 12000, "routeId": "county-road", "reason": "RIVAL", "durationTicks": 1440 }
-  ]
+  ],
+  "realMsPerGameHourAt1x": 5000,
+  "founderRules": false,
+  "founderStartLocationId": "hollow-creek"
 }

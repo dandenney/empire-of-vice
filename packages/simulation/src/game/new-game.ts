@@ -18,6 +18,7 @@ import {
   DYNAMIC_ID_KINDS,
   type DynamicIdKind,
   type FacilityState,
+  type FounderState,
   type GameState,
   type LedgerEntry,
   type Money,
@@ -25,7 +26,7 @@ import {
   type TransactionCoordinator,
   type UnlockId,
 } from "@eov/contracts";
-import { FIRST_SHIPMENT_SCENARIO, GAME_DATA, type GameData, type ScenarioDefinition } from "@eov/game-data";
+import { FIRST_SHIPMENT_SCENARIO, GAME_DATA, START_WAKE_TICK, type GameData, type ScenarioDefinition } from "@eov/game-data";
 import { createCoordinator } from "../economy/coordinator/coordinator.ts";
 import { initialBuyers, initialMarkets, initialSuppliers } from "../economy/market/market.ts";
 import { scheduleWorldEvent } from "../events/world-events.ts";
@@ -74,6 +75,7 @@ function validateScenario(scenario: ScenarioDefinition, data: GameData): readonl
     }
   }
   find(data.families, scenario.family.id, "family");
+  find(data.locations, scenario.founderStartLocationId, "founder start location");
   const tiers = data.progression.tiers;
   const tierIndex = tiers.findIndex((t) => t.id === scenario.family.tierId);
   if (tierIndex < 0) throw new ScenarioSetupError(`Scenario references unknown tier ${scenario.family.tierId}`);
@@ -107,6 +109,23 @@ function occupiedRoutes(scenario: ScenarioDefinition, data: GameData): GameData[
   return routes;
 }
 
+/**
+ * The founder at tick 0 (ADR 0023 decisions 7 and 9), at the scenario's start
+ * location. With founder rules on, a new game starts with the founder resting
+ * from 00:00 until START_WAKE_TICK, so the first morning starts naturally. With
+ * them off (M001), the founder state never changes, so the founder is simply
+ * there, not busy, as a migrated M001 save has it (decision 10).
+ */
+function initialFounder(scenario: ScenarioDefinition): FounderState {
+  const locationId = scenario.founderStartLocationId;
+  return {
+    whereabouts: scenario.founderRules
+      ? { kind: "RESTING", locationId, startedAt: tick(0), until: tick(START_WAKE_TICK) }
+      : { kind: "PRESENT", locationId, busy: null },
+    awakeSince: tick(0),
+  };
+}
+
 /** The scenario's state at tick 0, including the booked opening balance. */
 export function createInitialState(
   scenario: ScenarioDefinition,
@@ -124,7 +143,14 @@ export function createInitialState(
       };
     })
     .sort(byId);
-  const vehicles = scenario.vehicleIds.map((id) => ({ id: find(data.vehicles, id, "vehicle").id, trip: null })).sort(byId);
+  // Every vehicle starts parked at its home facility (ADR 0023 decision 1).
+  const vehicles = scenario.vehicleIds
+    .map((id) => {
+      const vehicle = find(data.vehicles, id, "vehicle");
+      const parkedAt = find(data.facilities, vehicle.homeFacilityId, "facility").locationId;
+      return { id: vehicle.id, parkedAt, trip: null };
+    })
+    .sort(byId);
   const markets = initialMarkets(data);
   const nextId = Object.fromEntries(DYNAMIC_ID_KINDS.map((k) => [k, 1])) as Record<DynamicIdKind, number>;
 
@@ -163,6 +189,7 @@ export function createInitialState(
     eventJournal: [],
     // Nothing is known yet; the live view shows the founder's place at once (ADR 0021 decision 5).
     knowledge: EMPTY_KNOWLEDGE,
+    founder: initialFounder(scenario),
   };
   // The scenario's world events, in file order (ADR 0020 decision 12).
   const blank = scenario.scheduledEvents.reduce<GameState>(

@@ -304,6 +304,25 @@ export type ActivityItem =
       readonly news: readonly NewsItem[];
     };
 
+/**
+ * How much each kind of activity item matters (ADR 0023 decision 9): while the
+ * founder rests, the worker's scheduler fast-forwards, and drops back to the
+ * player's speed as soon as a `notify` item lands in `knowledge.activity`.
+ * Keyed by activity item kind, never by world event (ADR 0021 decision 2), so
+ * the speed change leaks nothing. A `Record`, so a new kind won't compile
+ * without a row. PLACEHOLDER rows for PT1 (#175):
+ * - COMMAND: one of the founder's own orders applied or failed (a queued one
+ *   resolving overnight): their decision's fate is worth waking the screen for;
+ * - CATCH_UP: an arrival summary, which only comes from arriving or waking, and
+ *   waking already ends the fast-forward;
+ * - CASH_POSTING: money moved while the founder was elsewhere.
+ */
+export const ACTIVITY_IMPORTANCE: Readonly<Record<ActivityItem["kind"], "notify" | "log">> = {
+  COMMAND: "notify",
+  CATCH_UP: "log",
+  CASH_POSTING: "notify",
+};
+
 // ---------------------------------------------------------------------------
 // Knowledge state (decision 7)
 // ---------------------------------------------------------------------------

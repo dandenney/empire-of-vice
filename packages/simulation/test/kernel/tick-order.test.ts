@@ -121,6 +121,7 @@ describe("exact deadlines (SIM-001)", () => {
       vehicles: [
         {
           id: ids.truck,
+          parkedAt: null,
           trip: { deliveryId: asId("Delivery", "delivery-1"), routeId: ids.routeHotel, leg: "OUTBOUND", departedAt: tick(600), arrivesAt, delayed: false },
         },
       ],

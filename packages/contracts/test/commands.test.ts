@@ -15,7 +15,7 @@ describe("commands", () => {
 
   it("SELL_EQUIPMENT is a command but not repeatable (ADR 0020 decision 14)", () => {
     expectTypeOf<"SELL_EQUIPMENT">().toExtend<GameCommandType>();
-    expect(GAME_COMMAND_TYPES.at(-1)).toBe("SELL_EQUIPMENT");
+    expect(GAME_COMMAND_TYPES).toContain("SELL_EQUIPMENT");
     expectTypeOf<Extract<RepeatableCommand, { type: "SELL_EQUIPMENT" }>>().toBeNever();
     expectTypeOf<"EQUIPMENT_NOT_OWNED">().toExtend<RejectionReason["code"]>();
   });

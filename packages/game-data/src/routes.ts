@@ -3,7 +3,7 @@
 // are the story decision on #77; the risky routes' waypoints are still PLACEHOLDER.
 
 import { asId, cents, type LocationId, type Money, type RouteId, type WorldPoint } from "@eov/contracts";
-import { CROSSROADS, HOLLOW_CREEK, KESSLER_PHARMACY, LAKEVIEW, RIVERSIDE_DEPOT } from "./map.ts";
+import { CROSSROADS, HOLLOW_CREEK, KESSLER_PHARMACY, LAKEVIEW, LOCATIONS, MILLERS_FEED_LOCATION, RIVERSIDE_DEPOT, type LocationDefinition } from "./map.ts";
 
 export interface RouteDefinition {
   readonly id: RouteId;
@@ -49,13 +49,59 @@ export const LAKEVIEW_BACK_ROAD = asId("Route", "lakeview-back-road");
 /** Distillery to warehouse and back (T03b, #76). PLACEHOLDER. */
 export const DEPOT_ROAD = asId("Route", "depot-road");
 export const DEPOT_ROAD_RETURN = asId("Route", "depot-road-return");
+/**
+ * Hollow Creek to the feed store (ADR 0023 decision 3), so the founder can walk
+ * or drive there. M001 never sends a truck that way: buying needs no trip.
+ * PLACEHOLDER name, waypoints and duration (story, factory.md §8; tuning, PT1).
+ */
+export const FEED_STORE_ROAD = asId("Route", "feed-store-road");
+
+export class RouteDataError extends Error {
+  override readonly name = "RouteDataError";
+}
+
+/**
+ * Checks the route graph (ADR 0023 decision 3): every route joins two known,
+ * different locations, and the routes, taken in either direction, connect every
+ * location. Walkers ignore closures, so from anywhere the founder can always
+ * reach a rest place (the no-trap rule, decision 8). Returns the routes unchanged.
+ */
+export function validateRouteGraph(
+  routes: readonly RouteDefinition[],
+  locations: readonly LocationDefinition[] = LOCATIONS,
+): readonly RouteDefinition[] {
+  const neighbours = new Map<string, string[]>(locations.map((l) => [l.id, []]));
+  for (const r of routes) {
+    const from = neighbours.get(r.fromLocationId);
+    const to = neighbours.get(r.toLocationId);
+    if (!from || !to) throw new RouteDataError(`Route ${r.id} joins an unknown location`);
+    if (r.fromLocationId === r.toLocationId) throw new RouteDataError(`Route ${r.id} starts and ends at ${r.fromLocationId}`);
+    from.push(r.toLocationId);
+    to.push(r.fromLocationId);
+  }
+  const first = locations[0];
+  if (!first) return routes;
+  const reached = new Set<string>([first.id]);
+  const queue: string[] = [first.id];
+  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+    for (const n of neighbours.get(next)!) {
+      if (!reached.has(n)) {
+        reached.add(n);
+        queue.push(n);
+      }
+    }
+  }
+  const cut = locations.filter((l) => !reached.has(l.id)).map((l) => l.id);
+  if (cut.length > 0) throw new RouteDataError(`The route graph doesn't connect ${cut.join(", ")} to ${first.id}`);
+  return routes;
+}
 
 /**
  * The first route listed between two locations is the default (DISPATCH_DELIVERY
  * with routeId null), and every default is safe. Each buyer also has a risky
  * alternative at about ⅔ of the duration and cost, listed after its default.
  */
-export const ROUTES: readonly RouteDefinition[] = [
+export const ROUTES: readonly RouteDefinition[] = validateRouteGraph([
   // Safe defaults.
   {
     id: STATE_HIGHWAY,
@@ -155,4 +201,17 @@ export const ROUTES: readonly RouteDefinition[] = [
     riskPpm: 0,
     ...M001_ROUTE_TUNING,
   },
-];
+  // For the founder (ADR 0023 decision 3). PLACEHOLDER.
+  {
+    id: FEED_STORE_ROAD,
+    name: "Feed Store Lane", // PLACEHOLDER (story)
+    description: null,
+    fromLocationId: HOLLOW_CREEK,
+    toLocationId: MILLERS_FEED_LOCATION,
+    waypoints: [{ x: 10, y: 12 }, { x: 4, y: 6 }], // PLACEHOLDER
+    durationTicks: 60, // PLACEHOLDER
+    transportCost: cents(50), // PLACEHOLDER: no M001 delivery goes this way
+    riskPpm: 0,
+    ...M001_ROUTE_TUNING,
+  },
+]);

@@ -17,6 +17,7 @@ import {
   type EquipmentId,
   type FacilityId,
   type FamilyId,
+  type LocationId,
   type Money,
   type RouteId,
   type ScenarioId,
@@ -102,6 +103,20 @@ export interface ScenarioDefinition {
   readonly buyerIds: readonly BuyerId[];
   /** Scheduled at tick 0, in this order. No `CONTRACT_OFFER`s: the contracts system supplies offers (ADR 0018). */
   readonly scheduledEvents: readonly ScenarioScheduledEvent[];
+  /**
+   * Real milliseconds one game hour takes at 1× (ADR 0023 decision 9). The
+   * worker's scheduler reads it from the loaded scenario. M001: 5 000
+   * (REAL_MS_PER_GAME_HOUR_AT_1X); M002: 20 000.
+   */
+  readonly realMsPerGameHourAt1x: number;
+  /**
+   * Whether the founder's presence, time and rest rules apply (ADR 0023). Off,
+   * the founder state exists but never gates anything and never changes, and
+   * TRAVEL, REST and WAKE are accepted no-ops (decision 9). M001: false.
+   */
+  readonly founderRules: boolean;
+  /** Where the founder starts (ADR 0023 decision 7). Checked against game-data at load. */
+  readonly founderStartLocationId: LocationId;
 }
 
 export class ScenarioError extends TypeError {
@@ -129,6 +144,11 @@ function int(value: unknown, path: string, min: number): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min) {
     throw new ScenarioError(`${path}: expected an integer >= ${min}`);
   }
+  return value;
+}
+
+function bool(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") throw new ScenarioError(`${path}: expected true or false`);
   return value;
 }
 
@@ -200,5 +220,8 @@ export function parseScenario(raw: unknown): ScenarioDefinition {
     supplierIds: ids("Supplier", s["supplierIds"], "supplierIds"),
     buyerIds: ids("Buyer", s["buyerIds"], "buyerIds"),
     scheduledEvents: arr(s["scheduledEvents"], "scheduledEvents").map((e, i) => scheduledEvent(e, `scheduledEvents[${i}]`)),
+    realMsPerGameHourAt1x: int(s["realMsPerGameHourAt1x"], "realMsPerGameHourAt1x", 1),
+    founderRules: bool(s["founderRules"], "founderRules"),
+    founderStartLocationId: asId("Location", str(s["founderStartLocationId"], "founderStartLocationId")),
   };
 }
