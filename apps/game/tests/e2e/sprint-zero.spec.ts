@@ -65,7 +65,7 @@ test("plays the Sprint Zero path through the worker and matches the headless has
   await press(page, "new-game");
   const start = await snapshot(page);
   expect(start.clock.tick).toBe(0);
-  expect(await page.evaluate(() => window.__eov!.scheduler)).toEqual({ speed: 0, autoPaused: false });
+  expect(await page.evaluate(() => window.__eov!.scheduler)).toEqual({ speed: 0, autoPaused: false, fastForward: false });
   await expect(page.getByTestId("dashboard-cash")).toHaveText("$1,000.00");
   const distillery = start.facilities.find((f) => f.kind === "DISTILLERY")!;
   const recipe = distillery.recipes[0]!;

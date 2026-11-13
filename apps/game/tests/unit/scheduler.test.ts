@@ -42,7 +42,7 @@ function setup(): { clock: FakeClock; scheduler: SpeedScheduler } {
 describe("SpeedScheduler", () => {
   it("starts paused and hands out nothing", () => {
     const { clock, scheduler } = setup();
-    expect(scheduler.status).toEqual({ speed: 0, autoPaused: false });
+    expect(scheduler.status).toEqual({ speed: 0, autoPaused: false, fastForward: false });
     expect(run(clock, scheduler, 10_000)).toBe(0);
   });
 
@@ -110,15 +110,15 @@ describe("SpeedScheduler", () => {
     scheduler.setSpeed(4);
     expect(run(clock, scheduler, 1_000)).toBe(48);
     scheduler.setVisible(false);
-    expect(scheduler.status).toEqual({ speed: 0, autoPaused: true });
+    expect(scheduler.status).toEqual({ speed: 0, autoPaused: true, fastForward: false });
     expect(run(clock, scheduler, 600_000)).toBe(0);
     scheduler.setVisible(true);
     // Stays paused when visible again (ADR 0014 decision 4).
-    expect(scheduler.status).toEqual({ speed: 0, autoPaused: true });
+    expect(scheduler.status).toEqual({ speed: 0, autoPaused: true, fastForward: false });
     expect(run(clock, scheduler, 10_000)).toBe(0);
     // The player resumes: only time from now on counts.
     expect(scheduler.setSpeed(1)).toBe(true);
-    expect(scheduler.status).toEqual({ speed: 1, autoPaused: false });
+    expect(scheduler.status).toEqual({ speed: 1, autoPaused: false, fastForward: false });
     expect(run(clock, scheduler, 1_000)).toBe(12);
   });
 
@@ -145,7 +145,7 @@ describe("SpeedScheduler", () => {
   it("doesn't mark a manual pause as auto-paused when the tab hides", () => {
     const { scheduler } = setup();
     scheduler.setVisible(false);
-    expect(scheduler.status).toEqual({ speed: 0, autoPaused: false });
+    expect(scheduler.status).toEqual({ speed: 0, autoPaused: false, fastForward: false });
   });
 
   it("processes a backlog in batches of at most 60 ticks and never drops it", () => {
@@ -177,7 +177,7 @@ describe("SpeedScheduler", () => {
     scheduler.setSpeed(4);
     clock.ms += 5_000;
     scheduler.reset();
-    expect(scheduler.status).toEqual({ speed: 0, autoPaused: false });
+    expect(scheduler.status).toEqual({ speed: 0, autoPaused: false, fastForward: false });
     expect(scheduler.backlog).toBe(0);
     scheduler.setSpeed(1);
     expect(drain(scheduler)).toBe(0);

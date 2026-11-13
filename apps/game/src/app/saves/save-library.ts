@@ -11,12 +11,24 @@
 // Nothing here holds game state; summaries are read from storage each time.
 
 import type { SaveLoadError } from "@eov/contracts";
-import { FIRST_SHIPMENT_SCENARIO, GAME_DATA_VERSION } from "@eov/game-data";
-import { listSaves, nextSlotId, readSave, type LoadOptions, type SaveSummary, type StorageAdapter } from "@eov/persistence";
+import { GAME_DATA_VERSION } from "@eov/game-data";
+import { listSaves, nextSlotId, readSave, type SaveSummary, type StorageAdapter } from "@eov/persistence";
 import type { GatewayClient } from "../../state/gateway-client.ts";
+import { PLAYABLE_SCENARIOS } from "../../workers/scenarios.ts";
 
-/** What this build plays, for the load checks: the worker's new games use the First Shipment scenario. */
-export const CURRENT_BUILD: LoadOptions = { scenarioId: FIRST_SHIPMENT_SCENARIO.id, gameDataVersion: GAME_DATA_VERSION };
+/** What a build plays, for the load checks. */
+export interface BuildOptions {
+  /** The scenarios it plays. A save for any other scenario is INVALID. */
+  readonly scenarioIds: readonly string[];
+  /** Its game-data version, to report a save made with other game-data. */
+  readonly gameDataVersion: string;
+}
+
+/**
+ * What this build plays: the worker's scenarios (the First Shipment and the
+ * First Hire). A save resumes in its own scenario, so either kind loads.
+ */
+export const CURRENT_BUILD: BuildOptions = { scenarioIds: PLAYABLE_SCENARIOS.map((s) => s.id), gameDataVersion: GAME_DATA_VERSION };
 
 /** Why a load failed: persistence refused the save, or the worker couldn't resume it. */
 export type LoadFailure = { readonly kind: "save"; readonly error: SaveLoadError } | { readonly kind: "start"; readonly message: string };
@@ -36,17 +48,24 @@ export interface SavedTo {
 export class SaveLibrary {
   readonly #storage: StorageAdapter;
   readonly #gateway: SaveGateway;
-  readonly #build: LoadOptions;
+  readonly #build: BuildOptions;
 
-  constructor(storage: StorageAdapter, gateway: SaveGateway, build: LoadOptions = CURRENT_BUILD) {
+  constructor(storage: StorageAdapter, gateway: SaveGateway, build: BuildOptions = CURRENT_BUILD) {
     this.#storage = storage;
     this.#gateway = gateway;
     this.#build = build;
   }
 
   /** Every save, newest first, including ones that won't load (with why). */
-  list(): Promise<readonly SaveSummary[]> {
-    return listSaves(this.#storage, this.#build);
+  async list(): Promise<readonly SaveSummary[]> {
+    const summaries = await listSaves(this.#storage, { gameDataVersion: this.#build.gameDataVersion });
+    const checked: SaveSummary[] = [];
+    for (const summary of summaries) {
+      // Persistence checks one scenario; this build plays several, so check those here.
+      const refusal = summary.ok ? this.#refuseScenario(readableScenarioId((await this.#storage.read(summary.slot)) ?? "")) : null;
+      checked.push(refusal === null ? summary : { slot: summary.slot, ok: false, meta: summary.meta, error: refusal });
+    }
+    return checked;
   }
 
   /**
@@ -92,8 +111,10 @@ export class SaveLibrary {
   }
 
   async load(slot: string): Promise<LoadAttempt> {
-    const checked = await readSave(this.#storage, slot, this.#build);
+    const checked = await readSave(this.#storage, slot, { gameDataVersion: this.#build.gameDataVersion });
     if (!checked.ok) return { ok: false, slot, failure: { kind: "save", error: checked.error } };
+    const refusal = this.#refuseScenario(checked.file.save.scenarioId);
+    if (refusal !== null) return { ok: false, slot, failure: { kind: "save", error: refusal } };
     let outcome: Awaited<ReturnType<SaveGateway["load"]>>;
     try {
       outcome = await this.#gateway.load(slot);
@@ -107,6 +128,24 @@ export class SaveLibrary {
 
   remove(slot: string): Promise<void> {
     return this.#storage.remove(slot);
+  }
+
+  /** INVALID for a save of a scenario this build doesn't play, as persistence words it for one scenario; else null. */
+  #refuseScenario(scenarioId: string): SaveLoadError | null {
+    if (this.#build.scenarioIds.includes(scenarioId)) return null;
+    return { code: "INVALID", issues: [`save.scenarioId: this save is for scenario ${scenarioId}, not ${this.#build.scenarioIds.join(" or ")}`] };
+  }
+}
+
+/** A save's `save.scenarioId` if its text has one (else ""). Only called on a save persistence has already checked. */
+function readableScenarioId(text: string): string {
+  try {
+    const raw: unknown = JSON.parse(text);
+    const save = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>)["save"] : undefined;
+    const id = typeof save === "object" && save !== null ? (save as Record<string, unknown>)["scenarioId"] : undefined;
+    return typeof id === "string" ? id : "";
+  } catch {
+    return "";
   }
 }
 
