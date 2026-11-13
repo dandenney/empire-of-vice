@@ -1,7 +1,8 @@
-// The migration runner (ADR 0009), with made-up chains: the real chain is
-// empty until SAVE_SCHEMA_VERSION first goes up.
+// The migration runner (ADR 0009), with made-up chains, and the real steps.
 
-import { SAVE_SCHEMA_VERSION, type SaveMigration } from "@eov/contracts";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { EMPTY_KNOWLEDGE, SAVE_SCHEMA_VERSION, type SaveMigration } from "@eov/contracts";
 import { describe, expect, it } from "vitest";
 import { migrateSave, SAVE_MIGRATIONS } from "../src/index.ts";
 
@@ -15,6 +16,34 @@ const addFlag: SaveMigration = {
   toVersion: 3,
   migrate: (save) => ({ ...save, flag: false }),
 };
+
+describe("v1 → v2: empty knowledge (K1, ADR 0021 decision 10)", () => {
+  const v1 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v1.json", import.meta.url)), "utf8")) as {
+    save: Record<string, unknown> & { state: Record<string, unknown> };
+  };
+
+  it("adds GameState.knowledge with no records, news, books, activity or catch-up, and changes nothing else", () => {
+    const result = migrateSave(v1.save, 1, SAVE_MIGRATIONS, 2);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const { knowledge, ...rest } = result.save["state"] as Record<string, unknown>;
+    expect(knowledge).toEqual({ records: [], pendingNews: [], pendingBooks: [], activity: [], lastCatchUp: null });
+    expect(knowledge).toEqual(EMPTY_KNOWLEDGE);
+    expect(rest).toEqual(v1.save.state);
+    expect(result.save["schemaVersion"]).toBe(2);
+    expect(v1.save.state).not.toHaveProperty("knowledge");
+  });
+
+  it("fails cleanly on a state that isn't an object or already has knowledge", () => {
+    expect(migrateSave({ schemaVersion: 1, state: null }, 1, SAVE_MIGRATIONS, 2)).toMatchObject({
+      ok: false,
+      error: { code: "MIGRATION_FAILED", fromVersion: 1, toVersion: 2 },
+    });
+    expect(migrateSave({ schemaVersion: 1, state: { knowledge: {} } }, 1, SAVE_MIGRATIONS, 2)).toMatchObject({
+      ok: false,
+      error: { code: "MIGRATION_FAILED", message: "save.state already has knowledge" },
+    });
+  });
+});
 
 describe("migrateSave", () => {
   it("has one n → n + 1 step for every version below the current one", () => {

@@ -20,7 +20,7 @@ import type { EovTestHook } from "../../src/app/test-hook.ts";
  * The headless Sprint Zero run's hash once the truck is home. Must equal the
  * hash pinned in tools/economy-lab/test/sprint-zero.test.ts; update both together.
  */
-const HEADLESS_HASH = "fnv1a64:a462fc3c3433c143";
+const HEADLESS_HASH = "fnv1a64:d3b2228b80705018";
 
 type Snapshot = NonNullable<EovTestHook["snapshot"]>;
 

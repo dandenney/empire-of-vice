@@ -2,7 +2,7 @@
 // are batched into advance() calls (1× vs 4× just changes the batching), and
 // save → load → continue matches an uninterrupted run.
 
-import { tick, type GameCommand, type SaveGame } from "@eov/contracts";
+import { SAVE_SCHEMA_VERSION, tick, type GameCommand, type SaveGame } from "@eov/contracts";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { loadSimulation, type KernelSimulation } from "../../src/index.ts";
@@ -177,7 +177,7 @@ describe("save → load → continue (SIM-001, ADR 0008)", () => {
   it("serialize() produces a SaveGame around the authoritative state", () => {
     const sim = fakeSimulation();
     const save: SaveGame = sim.serialize();
-    expect(save).toMatchObject({ format: "empire-of-vice/save", schemaVersion: 1, scenarioId: day0State.scenarioId, gameDataVersion: GAME_DATA_VERSION });
+    expect(save).toMatchObject({ format: "empire-of-vice/save", schemaVersion: SAVE_SCHEMA_VERSION, scenarioId: day0State.scenarioId, gameDataVersion: GAME_DATA_VERSION });
     expect(save.state).toBe(sim.state);
   });
 });

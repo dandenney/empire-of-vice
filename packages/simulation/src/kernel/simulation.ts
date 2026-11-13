@@ -19,6 +19,7 @@ import {
   type GameEvent,
   type GameSnapshot,
   type GameState,
+  type PlayerSnapshot,
   type RejectionReason,
   type SaveGame,
   type Simulation,
@@ -360,6 +361,11 @@ export class KernelSimulation implements Simulation {
   snapshot(): GameSnapshot {
     const projection = this.#registry.projection();
     return projection(this.#state, { clock: clockAt(this.#startDate, this.#state.tick), startDate: this.#startDate });
+  }
+
+  /** The player snapshot builder arrives with SK1b (#199). The worker doesn't call this yet. */
+  playerSnapshot(): PlayerSnapshot {
+    throw new Error("NOT_IMPLEMENTED: playerSnapshot() is built by SK1b (#199)");
   }
 
   serialize(): SaveGame {
