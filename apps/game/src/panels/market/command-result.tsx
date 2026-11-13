@@ -5,7 +5,7 @@ import { COMMON_COPY } from "../../components/copy.ts";
 import type { CommandHandle } from "../../components/use-command.ts";
 import { describeMarketOutcome } from "./market-view.ts";
 
-export function CommandResult({ command, testId }: { readonly command: CommandHandle; readonly testId: string }) {
+export function CommandResult({ command, testId }: { readonly command: Pick<CommandHandle, "pending" | "outcome" | "error">; readonly testId: string }) {
   return (
     <p role="status" className="market-result" data-testid={testId}>
       {command.pending ? COMMON_COPY.pending : command.error ? command.error : command.outcome ? describeMarketOutcome(command.outcome) : ""}

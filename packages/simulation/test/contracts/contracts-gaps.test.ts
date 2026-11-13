@@ -106,6 +106,7 @@ function deliver(contractId: ContractId, quantity: number, routeId: RouteId | nu
     cargo: [{ productId: MOONSHINE, quality: "basic", quantity }],
     purpose: { kind: "CONTRACT_INSTALLMENT", contractId },
     routeId,
+    driver: { kind: "FOUNDER" },
   };
 }
 

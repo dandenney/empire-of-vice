@@ -18,6 +18,7 @@ import type {
   CommandId,
   ContractId,
   ContractOfferId,
+  DealId,
   DeliveryId,
   EquipmentId,
   EventId,
@@ -168,7 +169,7 @@ export type WorkforceChangedEvent = GameEventOf<
 // Deliveries and sales (ADR 0005)
 // ---------------------------------------------------------------------------
 
-/** A truck left. For a SALE, the deal (quantity and agreed price) is now fixed. */
+/** A truck left. A SALE with a deal carries it out; one on spec is settled on arrival (ADR 0022 decision 6). */
 export type DeliveryDispatchedEvent = GameEventOf<
   "DELIVERY_DISPATCHED",
   {
@@ -218,15 +219,65 @@ export type TransferCompletedEvent = GameEventOf<
   }
 >;
 
-/** A sale didn't happen. The buyer's committed demand and budget are released (ADR 0005). */
+/**
+ * A sale didn't happen. A deal's committed demand and budget are released (ADR 0005).
+ * ADR 0022 decision 6's reasons: a deal-backed run arrived late (TOO_LATE), its cargo
+ * was seized (CARGO_LOST), or it was turned back by a closed road (ROUTE_CLOSED); an
+ * on-spec buyer took nothing (NOT_WANTED); an installment reached a closed contract
+ * (CONTRACT_CLOSED).
+ */
 export type DealFellThroughEvent = GameEventOf<
   "DEAL_FELL_THROUGH",
   {
     readonly deliveryId: DeliveryId;
     readonly buyerId: BuyerId;
-    readonly reason: "TOO_LATE" | "CARGO_LOST";
+    readonly reason: DealFellThroughReason;
   }
 >;
+
+export type DealFellThroughReason = "TOO_LATE" | "CARGO_LOST" | "NOT_WANTED" | "CONTRACT_CLOSED" | "ROUTE_CLOSED";
+
+/** AGREE_DEAL applied: the buyer holds demand (and budget, if committed) for this deal (ADR 0022 decision 6). */
+export type DealAgreedEvent = GameEventOf<
+  "DEAL_AGREED",
+  {
+    readonly dealId: DealId;
+    readonly buyerId: BuyerId;
+    readonly productId: ProductId;
+    readonly quality: QualityTier;
+    readonly quantity: number;
+    readonly unitPrice: Money;
+    readonly expiresAt: Tick;
+    readonly budgetCommitted: boolean;
+  }
+>;
+
+/**
+ * A HELD deal reached its `expiresAt` undispatched: its commitment is released
+ * under the daily caps (ADR 0022 decision 6). A dispatched deal never expires.
+ */
+export type DealExpiredEvent = GameEventOf<"DEAL_EXPIRED", { readonly dealId: DealId; readonly buyerId: BuyerId }>;
+
+/**
+ * An on-spec sale (or a by-phone deal's budget-limited settlement) arrived: the
+ * buyer took `accepted` of `offered` cases at `unitPrice` (ADR 0022 decision 6).
+ */
+export type SpecSaleSettledEvent = GameEventOf<
+  "SPEC_SALE_SETTLED",
+  {
+    readonly deliveryId: DeliveryId;
+    readonly buyerId: BuyerId;
+    readonly offered: number;
+    readonly accepted: number;
+    readonly unitPrice: Money;
+  }
+>;
+
+/**
+ * A delivery found its route closed (ADR 0022 decision 6): on the road, or at
+ * departure after loading. The truck turns back, or doesn't leave.
+ */
+export type RouteFoundClosedEvent = GameEventOf<"ROUTE_FOUND_CLOSED", { readonly deliveryId: DeliveryId; readonly routeId: RouteId }>;
 
 /** Cargo seized or destroyed, written off explicitly (FIN-001). */
 export type CargoLostEvent = GameEventOf<
@@ -486,7 +537,11 @@ export type GameEvent =
   | FounderArrivedEvent
   | FounderHaltedEvent
   | FounderRestedEvent
-  | FounderWokeEvent;
+  | FounderWokeEvent
+  | DealAgreedEvent
+  | DealExpiredEvent
+  | SpecSaleSettledEvent
+  | RouteFoundClosedEvent;
 
 export type GameEventType = GameEvent["type"];
 
@@ -544,6 +599,13 @@ export const EVENT_IMPORTANCE: Readonly<Record<GameEventType, "notify" | "log">>
   FOUNDER_HALTED: "log",
   FOUNDER_RESTED: "log",
   FOUNDER_WOKE: "log",
+  // Deals and outcomes (ADR 0022 decisions 6 and 9). The founder learns them
+  // through the player snapshot (activity, news, the deal list), not as
+  // world-event toasts. DEAL_AGREED is the founder's own command.
+  DEAL_AGREED: "log",
+  DEAL_EXPIRED: "log",
+  SPEC_SALE_SETTLED: "log",
+  ROUTE_FOUND_CLOSED: "log",
 };
 
 export const GAME_EVENT_TYPES = Object.keys(EVENT_IMPORTANCE) as readonly GameEventType[];
@@ -598,6 +660,13 @@ export const EVENT_CONCERNS_PLACE = {
   FOUNDER_HALTED: null,
   FOUNDER_RESTED: null,
   FOUNDER_WOKE: null,
+  // An agreement's state: always known (ADR 0022 decision 9).
+  DEAL_AGREED: null,
+  DEAL_EXPIRED: null,
+  // Revealed by the SALE cash posting, or the VEHICLE_RETURN posting for a 0 take (ADR 0022 decision 9).
+  SPEC_SALE_SETTLED: null,
+  // News at the delivery's origin facility; learned directly if aboard (ADR 0022 decision 9).
+  ROUTE_FOUND_CLOSED: "DELIVERY_ORIGIN",
 } as const satisfies Readonly<Record<GameEventType, "FACILITY" | "DELIVERY_ORIGIN" | null>>;
 
 /** Event types that become news at the place they concern. */

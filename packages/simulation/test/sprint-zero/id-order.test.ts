@@ -114,9 +114,10 @@ describe("ID order in state", () => {
       fromFacilityId: DISTILLERY_MAIN,
       routeId: STATE_HIGHWAY,
       cargo: [],
-      purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: roadhouseQuote(base.state) },
+      purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: null },
       status: "DELIVERED",
       dealDeadline: null,
+      driver: null,
     };
     const sim = withHigherIdAhead(base, (s) => ({
       ...s,
@@ -124,7 +125,7 @@ describe("ID order in state", () => {
       counters: { ...s.counters, nextId: { ...s.counters.nextId, Delivery: 9 } },
     }));
 
-    expectApplied(sim.dispatch({ command: sell(1, roadhouseQuote(sim.state)) }));
+    expectApplied(sell(sim, 1, roadhouseQuote(sim.state)));
     expectIdOrder(
       sim.state.deliveries.map((d) => d.id),
       ["delivery-9", "delivery-10"],

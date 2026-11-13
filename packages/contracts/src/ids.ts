@@ -33,7 +33,8 @@ export type IdKind =
   | "Delivery"
   | "ContractOffer"
   | "Contract"
-  | "Reservation";
+  | "Reservation"
+  | "Deal";
 
 /** Kinds whose IDs the simulation assigns from counters in state (ADR 0003). */
 export const DYNAMIC_ID_KINDS = [
@@ -45,6 +46,7 @@ export const DYNAMIC_ID_KINDS = [
   "ContractOffer",
   "Contract",
   "Reservation",
+  "Deal",
 ] as const satisfies readonly IdKind[];
 export type DynamicIdKind = (typeof DYNAMIC_ID_KINDS)[number];
 
@@ -63,6 +65,8 @@ export const DYNAMIC_ID_PREFIXES = {
   ContractOffer: "offer",
   Contract: "contract",
   Reservation: "res",
+  /** A held deal (ADR 0022 decision 6). */
+  Deal: "deal",
 } as const satisfies Readonly<Record<DynamicIdKind, string>>;
 
 export type Id<K extends IdKind> = string & { readonly [idBrand]: K };
@@ -90,6 +94,7 @@ export type DeliveryId = Id<"Delivery">;
 export type ContractOfferId = Id<"ContractOffer">;
 export type ContractId = Id<"Contract">;
 export type ReservationId = Id<"Reservation">;
+export type DealId = Id<"Deal">;
 
 /** Lowercase letters and digits, separated by single hyphens: "distillery-main", "job-17". */
 export const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

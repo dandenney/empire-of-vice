@@ -21,6 +21,7 @@ const buyCorn: CommandEnvelope = {
   id: asId("Command", "cmd-1"),
   scheduledTick: tick(541),
   sequence: 1,
+  issuer: { kind: "FOUNDER" },
   command: {
     type: "PURCHASE_MATERIALS",
     supplierId: ids.supplier,
@@ -34,6 +35,7 @@ const buySugarTomorrow: CommandEnvelope = {
   id: asId("Command", "cmd-2"),
   scheduledTick: tick(1_920),
   sequence: 2,
+  issuer: { kind: "FOUNDER" },
   command: {
     type: "PURCHASE_MATERIALS",
     supplierId: ids.supplier,
@@ -67,6 +69,7 @@ export const day0Save: SaveGame = {
         ContractOffer: 1,
         Contract: 1,
         Reservation: 1,
+        Deal: 1,
       },
     },
     rng: { market: rng(1_001), contracts: rng(2_002), routes: rng(3_003), production: rng(4_004) },
@@ -86,8 +89,9 @@ export const day0Save: SaveGame = {
     materialPools: [{ facilityId: ids.distillery, materialId: ids.corn, quantity: 40, totalCost: cents(10_000) }],
     reservations: [],
     productionJobs: [],
-    vehicles: [{ id: ids.truck, parkedAt: ids.locDistillery, trip: null }],
+    vehicles: [{ id: ids.truck, parkedAt: ids.locDistillery, tripCount: 0, trip: null }],
     deliveries: [],
+    heldDeals: [],
     markets: [
       { productId: ids.moonshine, quality: "basic", demand: 30, supply: 30, eventRatio: RATIO_ONE, spotPrice: cents(1_400), previousSpotPrice: null },
       { productId: ids.moonshine, quality: "standard", demand: 12, supply: 12, eventRatio: RATIO_ONE, spotPrice: cents(2_000), previousSpotPrice: null },

@@ -9,6 +9,11 @@
 // command-log replay, and the Sprint Zero hash. Rules come from ADR 0020
 // decision 11 and ADR 0004.
 //
+// Re-locked for ADR 0022 decision 6 (issue #192): a sale is AGREE_DEAL at the quote,
+// then a DISPATCH_DELIVERY against that deal, and the quote check (QUOTE_CHANGED)
+// runs at AGREE_DEAL. With founder rules off, a repeated SALE re-agrees at the
+// buyer's current quote and dispatches against that new deal (issue #192).
+//
 // Written ahead of the implementation by a separate test-writer agent
 // (factory.md §2, §7.3). Do not edit (CLAUDE.md rule 9).
 //
@@ -49,6 +54,7 @@ import {
   type CommandId,
   type CommandResult,
   type ContractId,
+  type DealId,
   type DispatchDeliveryCommand,
   type GameCommand,
   type GameEvent,
@@ -269,40 +275,78 @@ const firstInput = recipe.inputsPerCase[0]!;
 
 const produce = (quantity: number): GameCommand => ({ type: "START_PRODUCTION", facilityId: DISTILLERY_MAIN, recipeId: BASIC_MOONSHINE_RECIPE, quantity });
 
-/** The buyer's current quote for the cargo line: the price the dispatch's QUOTE_CHANGED check compares against. */
+/** The buyer's current quote for the cargo line: the price AGREE_DEAL's QUOTE_CHANGED check compares against (ADR 0022 decision 6). */
 function quoteOf(state: GameState, buyerId: BuyerId, quality: QualityTier = "basic"): Money {
   const want = state.buyers.find((b) => b.id === buyerId)?.wants.find((w) => w.productId === MOONSHINE && w.minimumQuality === quality);
   if (!want) throw new Error(`${buyerId} has no quote for ${quality} moonshine`);
   return want.unitPrice;
 }
 
-function sale(buyerId: BuyerId, quantity: number, agreedUnitPrice: Money): DispatchDeliveryCommand {
+function agreement(buyerId: BuyerId, quantity: number, agreedUnitPrice: Money, quality: QualityTier = "basic"): GameCommand {
+  return { type: "AGREE_DEAL", buyerId, productId: MOONSHINE, quality, quantity, agreedUnitPrice };
+}
+
+function sale(buyerId: BuyerId, quantity: number, dealId: DealId): DispatchDeliveryCommand {
   return {
     type: "DISPATCH_DELIVERY",
     vehicleId: MODEL_TT_TRUCK,
     cargo: [{ productId: MOONSHINE, quality: "basic", quantity }],
-    purpose: { kind: "SALE", buyerId, agreedUnitPrice },
+    purpose: { kind: "SALE", buyerId, dealId },
     routeId: null,
+    driver: { kind: "FOUNDER" },
   };
 }
 
-function agreedOf(command: DispatchDeliveryCommand): Money {
-  if (command.purpose.kind !== "SALE") throw new Error("Not a sale");
-  return command.purpose.agreedUnitPrice;
+/** The newest held deal (IDs sort with compareIds, so the last one is the latest minted). */
+function lastDealId(state: GameState): DealId {
+  const d = state.heldDeals.at(-1);
+  if (!d) throw new Error("No held deal");
+  return d.id;
 }
 
-const roadhouseSale = (state: GameState, quantity: number) => sale(CROSSROADS_ROADHOUSE, quantity, quoteOf(state, CROSSROADS_ROADHOUSE));
+/** The deal a delivery was dispatched against (still held while the delivery is outbound). */
+function dealOf(state: GameState, deliveryId: string) {
+  const d = state.heldDeals.find((x) => x.deliveryId === deliveryId);
+  if (!d) throw new Error(`No held deal for ${deliveryId}`);
+  return d;
+}
 
-/** The original command with a SALE's agreedUnitPrice replaced by the buyer's current quote (decision 11). */
-function requoted(state: GameState, command: DispatchDeliveryCommand): DispatchDeliveryCommand {
+/** A roadhouse sale as ADR 0022 decision 6 splits it: the AGREE_DEAL (already applied), its price, and the deal dispatch to send. */
+interface Sale {
+  readonly agree: GameCommand;
+  readonly agreed: Money;
+  readonly command: DispatchDeliveryCommand;
+}
+
+function roadhouseSale(g: Game, quantity: number): Sale {
+  const agreed = quoteOf(g.sim.state, CROSSROADS_ROADHOUSE);
+  const agree = agreement(CROSSROADS_ROADHOUSE, quantity, agreed);
+  applied(g, agree);
+  return { agree, agreed, command: sale(CROSSROADS_ROADHOUSE, quantity, lastDealId(g.sim.state)) };
+}
+
+/**
+ * The original sale as it would be sent now (decision 11; with founder rules off a repeated
+ * sale re-agrees at the buyer's current quote): agrees a new deal at the current quote (it
+ * must apply), and returns the original dispatch pointed at that deal.
+ */
+function requoted(g: Game, command: DispatchDeliveryCommand): DispatchDeliveryCommand {
   if (command.purpose.kind !== "SALE") return command;
   const line = command.cargo[0]!;
-  return { ...command, purpose: { ...command.purpose, agreedUnitPrice: quoteOf(state, command.purpose.buyerId, line.quality) } };
+  applied(g, agreement(command.purpose.buyerId, line.quantity, quoteOf(g.sim.state, command.purpose.buyerId, line.quality), line.quality));
+  return { ...command, purpose: { ...command.purpose, dealId: lastDealId(g.sim.state) } };
 }
 
 function deliver(contractId: ContractId, quantity: number): GameCommand {
   const cargo: CargoLine = { productId: MOONSHINE, quality: "basic", quantity };
-  return { type: "DISPATCH_DELIVERY", vehicleId: MODEL_TT_TRUCK, cargo: [cargo], purpose: { kind: "CONTRACT_INSTALLMENT", contractId }, routeId: null };
+  return {
+    type: "DISPATCH_DELIVERY",
+    vehicleId: MODEL_TT_TRUCK,
+    cargo: [cargo],
+    purpose: { kind: "CONTRACT_INSTALLMENT", contractId },
+    routeId: null,
+    driver: { kind: "FOUNDER" },
+  };
 }
 
 /** Advances until the truck is home (no trip). */
@@ -402,19 +446,21 @@ describe("REPEAT_OPERATION: applies a copy through the source command's handler"
   it("a SALE dispatch: a new delivery to the same buyer, its DISPATCH keyed by the delivery and caused by the repeat", () => {
     const g = start();
     edit(g, (s) => withStock(s, "basic", 2));
-    const command = roadhouseSale(g.sim.state, 1);
+    const { command, agreed } = roadhouseSale(g, 1);
     const sourceId = applied(g, command);
     const firstDelivery = g.sim.state.deliveries.at(-1)!;
     truckHome(g);
-    expect(quoteOf(g.sim.state, CROSSROADS_ROADHOUSE)).toBe(agreedOf(command)); // same day: the quote hasn't moved
+    expect(quoteOf(g.sim.state, CROSSROADS_ROADHOUSE)).toBe(agreed); // same day: the quote hasn't moved
 
     const known = deliveryIds(g.sim.state);
     const result = run(g, repeat(sourceId));
     if (result.status !== "applied") throw new Error(`Expected applied, got ${JSON.stringify(result)}`);
     const repeatId = result.commandId;
     const delivery = deliveryAfter(g.sim.state, known);
+    // A deal is single-use, so the repeat dispatches against the deal it re-agreed (issue #192, founder rules off).
+    const purpose = { ...command.purpose, dealId: dealOf(g.sim.state, delivery.id).id };
     expect(delivery.id).not.toBe(firstDelivery.id);
-    expect(delivery).toMatchObject({ vehicleId: MODEL_TT_TRUCK, routeId: firstDelivery.routeId, purpose: command.purpose, status: "OUTBOUND" });
+    expect(delivery).toMatchObject({ vehicleId: MODEL_TT_TRUCK, routeId: firstDelivery.routeId, purpose, status: "OUTBOUND" });
     expect(delivery.cargo.map(({ productId, quality, quantity }) => ({ productId, quality, quantity }))).toEqual(command.cargo);
 
     const tx = oneTx(g.sim.state, keys.dispatch(delivery.id));
@@ -422,7 +468,7 @@ describe("REPEAT_OPERATION: applies a copy through the source command's handler"
     expectCausedBy(g, tx, repeatId);
     expect(result.eventIds).toEqual(tx.eventIds);
     const [dispatched] = eventsOfType(eventsOf(g, tx), "DELIVERY_DISPATCHED");
-    expect(dispatched).toMatchObject({ deliveryId: delivery.id, vehicleId: MODEL_TT_TRUCK, purpose: command.purpose });
+    expect(dispatched).toMatchObject({ deliveryId: delivery.id, vehicleId: MODEL_TT_TRUCK, purpose });
   });
 
   it("a CONTRACT_INSTALLMENT dispatch: a new delivery for the same contract, keyed by the delivery and caused by the repeat", () => {
@@ -456,8 +502,8 @@ describe("REPEAT_OPERATION: a repeated SALE is re-quoted", () => {
   it("succeeds at the new quote after midnight, where re-sending the original gets QUOTE_CHANGED", () => {
     const g = start();
     edit(g, (s) => withStock(s, "basic", 2));
-    const command = roadhouseSale(g.sim.state, 1);
-    const agreed = agreedOf(command);
+    // The quote is checked at AGREE_DEAL (ADR 0022 decision 6), so "re-sending the original" re-sends the agreement.
+    const { agree, agreed, command } = roadhouseSale(g, 1);
     const sourceId = applied(g, command);
     truckHome(g);
 
@@ -470,22 +516,25 @@ describe("REPEAT_OPERATION: a repeated SALE is re-quoted", () => {
     const current = quoteOf(g.sim.state, CROSSROADS_ROADHOUSE);
     expect(current).not.toBe(agreed);
 
-    const stale = expectRejected(g, command, "QUOTE_CHANGED");
+    const stale = expectRejected(g, agree, "QUOTE_CHANGED");
     expect(stale).toEqual({ code: "QUOTE_CHANGED", buyerId: CROSSROADS_ROADHOUSE, agreed, current });
 
     const known = deliveryIds(g.sim.state);
     const result = run(g, repeat(sourceId));
     if (result.status !== "applied") throw new Error(`Expected applied, got ${JSON.stringify(result)}`);
     const delivery = deliveryAfter(g.sim.state, known);
-    expect(delivery.purpose).toEqual({ kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: current });
+    // The agreed price lives on the deal now (ADR 0022 decision 6).
+    const deal = dealOf(g.sim.state, delivery.id);
+    expect(deal.unitPrice).toBe(current);
+    expect(delivery.purpose).toEqual({ kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: deal.id });
     const buyer = g.sim.state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!;
-    expect(buyer.commitments).toContainEqual(expect.objectContaining({ deliveryId: delivery.id, quantity: 1, amount: current }));
+    expect(buyer.commitments).toContainEqual(expect.objectContaining({ dealId: deal.id, quantity: 1, amount: current }));
     const tx = oneTx(g.sim.state, keys.dispatch(delivery.id));
     expectCausedBy(g, tx, result.commandId);
     const [dispatched] = eventsOfType(eventsOf(g, tx), "DELIVERY_DISPATCHED");
-    expect(dispatched!.purpose).toEqual({ kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: current });
+    expect(dispatched!.purpose).toEqual({ kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: deal.id });
 
-    // The source envelope in the log keeps its original price.
+    // The source envelope in the log is unchanged (its price stays on its own AGREE_DEAL).
     expect(logEntry(g.sim.state, sourceId).command).toEqual(command);
   });
 });
@@ -519,14 +568,14 @@ describe("REPEAT_OPERATION: the copied command's rejection comes through unchang
   it("ROUTE_CLOSED from a repeated sale when its route has closed", () => {
     const g = start();
     edit(g, (s) => withStock(s, "basic", 2));
-    const sourceId = applied(g, roadhouseSale(g.sim.state, 1));
+    const sourceId = applied(g, roadhouseSale(g, 1).command);
     const command = logEntry(g.sim.state, sourceId).command as DispatchDeliveryCommand;
     truckHome(g);
     const at = g.sim.state.tick + 1;
     edit(g, (s) => scheduleWorldEvent(s, { kind: "ROUTE_CLOSURE", tick: tick(at), routeId: STATE_HIGHWAY, reason: "RIVAL", durationTicks: 600 }));
     to(g, at);
     expect(g.sim.state.routes.find((r) => r.id === STATE_HIGHWAY)!.closure).not.toBeNull();
-    const direct = expectRejected(g, requoted(g.sim.state, command), "ROUTE_CLOSED");
+    const direct = expectRejected(g, requoted(g, command), "ROUTE_CLOSED");
     const reason = expectRejected(g, repeat(sourceId), "ROUTE_CLOSED");
     expect(reason).toEqual(direct);
   });
@@ -534,10 +583,10 @@ describe("REPEAT_OPERATION: the copied command's rejection comes through unchang
   it("INSUFFICIENT_STOCK from a repeated sale once the stock is gone", () => {
     const g = start();
     edit(g, (s) => withStock(s, "basic", 1));
-    const sourceId = applied(g, roadhouseSale(g.sim.state, 1));
+    const sourceId = applied(g, roadhouseSale(g, 1).command);
     const command = logEntry(g.sim.state, sourceId).command as DispatchDeliveryCommand;
     truckHome(g);
-    const direct = expectRejected(g, requoted(g.sim.state, command), "INSUFFICIENT_STOCK");
+    const direct = expectRejected(g, requoted(g, command), "INSUFFICIENT_STOCK");
     const reason = expectRejected(g, repeat(sourceId), "INSUFFICIENT_STOCK");
     expect(reason).toEqual(direct);
   });
@@ -585,7 +634,7 @@ describe("REPEAT_OPERATION: NOT_REPEATABLE { sourceCommandId }", () => {
 
     const reservation = g.sim.state.reservations.find((r) => r.holder.kind === "CONTRACT" && r.holder.contractId === contractId);
     if (!reservation) throw new Error("Accepting reserved nothing");
-    const releaseId = applied(g, { type: "RELEASE_RESERVATION", reservationId: reservation.id });
+    const releaseId = applied(g, { type: "RELEASE_RESERVATION", facilityId: reservation.facilityId, reservationId: reservation.id });
 
     const facility = g.sim.state.facilities.find((f) => f.id === DISTILLERY_MAIN)!;
     const workforceId = applied(g, { type: "SET_WORKFORCE", facilityId: DISTILLERY_MAIN, workerCount: facility.workerCount + 1 });
@@ -736,7 +785,7 @@ describe("REPEAT_OPERATION: replay", () => {
     queued(g, repeat(r1), job.completesAt + 2); // a chain
     to(g, job.completesAt + 3);
 
-    const saleId = applied(g, roadhouseSale(g.sim.state, 1));
+    const saleId = applied(g, roadhouseSale(g, 1).command);
     truckHome(g);
     to(g, DAY + 30); // past midnight: a re-quoted repeat
     applied(g, repeat(saleId));
@@ -772,7 +821,8 @@ describe("REPEAT_OPERATION: Sprint Zero", () => {
     }
     expect(sim.dispatch({ command: produce(1) }).status).toBe("applied");
     sim.advance(sim.state.productionJobs[0]!.completesAt - sim.state.tick);
-    expect(sim.dispatch({ command: roadhouseSale(sim.state, 1) }).status).toBe("applied");
+    expect(sim.dispatch({ command: agreement(CROSSROADS_ROADHOUSE, 1, quoteOf(sim.state, CROSSROADS_ROADHOUSE)) }).status).toBe("applied");
+    expect(sim.dispatch({ command: sale(CROSSROADS_ROADHOUSE, 1, lastDealId(sim.state)) }).status).toBe("applied");
     sim.advance(sim.state.vehicles[0]!.trip!.arrivesAt - sim.state.tick);
     const resumed = loadGame(JSON.parse(JSON.stringify(sim.serialize())));
     const finalTick = sim.state.vehicles[0]!.trip!.arrivesAt;

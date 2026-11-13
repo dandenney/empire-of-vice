@@ -24,6 +24,7 @@ import { VEHICLES, type VehicleDefinition } from "./vehicles.ts";
 
 export * from "./buyers.ts";
 export * from "./contracts.ts";
+export * from "./deals.ts";
 export * from "./equipment.ts";
 export * from "./facilities.ts";
 export * from "./knowledge.ts";

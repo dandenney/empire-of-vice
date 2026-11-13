@@ -42,7 +42,7 @@ import {
 } from "@eov/contracts";
 import { BASIC_MOONSHINE_RECIPE, GAME_DATA, STANDARD_MOONSHINE_RECIPE, type GameData, type RecipeDefinition } from "@eov/game-data";
 import { outstanding } from "./contract-taker.ts";
-import { newStrategyLog, periodCosts, planRun, recipeOf, type Gateway, type RunPlan, type Strategy, type StrategyLog } from "./greedy-spot.ts";
+import { newStrategyLog, periodCosts, planRun, recipeOf, sendSpotSale, type Gateway, type RunPlan, type Strategy, type StrategyLog } from "./greedy-spot.ts";
 import { StrategyRng } from "./prng.ts";
 
 /** The four GDD §13 strategies, in the GDD's order. */
@@ -388,6 +388,7 @@ export abstract class HeadlessStrategy implements Strategy {
           cargo: [{ productId: c.productId, quality, quantity: n }],
           purpose: { kind: "CONTRACT_INSTALLMENT", contractId: c.id },
           routeId: route.routeId,
+          driver: { kind: "FOUNDER" },
         });
         const result = sim.dispatch({ command: dispatch(quantity) });
         if (result.status !== "rejected") return true;
@@ -471,13 +472,19 @@ export abstract class HeadlessStrategy implements Strategy {
     offers.sort((a, b) => b.rate - a.rate || (a.buyerId < b.buyerId ? -1 : a.buyerId > b.buyerId ? 1 : 0) || qualityRank(a.quality) - qualityRank(b.quality));
     const floor = offers[0]!.rate * (1 - this.variant.spotTolerancePpm / PPM);
     const best = this.rng.pick(offers.filter((o) => o.rate >= floor));
-    const sent = this.send(sim, {
-      type: "DISPATCH_DELIVERY",
-      vehicleId: this.vehicleId,
-      cargo: [{ productId: best.productId, quality: best.quality, quantity: best.quantity }],
-      purpose: { kind: "SALE", buyerId: best.buyerId, agreedUnitPrice: best.unitPrice },
-      routeId: best.route.routeId,
-    });
+    const sent = sendSpotSale(
+      sim,
+      {
+        vehicleId: this.vehicleId,
+        buyerId: best.buyerId,
+        productId: best.productId,
+        quality: best.quality,
+        quantity: best.quantity,
+        unitPrice: best.unitPrice,
+        routeId: best.route.routeId,
+      },
+      (command) => this.send(sim, command),
+    );
     if (sent !== null) this.log.saleCaps[best.quantity === capacity ? "TRUCK" : "STOCK"]++;
   }
 }

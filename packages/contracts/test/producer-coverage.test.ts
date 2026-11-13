@@ -49,6 +49,21 @@ describe("producer coverage (ADR 0021 decisions 6 and 7)", () => {
     }
   });
 
+  it("classifies ADR 0022's deal producers (decision 9): the founder's own AGREE_DEAL, and an agreement expiring by time", () => {
+    // AGREE_DEAL: rule 1, the founder's own command. No entries.
+    expect(TRANSACTION_PRODUCERS["DAILY_SETTLEMENT:DEAL_AGREED"]).toEqual({ trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] });
+    // DEAL_EXPIRED: an agreement's state, always known, never a world posting. No entries.
+    expect(TRANSACTION_PRODUCERS["DAILY_SETTLEMENT:DEAL_EXPIRED"]).toEqual({ trigger: "AGREED_CHARGE", legs: ["NO_ENTRIES"] });
+    // A deal dispatch (and a repeated sale's re-agreement, in the same transaction) is the DISPATCH producer.
+    expect(TRANSACTION_PRODUCERS.DISPATCH.trigger).toBe("FOUNDER_COMMAND");
+    // A deal's settlement, fall-through or seizure posts through the M001 producers, already classified.
+    for (const name of ["SALE", "DISPATCH:FELL_THROUGH", "CARGO_LOSS"] as const) expect(TRANSACTION_PRODUCERS[name].trigger).toBe("WORLD");
+    for (const name of ["DAILY_SETTLEMENT:DEAL_AGREED", "DAILY_SETTLEMENT:DEAL_EXPIRED"]) {
+      expect(cashRows[name], name).toBeUndefined();
+      expect(bookRows[name], name).toBeUndefined();
+    }
+  });
+
   it("classifies every M001 producer from the ADR's tables", () => {
     // Rule 1: midnight wages and overhead are agreed charges, known with or without cash.
     expect(TRANSACTION_PRODUCERS["DAILY_SETTLEMENT:WAGES"].trigger).toBe("AGREED_CHARGE");
@@ -87,9 +102,22 @@ const VARIABLE_TAGS: Readonly<Record<string, Readonly<Record<string, readonly st
   "production/jobs.ts": { kind: ["PRODUCTION", "PRODUCTION_WRITE_OFF"] },
   "production/settlement.ts": { part: ["WAGES", "OVERHEAD", "PAYROLL"] },
 };
-/** Variable arguments that are values, not tags (they don't name the producer). */
+/**
+ * Every non-literal argument that isn't ID-shaped, by file: values (ticks, days,
+ * indexes, a reason) that never name the producer. ID-shaped arguments
+ * (`delivery.id`, `dealId`, `ctx.envelope.id`) pass without a listing, because an
+ * ID is lowercase and never a tag. Anything else fails the scan until it's listed
+ * here, so a bare variable can't slip a new tag into a registered family
+ * (`idempotencyKey("DISPATCH", d, outcome)`, issue #192).
+ */
 const VALUE_ARGUMENTS: Readonly<Record<string, readonly string[]>> = {
-  "events/shakedown.ts": ["event.reason"],
+  "commands/repeat.ts": ["link"],
+  "contracts/contracts.ts": ["ctx.tick", "dayIndex(ctx.tick) - 1", "index"],
+  "economy/market/market.ts": ["day", "ctx.tick"],
+  "events/shakedown.ts": ["event.reason", "ctx.tick", "event.sequence"],
+  "logistics/logistics.ts": ["ctx.tick"],
+  "production/settlement.ts": ["day"],
+  "progression/reputation.ts": ["event.installmentIndex"],
 };
 
 function sourceFiles(dir: string, prefix = ""): string[] {
@@ -125,7 +153,11 @@ function callArguments(text: string, open: number): string[] {
 }
 
 const LITERAL_TAG = /^"([A-Z][A-Z0-9_]*)"$/;
-const IS_ID_OR_NUMBER = /^(?:[a-zA-Z_$][\w$.]*(?:\([^)]*\))?(?:\s*[-+]\s*\d+)?|\d+)$/;
+/** A property path ending in `id` or `<name>Id`: `deliveryId`, `delivery.id`, `ctx.envelope.id`, `def.buyerId`. */
+const ID_SHAPED = /^(?:[a-zA-Z_$][\w$]*\.)*(?:id|[a-z][a-zA-Z0-9]*Id)$/;
+
+/** Value arguments the scan met, by file, to check VALUE_ARGUMENTS has no stale entries. */
+const valueArgumentsSeen = new Map<string, Set<string>>();
 
 /** The producer families one call site can produce. */
 function familiesAt(file: string, args: readonly string[]): string[] {
@@ -137,7 +169,11 @@ function familiesAt(file: string, args: readonly string[]): string[] {
     else if (variable) families = families.flatMap((f) => variable.map((v) => [...f, v]));
     else if (index === 0) throw new Error(`${file}: idempotencyKey's kind must be a literal or listed in VARIABLE_TAGS: ${arg}`);
     else if (/^"/.test(arg)) throw new Error(`${file}: string argument that isn't a tag: ${arg}`);
-    else if (!IS_ID_OR_NUMBER.test(arg) && !VALUE_ARGUMENTS[file]?.includes(arg)) {
+    else if (ID_SHAPED.test(arg)) return;
+    else if (VALUE_ARGUMENTS[file]?.includes(arg)) {
+      if (!valueArgumentsSeen.has(file)) valueArgumentsSeen.set(file, new Set());
+      valueArgumentsSeen.get(file)!.add(arg);
+    } else {
       throw new Error(`${file}: can't tell whether ${arg} is a tag; list it in VARIABLE_TAGS or VALUE_ARGUMENTS`);
     }
   });
@@ -175,6 +211,22 @@ describe("the producer registry matches the simulation", () => {
   it("every registered producer has a call site", () => {
     const unused = Object.keys(TRANSACTION_PRODUCERS).filter((f) => !found.has(f));
     expect(unused).toEqual([]);
+  });
+
+  it("lists exactly the value arguments the simulation uses (no stale entries)", () => {
+    const seen = Object.fromEntries([...valueArgumentsSeen].map(([file, args]) => [file, [...args].sort()]));
+    const listed = Object.fromEntries(Object.entries(VALUE_ARGUMENTS).map(([file, args]) => [file, [...args].sort()]));
+    expect(seen).toEqual(listed);
+  });
+
+  it("accepts only literal tags, listed variable tags, ID-shaped arguments and listed values", () => {
+    // The #204 follow-up: a bare variable is not taken for an ID any more.
+    expect(() => familiesAt("logistics/logistics.ts", ['"DISPATCH"', "d", "outcome"])).toThrow(/can't tell whether d is a tag/);
+    expect(() => familiesAt("logistics/logistics.ts", ['"DISPATCH"', "delivery.id", "outcome"])).toThrow(/can't tell whether outcome is a tag/);
+    expect(() => familiesAt("logistics/logistics.ts", ['"DISPATCH"', "delivery.id", "day"])).toThrow(/day/); // listed for another file only
+    expect(familiesAt("logistics/logistics.ts", ['"DISPATCH"', "delivery.id", '"CLEAR"'])).toEqual(["DISPATCH:CLEAR"]);
+    expect(familiesAt("economy/market/market.ts", ['"DAILY_SETTLEMENT"', '"DEAL_EXPIRED"', "deal.id"])).toEqual(["DAILY_SETTLEMENT:DEAL_EXPIRED"]);
+    expect(familiesAt("economy/market/market.ts", ['"DAILY_SETTLEMENT"', '"MARKET"', "day"])).toEqual(["DAILY_SETTLEMENT:MARKET"]);
   });
 
   it("every family's first tag is a transaction kind", () => {

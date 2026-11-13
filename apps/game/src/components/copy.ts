@@ -86,6 +86,9 @@ export const REJECTION_FIELD_COPY: Readonly<Record<RejectionField, string>> = {
   destinationLocationId: "destinationLocationId",
   min: "min",
   max: "max",
+  // ADR 0022 reasons (O1a, #192). PLACEHOLDER: raw field names, like the rest.
+  dealId: "dealId",
+  characterId: "characterId",
 };
 
 /** The label for each quality tier. Placeholder: the raw tier. */
@@ -140,4 +143,10 @@ export const REJECTION_COPY: Readonly<Record<RejectionCode, string>> = {
   NO_PATH: "No open road there",
   INVALID_REST_LENGTH: "Can't rest that long",
   NOT_RESTING: "You're not resting",
+  // ADR 0022 reasons (O1a, #192). The M001 sale form agrees and dispatches in one
+  // click, so the deal ones can only follow a deal that just expired; NO_WAY_TO_REACH
+  // needs phones and hires. PLACEHOLDER copy until the M002 UI tasks write it.
+  DEAL_UNAVAILABLE: "That deal isn't on any more",
+  CARGO_DOES_NOT_MATCH_DEAL: "The load doesn't match the deal",
+  NO_WAY_TO_REACH: "No way to reach them",
 };

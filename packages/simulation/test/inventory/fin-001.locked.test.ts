@@ -194,7 +194,8 @@ function withContractReservation(cases: number, reserved: number): { sim: Kernel
 }
 
 function release(reservationId: ReservationId): GameCommand {
-  return { type: "RELEASE_RESERVATION", reservationId };
+  // Every reservation in this file is held at F (ADR 0022 decision 3: the command names its facility).
+  return { type: "RELEASE_RESERVATION", facilityId: F, reservationId };
 }
 
 // ---------------------------------------------------------------------------

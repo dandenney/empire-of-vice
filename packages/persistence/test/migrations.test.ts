@@ -2,7 +2,8 @@
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { EMPTY_KNOWLEDGE, SAVE_SCHEMA_VERSION, type SaveMigration } from "@eov/contracts";
+import { EMPTY_KNOWLEDGE, SAVE_SCHEMA_VERSION, saveGameSchema, type SaveMigration } from "@eov/contracts";
+import { loadGame } from "@eov/simulation";
 import { describe, expect, it } from "vitest";
 import { migrateSave, SAVE_MIGRATIONS } from "../src/index.ts";
 
@@ -100,6 +101,154 @@ describe("v2 → v3: the founder and parked vehicles (P1, ADR 0023 decision 10)"
     expect(result.save["schemaVersion"]).toBe(SAVE_SCHEMA_VERSION);
     expect(result.save["state"]).toHaveProperty("knowledge");
     expect(result.save["state"]).toHaveProperty("founder");
+  });
+});
+
+/** A copy without the given keys. */
+function omit(value: Readonly<Record<string, unknown>>, ...keys: string[]): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([k]) => !keys.includes(k)));
+}
+
+describe("v3 → v4: held deals, driver, tripCount and the issuer (O1a, ADR 0022 Consequences)", () => {
+  type Obj = Record<string, unknown>;
+  type RawSave = Obj & { state: Obj & { deliveries: Obj[]; buyers: (Obj & { commitments: Obj[]; wants: Obj[] })[]; vehicles: Obj[]; commandLog: Obj[]; queuedCommands: Obj[]; eventJournal: Obj[]; reservations: Obj[] } };
+  const v3 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v3.json", import.meta.url)), "utf8")) as { save: RawSave };
+  const migrate = (save: Readonly<Record<string, unknown>>) => migrateSave(save, 3, SAVE_MIGRATIONS, 4);
+  const withState = (patch: Obj): RawSave => ({ ...v3.save, state: { ...v3.save.state, ...patch } });
+  const migrated = (save: RawSave = v3.save): RawSave["state"] & { heldDeals: Obj[]; counters: Obj & { nextId: Obj } } => {
+    const result = migrate(save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.save["schemaVersion"]).toBe(4);
+    return result.save["state"] as never;
+  };
+
+  it("turns the in-flight sale's commitment into a DISPATCHED deal, from the save's own fields", () => {
+    const old = v3.save.state;
+    const delivery = old.deliveries[0]!;
+    // The fixture: the truck is on its way to the roadhouse with one case, agreed at $31.20.
+    expect(delivery).toMatchObject({ id: "delivery-1", status: "OUTBOUND", purpose: { kind: "SALE", buyerId: "crossroads-roadhouse", agreedUnitPrice: 3120 }, dealDeadline: 441 });
+    const s = migrated();
+    expect(s.heldDeals).toEqual([
+      {
+        id: "deal-1",
+        buyerId: "crossroads-roadhouse",
+        productId: "moonshine",
+        quality: "basic",
+        quantity: 1,
+        unitPrice: 3120, // the purpose's agreedUnitPrice
+        agreedAt: 201, // the outbound trip's departedAt
+        expiresAt: 441, // the delivery's dealDeadline, which still governs arrival
+        budgetCommitted: true,
+        status: "DISPATCHED",
+        deliveryId: "delivery-1",
+      },
+    ]);
+    expect(s.counters.nextId["Deal"]).toBe(2);
+    expect(s.buyers[0]!.commitments).toEqual([{ dealId: "deal-1", productId: "moonshine", quality: "basic", quantity: 1, amount: 3120 }]);
+    expect(s.deliveries).toEqual([{ ...delivery, purpose: { kind: "SALE", buyerId: "crossroads-roadhouse", dealId: "deal-1" }, driver: null }]);
+    expect(s.vehicles).toEqual(old.vehicles.map((v) => ({ ...v, tripCount: 0 })));
+    // The journal's DELIVERY_DISPATCHED names the deal too; nothing else in it changes.
+    const dispatched = s.eventJournal.find((e) => e["type"] === "DELIVERY_DISPATCHED");
+    expect(dispatched).toEqual({ ...old.eventJournal.find((e) => e["type"] === "DELIVERY_DISPATCHED"), purpose: { kind: "SALE", buyerId: "crossroads-roadhouse", dealId: "deal-1" } });
+    expect(s.eventJournal.filter((e) => e["type"] !== "DELIVERY_DISPATCHED")).toEqual(old.eventJournal.filter((e) => e["type"] !== "DELIVERY_DISPATCHED"));
+  });
+
+  it("gives every command envelope the FOUNDER issuer, and the logged M001 sale dealId null and driver null", () => {
+    const old = v3.save.state;
+    const s = migrated();
+    for (const key of ["commandLog", "queuedCommands"] as const) {
+      expect(s[key].map((e) => e["issuer"])).toEqual(old[key].map(() => ({ kind: "FOUNDER" })));
+    }
+    const sale = s.commandLog.find((e) => (e["command"] as Obj)["type"] === "DISPATCH_DELIVERY")!;
+    expect(sale["command"]).toMatchObject({ purpose: { kind: "SALE", buyerId: "crossroads-roadhouse", dealId: null }, driver: null });
+    const others = (log: Obj[]) => log.filter((e) => (e["command"] as Obj)["type"] !== "DISPATCH_DELIVERY").map((e) => omit(e, "issuer"));
+    expect(others(s.commandLog)).toEqual(others(old.commandLog));
+    expect(s.queuedCommands.map((e) => omit(e, "issuer"))).toEqual(old.queuedCommands);
+  });
+
+  it("changes nothing else", () => {
+    const strip = (s: Obj) => omit(s, "heldDeals", "counters", "vehicles", "deliveries", "buyers", "commandLog", "queuedCommands", "eventJournal");
+    expect(strip(migrated())).toEqual(strip(v3.save.state));
+    expect(migrated().buyers.map((b) => omit(b, "commitments"))).toEqual(v3.save.state.buyers.map((b) => omit(b, "commitments")));
+  });
+
+  it("with no want matching the cargo, records the cargo's quality, so a release gives back budget only (as releaseDeal did)", () => {
+    const buyers = v3.save.state.buyers.map((b) => (b["id"] === "crossroads-roadhouse" ? { ...b, wants: b.wants.map((w) => ({ ...w, minimumQuality: "standard" })) } : b));
+    const s = migrated(withState({ buyers }));
+    expect(s.buyers[0]!.commitments).toEqual([{ dealId: "deal-1", productId: "moonshine", quality: "basic", quantity: 1, amount: 3120 }]);
+    expect(s.heldDeals).toHaveLength(1);
+  });
+
+  it("matches the most specific want at or below the cargo's quality", () => {
+    const deliveries = v3.save.state.deliveries.map((d) => ({ ...d, cargo: (d["cargo"] as Obj[]).map((c) => ({ ...c, quality: "premium" })) }));
+    const buyers = v3.save.state.buyers.map((b) =>
+      b["id"] === "crossroads-roadhouse" ? { ...b, wants: [...b.wants, { ...b.wants[0]!, minimumQuality: "standard" }] } : b,
+    );
+    const s = migrated(withState({ deliveries, buyers }));
+    expect(s.buyers[0]!.commitments).toMatchObject([{ dealId: "deal-1", quality: "standard" }]);
+    expect(s.heldDeals).toMatchObject([{ quality: "premium" }]);
+  });
+
+  it("gives finished sales dealId null and mints no deal for them", () => {
+    const deliveries = v3.save.state.deliveries.map((d) => ({ ...d, status: "DELIVERED" }));
+    const buyers = v3.save.state.buyers.map((b) => ({ ...b, commitments: [] }));
+    const s = migrated(withState({ deliveries, buyers }));
+    expect(s.heldDeals).toEqual([]);
+    expect(s.counters.nextId["Deal"]).toBe(1);
+    expect(s.deliveries[0]).toMatchObject({ purpose: { kind: "SALE", buyerId: "crossroads-roadhouse", dealId: null }, driver: null });
+  });
+
+  it("names a queued RELEASE_RESERVATION's facility: the reservation's if it's active, else the save's first facility", () => {
+    const envelope = (n: number, reservationId: string) => ({
+      id: `cmd-${n}`,
+      scheduledTick: 2_000,
+      sequence: n,
+      command: { type: "RELEASE_RESERVATION", reservationId },
+    });
+    const reservations = [
+      { id: "res-7", facilityId: "riverside-warehouse", goods: { kind: "PRODUCT", productId: "moonshine", quality: "basic" }, quantity: 1, holder: { kind: "CONTRACT", contractId: "contract-1" } },
+    ];
+    const s = migrated(withState({ reservations, queuedCommands: [envelope(8, "res-7"), envelope(9, "res-404")] }));
+    expect(s.queuedCommands.map((e) => e["command"])).toEqual([
+      { type: "RELEASE_RESERVATION", facilityId: "riverside-warehouse", reservationId: "res-7" },
+      { type: "RELEASE_RESERVATION", facilityId: "distillery-main", reservationId: "res-404" },
+    ]);
+  });
+
+  it.each([
+    ["a state that already has heldDeals", () => withState({ heldDeals: [] }), /already has heldDeals/],
+    ["an in-flight sale with no commitment", () => withState({ buyers: v3.save.state.buyers.map((b) => ({ ...b, commitments: [] })) }), /no commitment/],
+    [
+      "a commitment with no in-flight sale",
+      () => withState({ deliveries: v3.save.state.deliveries.map((d) => ({ ...d, status: "FAILED" })) }),
+      /belongs to no in-flight sale/,
+    ],
+    ["an in-flight sale with no outbound trip", () => withState({ vehicles: v3.save.state.vehicles.map((v) => ({ ...v, trip: null })) }), /no outbound trip/],
+    ["an envelope that already has an issuer", () => withState({ queuedCommands: v3.save.state.queuedCommands.map((e) => ({ ...e, issuer: { kind: "FOUNDER" } })) }), /already has an issuer/],
+  ])("fails cleanly on %s", (_label, save, message) => {
+    const result = migrate(save());
+    expect(result).toMatchObject({ ok: false, error: { code: "MIGRATION_FAILED", fromVersion: 3, toVersion: 4 } });
+    if (!result.ok && result.error.code === "MIGRATION_FAILED") expect(result.error.message).toMatch(message);
+  });
+
+  it("loads, and the migrated deal settles on arrival at its agreed price, then leaves heldDeals", () => {
+    const result = migrateSave(v3.save, 3);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const sim = loadGame(saveGameSchema.parse(result.save));
+    sim.advance(321 - sim.state.tick);
+    const sale = sim.takeEvents().find((e) => e.type === "SALE_COMPLETED");
+    expect(sale).toMatchObject({ deliveryId: "delivery-1", buyerId: "crossroads-roadhouse", revenue: 3120 });
+    expect(sim.state.heldDeals).toEqual([]);
+    expect(sim.state.buyers.find((b) => b.id === "crossroads-roadhouse")!.commitments).toEqual([]);
+  });
+
+  it("chains from v1", () => {
+    const v1 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v1.json", import.meta.url)), "utf8")) as { save: Record<string, unknown> };
+    const result = migrateSave(v1.save, 1);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.save["schemaVersion"]).toBe(SAVE_SCHEMA_VERSION);
+    expect(saveGameSchema.safeParse(result.save).success).toBe(true);
+    expect((result.save["state"] as { heldDeals: unknown[] }).heldDeals).toMatchObject([{ id: "deal-1", status: "DISPATCHED", unitPrice: 1400 }]);
   });
 });
 

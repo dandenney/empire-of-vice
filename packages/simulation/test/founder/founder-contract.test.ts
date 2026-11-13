@@ -31,7 +31,7 @@ describe("the founder at game creation (decisions 1, 7, 9)", () => {
   });
 
   it("parks every vehicle at its home facility's location", () => {
-    expect(newGame().state.vehicles).toEqual([{ id: MODEL_TT_TRUCK, parkedAt: HOLLOW_CREEK, trip: null }]);
+    expect(newGame().state.vehicles).toEqual([{ id: MODEL_TT_TRUCK, parkedAt: HOLLOW_CREEK, tripCount: 0, trip: null }]);
   });
 
   it("with founder rules on, starts the founder resting at the start location until START_WAKE_TICK", () => {
@@ -78,7 +78,7 @@ describe("TRAVEL, REST and WAKE with founder rules off (decision 9)", () => {
     expect(result).toMatchObject({ status: "applied", eventIds: [] });
     expect(domain(sim.state)).toEqual(domain(before));
     expect(sim.state.ledger).toBe(before.ledger);
-    expect(sim.state.commandLog).toEqual([...before.commandLog, { id: result.commandId, scheduledTick: 601, sequence: 1, command }]);
+    expect(sim.state.commandLog).toEqual([...before.commandLog, { id: result.commandId, scheduledTick: 601, sequence: 1, issuer: { kind: "FOUNDER" }, command }]);
     expect(sim.stateHash()).not.toBe(newGame().stateHash());
   });
 

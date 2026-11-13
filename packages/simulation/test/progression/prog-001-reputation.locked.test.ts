@@ -430,13 +430,16 @@ function spotBuyerFor(state: GameState, quantity: number): { readonly buyerId: B
 function dispatchSpot(g: Game, quantity: number): { readonly deliveryId: string; readonly arrival: number } {
   untilTruckHome(g);
   const { buyerId, unitPrice } = spotBuyerFor(g.sim.state, quantity);
+  // ADR 0022 decision 6: agree the deal at the quote, then dispatch against it.
+  expectApplied(run(g, { type: "AGREE_DEAL", buyerId, productId: MOONSHINE, quality: "basic", quantity, agreedUnitPrice: unitPrice }));
   expectApplied(
     run(g, {
       type: "DISPATCH_DELIVERY",
       vehicleId: MODEL_TT_TRUCK,
       cargo: [{ productId: MOONSHINE, quality: "basic", quantity }],
-      purpose: { kind: "SALE", buyerId, agreedUnitPrice: unitPrice },
+      purpose: { kind: "SALE", buyerId, dealId: g.sim.state.heldDeals.at(-1)!.id },
       routeId: null,
+      driver: { kind: "FOUNDER" },
     }),
   );
   const delivery = g.sim.state.deliveries.at(-1)!;
@@ -1023,6 +1026,7 @@ describe("PROG-001 reputation: the decision 2 schedule", () => {
           cargo: [{ productId: MOONSHINE, quality: "basic", quantity: q }],
           purpose: { kind: "CONTRACT_INSTALLMENT", contractId: contract.id },
           routeId: null,
+          driver: { kind: "FOUNDER" },
         }),
       );
       deliveryIds.push(g.sim.state.deliveries.at(-1)!.id);

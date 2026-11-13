@@ -14,6 +14,12 @@
 // Every link of a chain is checked the same way, judged by the underlying
 // command's type.
 //
+// A SALE dispatch (ADR 0022 decision 6, founder rules off; issue #192): a deal is
+// single-use, so the copy re-agrees with the same buyer at its current quote,
+// inside the dispatch's own DISPATCH transaction (DEAL_AGREED, then
+// DELIVERY_DISPATCHED), and dispatches against that new deal. It can't lock in a
+// stale price. The on-spec repeat (founder rules on) is SK1c's.
+//
 // No dispatch-time `validate`: everything is judged when the repeat applies.
 
 import {
@@ -22,10 +28,11 @@ import {
   type GameState,
   type RejectionReason,
   type RepeatableCommand,
+  type TransactionCoordinator,
 } from "@eov/contracts";
 import type { GameData } from "@eov/game-data";
-import { quoteDeal } from "../economy/market/market.ts";
 import type { SystemRegistry } from "../kernel/registry.ts";
+import { dispatchRequotedSale } from "../logistics/logistics.ts";
 
 const notRepeatable = (sourceCommandId: CommandId): RejectionReason => ({ code: "NOT_REPEATABLE", sourceCommandId });
 
@@ -63,31 +70,20 @@ export function resolveRepeatSource(state: GameState, sourceCommandId: CommandId
   return null;
 }
 
-/**
- * The copy to apply: the source as it was, except that a SALE dispatch's
- * `agreedUnitPrice` becomes the buyer's current quote for the cargo (the value
- * the dispatch's QUOTE_CHANGED check compares against). If the buyer won't quote,
- * the original price is kept and the dispatch's own rejection explains why.
- */
-function copyOf(state: GameState, data: GameData, source: RepeatableCommand): RepeatableCommand {
-  if (source.type !== "DISPATCH_DELIVERY" || source.purpose.kind !== "SALE") return source;
-  const line = source.cargo[0];
-  if (!line) return source;
-  const { buyerId, agreedUnitPrice } = source.purpose;
-  const quote = quoteDeal(state, data, buyerId, agreedUnitPrice, line);
-  if (!("code" in quote) || quote.code !== "QUOTE_CHANGED") return source;
-  return { ...source, purpose: { ...source.purpose, agreedUnitPrice: quote.current } };
-}
-
-/** A RegisterSystem (game/systems.ts); it commits nothing itself, so it takes no coordinator. */
-export function registerRepeat(registry: SystemRegistry, data: GameData): void {
+/** A RegisterSystem (game/systems.ts). It posts nothing itself: the copy goes through its own command's handler. */
+export function registerRepeat(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator): void {
   registry.onCommand("REPEAT_OPERATION", {
     apply: (state, command, ctx) => {
       const source = resolveRepeatSource(state, command.sourceCommandId);
       if (!source) return { status: "rejected", reason: notRepeatable(command.sourceCommandId) };
-      const copy = copyOf(state, data, source);
-      const handler = registry.commandHandler(copy.type);
-      return handler.apply(state, copy as never, ctx);
+      // A deal is single-use, so a repeated sale never reuses its source's deal. With
+      // founder rules off it re-agrees at the buyer's current quote, in the dispatch's
+      // own transaction (ADR 0022 decision 6; issue #192). The on-spec repeat is SK1c's.
+      if (source.type === "DISPATCH_DELIVERY" && source.purpose.kind === "SALE") {
+        return dispatchRequotedSale(state, source, ctx, data, coordinator);
+      }
+      const handler = registry.commandHandler(source.type);
+      return handler.apply(state, source as never, ctx);
     },
   });
 }

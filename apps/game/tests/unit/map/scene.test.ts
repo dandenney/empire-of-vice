@@ -25,7 +25,7 @@ function onTheRoad(progressTicks: number, span: number, leg: "OUTBOUND" | "RETUR
     departedAt: 100,
     arrivesAt: 100 + span,
     cargo: [],
-    purpose: { kind: "SALE", buyerId: "b", agreedUnitPrice: 0 },
+    purpose: { kind: "SALE", buyerId: "b", dealId: null },
     delayed: false,
   } as unknown as NonNullable<VehicleSnapshot["trip"]>;
   return {

@@ -6,12 +6,18 @@
 //   order: replenish suppliers, refresh buyers, seeded events, prices, report.
 // - Seeded ingredient shortages (SHORTAGE_START / SHORTAGE_END world events).
 // - PURCHASE_MATERIALS at the supplier's current price.
-// - The market side of spot deals (ADR 0005): quote, commit, settle, release.
-//   Logistics stages them inside its DISPATCH and SALE transactions.
+// - The market side of deals (ADR 0005, ADR 0022 decision 6): AGREE_DEAL quotes
+//   and commits a held deal, keyed by the deal (`deal-<n>`); a HELD deal that
+//   reaches `expiresAt` expires (DEAL_EXPIRED) in the deadlines phase. Logistics
+//   dispatches, settles and releases them inside its DISPATCH and SALE
+//   transactions. Founder rules off only: in person, budget committed; the
+//   on-spec path, by-phone deals and the IssuerView are SK1c.
 
 import {
   addMoney,
+  addTicks,
   applyRatios,
+  compareById,
   clampRatio,
   dayIndex,
   idempotencyKey,
@@ -26,8 +32,11 @@ import {
   type BuyerId,
   type BuyerState,
   type CargoLine,
+  type DealId,
   type DeliveryId,
+  type EventOfType,
   type GameState,
+  type HeldDealState,
   type MarketState,
   type Money,
   type ProductId,
@@ -35,9 +44,11 @@ import {
   type Ratio,
   type RejectionReason,
   type SupplierState,
+  type Tick,
   type TransactionCoordinator,
 } from "@eov/contracts";
 import {
+  DEAL_HOLD_TICKS,
   MARKET_PRICE_BOUNDS,
   type BuyerDefinition,
   type GameData,
@@ -47,6 +58,7 @@ import {
   type SupplierStockDefinition,
 } from "@eov/game-data";
 import { scheduleWorldEvent } from "../../events/world-events.ts";
+import { allocateId, formatId } from "../../kernel/ids.ts";
 import type { SystemRegistry, TickContext } from "../../kernel/registry.ts";
 import { addMaterial } from "../../inventory/pools.ts";
 import { nextIntBetween } from "../../rng/xoshiro128.ts";
@@ -263,7 +275,7 @@ export function initialBuyers(data: GameData, scenario: ScenarioDefinition, mark
 }
 
 // ---------------------------------------------------------------------------
-// Spot deals (ADR 0005, ADR 0016)
+// Deals (ADR 0005, ADR 0016; held deals since ADR 0022 decision 6)
 // ---------------------------------------------------------------------------
 
 export interface Deal {
@@ -276,10 +288,11 @@ export interface Deal {
 }
 
 /**
- * Checks a spot deal for one cargo line against the buyer's terms and current
- * quote, in order: unknown buyer, reputation, want, quote, then liquidity
- * (GDD §7: min(demand remaining, budget / price)). No partial sales: anything the
- * buyer won't fully take is rejected.
+ * Checks a deal for one cargo line against the buyer's terms and current quote,
+ * in order: unknown buyer, reputation, want, quote, then liquidity (GDD §7:
+ * min(demand remaining, budget / price)). No partial sales: anything the buyer
+ * won't fully take is rejected. AGREE_DEAL's checks (ADR 0022 decision 6), as
+ * ADR 0005's dispatch was.
  */
 export function quoteDeal(state: GameState, data: GameData, buyerId: BuyerId, agreedUnitPrice: Money, line: CargoLine): Deal | RejectionReason {
   const buyer = state.buyers.find((b) => b.id === buyerId);
@@ -305,8 +318,18 @@ export function quoteDeal(state: GameState, data: GameData, buyerId: BuyerId, ag
   };
 }
 
-/** Commits the buyer's demand (on the matched want) and budget to a deal at dispatch. */
-export function commitDeal(state: GameState, deal: Deal, deliveryId: DeliveryId, line: CargoLine): GameState {
+/**
+ * The buyer's current quote for a line (the want `quoteDeal` would match), or
+ * null when the buyer is unknown or wants nothing the line meets. With founder
+ * rules off, a repeated sale re-agrees at this price (issue #192).
+ */
+export function currentQuote(state: GameState, buyerId: BuyerId, line: Pick<CargoLine, "productId" | "quality">): Money | null {
+  const buyer = state.buyers.find((b) => b.id === buyerId);
+  return (buyer && matchWant(buyer.wants, line.productId, line.quality)?.unitPrice) ?? null;
+}
+
+/** Commits the buyer's demand (on the matched want) and budget to a deal, keyed by the deal (ADR 0022 decision 6). */
+export function commitDeal(state: GameState, deal: Deal, dealId: DealId, line: CargoLine): GameState {
   return {
     ...state,
     buyers: state.buyers.map((b) => {
@@ -317,53 +340,167 @@ export function commitDeal(state: GameState, deal: Deal, deliveryId: DeliveryId,
         wants: b.wants.map((w) =>
           w.productId === line.productId && w.minimumQuality === deal.wantQuality ? { ...w, demandRemaining: w.demandRemaining - deal.quantity } : w,
         ),
-        commitments: [...b.commitments, { deliveryId, productId: line.productId, quantity: deal.quantity, amount: deal.amount }],
+        commitments: [
+          ...b.commitments,
+          { dealId, productId: line.productId, quality: deal.wantQuality, quantity: deal.quantity, amount: deal.amount },
+        ],
       };
     }),
   };
 }
 
-/** The commitment a delivery is carrying out, if any. */
-export function findCommitment(state: GameState, buyerId: BuyerId, deliveryId: DeliveryId): BuyerState["commitments"][number] | undefined {
-  return state.buyers.find((b) => b.id === buyerId)?.commitments.find((c) => c.deliveryId === deliveryId);
+/** The commitment a deal holds, if any. */
+export function findCommitment(state: GameState, buyerId: BuyerId, dealId: DealId): BuyerState["commitments"][number] | undefined {
+  return state.buyers.find((b) => b.id === buyerId)?.commitments.find((c) => c.dealId === dealId);
 }
 
 /** Removes a fulfilled commitment. Its demand and budget stay spent. */
-export function settleDeal(state: GameState, buyerId: BuyerId, deliveryId: DeliveryId): GameState {
+export function settleDeal(state: GameState, buyerId: BuyerId, dealId: DealId): GameState {
   return {
     ...state,
-    buyers: state.buyers.map((b) => (b.id === buyerId ? { ...b, commitments: b.commitments.filter((c) => c.deliveryId !== deliveryId) } : b)),
+    buyers: state.buyers.map((b) => (b.id === buyerId ? { ...b, commitments: b.commitments.filter((c) => c.dealId !== dealId) } : b)),
   };
 }
 
 /**
- * Releases a deal that fell through (for T03's failed runs, ADR 0016): removes the
- * commitment and gives back its demand, to the want matched by the delivery's
- * cargo quality, and its stored amount, to the budget. Each is capped at the
- * buyer's daily value, so a release after a midnight refresh can't push the
- * buyer past one day's limits. Call it before the delivery's cargo is cleared.
- * With no such commitment, the state is returned unchanged.
+ * Releases a deal that expired or fell through (ADR 0016, ADR 0022 decision 6):
+ * removes the commitment and gives back its demand, to the want it matched (the
+ * commitment's `quality`), and its stored amount, to the budget. Each is capped at
+ * the buyer's daily value, so a release after a midnight refresh can't push the
+ * buyer past one day's limits. A commitment whose want no longer exists (a save
+ * migrated without a match) gives back budget only. With no such commitment, the
+ * state is returned unchanged.
  */
-export function releaseDeal(state: GameState, data: GameData, buyerId: BuyerId, deliveryId: DeliveryId): GameState {
+export function releaseDeal(state: GameState, data: GameData, buyerId: BuyerId, dealId: DealId): GameState {
   const buyer = state.buyers.find((b) => b.id === buyerId);
-  const commitment = buyer?.commitments.find((c) => c.deliveryId === deliveryId);
+  const commitment = buyer?.commitments.find((c) => c.dealId === dealId);
   if (!buyer || !commitment) return state;
   const def = buyerDefinition(data, buyerId);
   if (!def) throw new RangeError(`releaseDeal: no definition for buyer ${buyerId}`);
-  const cargo = state.deliveries.find((d) => d.id === deliveryId)?.cargo.find((c) => c.productId === commitment.productId);
-  if (!cargo) throw new RangeError(`releaseDeal: delivery ${deliveryId} carries no ${commitment.productId}`);
-  const want = matchWant(buyer.wants, commitment.productId, cargo.quality);
-  const wantDef = want && def.wants.find((w) => w.productId === want.productId && w.minimumQuality === want.minimumQuality);
+  const matches = (w: { readonly productId: ProductId; readonly minimumQuality: QualityTier }) =>
+    w.productId === commitment.productId && w.minimumQuality === commitment.quality;
+  const wantDef = def.wants.find(matches);
   const budget = addMoney(buyer.budgetRemaining, commitment.amount);
   const released: BuyerState = {
     ...buyer,
     budgetRemaining: budget < def.dailyBudget ? budget : def.dailyBudget,
     wants: buyer.wants.map((w) =>
-      w === want && wantDef ? { ...w, demandRemaining: Math.min(wantDef.dailyDemand, w.demandRemaining + commitment.quantity) } : w,
+      matches(w) && wantDef ? { ...w, demandRemaining: Math.min(wantDef.dailyDemand, w.demandRemaining + commitment.quantity) } : w,
     ),
-    commitments: buyer.commitments.filter((c) => c.deliveryId !== deliveryId),
+    commitments: buyer.commitments.filter((c) => c.dealId !== dealId),
   };
   return { ...state, buyers: state.buyers.map((b) => (b.id === buyerId ? released : b)) };
+}
+
+// ---------------------------------------------------------------------------
+// Held deals (ADR 0022 decision 6)
+// ---------------------------------------------------------------------------
+
+/** A HELD deal, for a dispatch to carry out; undefined if the founder holds no such deal. */
+export function heldDeal(state: GameState, dealId: DealId): HeldDealState | undefined {
+  return state.heldDeals.find((d) => d.id === dealId && d.status === "HELD");
+}
+
+/** The deal a delivery is carrying out (DISPATCHED), if any. */
+export function dispatchedDealOf(state: GameState, deliveryId: DeliveryId): HeldDealState | undefined {
+  return state.heldDeals.find((d) => d.deliveryId === deliveryId && d.status === "DISPATCHED");
+}
+
+function withDeal(state: GameState, dealId: DealId, change: (d: HeldDealState) => HeldDealState): GameState {
+  return { ...state, heldDeals: state.heldDeals.map((d) => (d.id === dealId ? change(d) : d)) };
+}
+
+/** A dispatch takes the deal: DISPATCHED with that delivery. A dispatched deal never expires by time. */
+export function dispatchDeal(state: GameState, dealId: DealId, deliveryId: DeliveryId): GameState {
+  return withDeal(state, dealId, (d) => ({ ...d, status: "DISPATCHED", deliveryId }));
+}
+
+/** The deal reached a terminal state (SETTLED, EXPIRED, FELL_THROUGH): it leaves `heldDeals`, and its event reports it. */
+export function endDeal(state: GameState, dealId: DealId): GameState {
+  return { ...state, heldDeals: state.heldDeals.filter((d) => d.id !== dealId) };
+}
+
+/** What AGREE_DEAL fixes: the buyer and the cargo line at a price. */
+export interface DealTerms {
+  readonly buyerId: BuyerId;
+  readonly line: CargoLine;
+  readonly agreedUnitPrice: Money;
+}
+
+/** A staged agreement: the state with the deal held and committed, and the DEAL_AGREED payload. */
+export interface Agreement {
+  readonly state: GameState;
+  readonly deal: HeldDealState;
+  readonly event: Omit<EventOfType<"DEAL_AGREED">, "id" | "tick" | "causedBy">;
+}
+
+/**
+ * Agrees a deal in person (ADR 0022 decision 6), as ADR 0005's sale was checked:
+ * `quoteDeal`'s reasons, then the deal is minted (`deal-<n>`), HELD until
+ * `tick + DEAL_HOLD_TICKS`, and the buyer's demand and budget are committed to it.
+ * Pure; the caller stages the result in its transaction and emits the event. A
+ * by-phone agreement (demand only, ADR 0024) is a later task.
+ */
+export function agreeDeal(state: GameState, data: GameData, terms: DealTerms, at: Tick): Agreement | RejectionReason {
+  const { buyerId, line, agreedUnitPrice } = terms;
+  const quoted = quoteDeal(state, data, buyerId, agreedUnitPrice, line);
+  if ("code" in quoted) return quoted;
+  const minted = allocateId(state, "Deal");
+  const deal: HeldDealState = {
+    id: minted.id,
+    buyerId,
+    productId: line.productId,
+    quality: line.quality,
+    quantity: line.quantity,
+    unitPrice: quoted.unitPrice,
+    agreedAt: at,
+    expiresAt: addTicks(at, DEAL_HOLD_TICKS),
+    budgetCommitted: true,
+    status: "HELD",
+    deliveryId: null,
+  };
+  const committed = commitDeal(minted.state, quoted, deal.id, line);
+  return {
+    state: { ...committed, heldDeals: [...committed.heldDeals, deal].sort(compareById) },
+    deal,
+    event: {
+      type: "DEAL_AGREED",
+      dealId: deal.id,
+      buyerId,
+      productId: deal.productId,
+      quality: deal.quality,
+      quantity: deal.quantity,
+      unitPrice: deal.unitPrice,
+      expiresAt: deal.expiresAt,
+      budgetCommitted: deal.budgetCommitted,
+    },
+  };
+}
+
+/**
+ * HELD deals whose `expiresAt` has come (ADR 0022 decision 6): each releases its
+ * commitment under the daily caps, leaves `heldDeals` and emits DEAL_EXPIRED, in
+ * one entry-free DAILY_SETTLEMENT transaction keyed by the deal. In deal ID order.
+ * DISPATCHED deals are never touched: only their delivery resolves them.
+ */
+function expireDeals(state: GameState, data: GameData, coordinator: TransactionCoordinator, ctx: TickContext): GameState {
+  let s = state;
+  for (const deal of state.heldDeals) {
+    if (deal.status !== "HELD" || deal.expiresAt > ctx.tick) continue;
+    const tx = coordinator.begin(s, {
+      kind: "DAILY_SETTLEMENT",
+      idempotencyKey: idempotencyKey("DAILY_SETTLEMENT", "DEAL_EXPIRED", deal.id),
+      tick: ctx.tick,
+      causedBy: null,
+    });
+    if (tx.status === "duplicate") continue;
+    tx.update((x) => endDeal(releaseDeal(x, data, deal.buyerId, deal.id), deal.id));
+    tx.emit({ type: "DEAL_EXPIRED", dealId: deal.id, buyerId: deal.buyerId });
+    const result = tx.commit();
+    if (result.status !== "committed") throw new Error(`DEAL_EXPIRED for ${deal.id} rejected: ${JSON.stringify(result.reason)}`);
+    s = result.state;
+  }
+  return s;
 }
 
 // ---------------------------------------------------------------------------
@@ -549,6 +686,41 @@ export function registerMarket(registry: SystemRegistry, data: GameData, coordin
   validateMarketData(data);
 
   registry.onPhase("midnight", "market-daily-cycle", (state, ctx) => runMidnight(state, ctx, data, coordinator));
+  registry.onPhase("deadlines", "held-deal-expiry", (state, ctx) => expireDeals(state, data, coordinator, ctx));
+
+  // AGREE_DEAL (ADR 0022 decision 6): one entry-free DAILY_SETTLEMENT transaction
+  // keyed by the new deal, carrying DEAL_AGREED. Shape first (gate 1), then
+  // `quoteDeal`'s checks against the buyer.
+  registry.onCommand("AGREE_DEAL", {
+    validate: (_state, command) =>
+      Number.isSafeInteger(command.quantity) && command.quantity > 0
+        ? null
+        : { code: "INVALID_QUANTITY", field: "quantity", value: command.quantity },
+    apply: (state, command, ctx) => {
+      const dealId = formatId("Deal", state.counters.nextId.Deal);
+      const tx = coordinator.begin(state, {
+        kind: "DAILY_SETTLEMENT",
+        idempotencyKey: idempotencyKey("DAILY_SETTLEMENT", "DEAL_AGREED", dealId),
+        tick: ctx.tick,
+        causedBy: ctx.envelope.id,
+      });
+      if (tx.status === "duplicate") return { status: "applied", state };
+      const { buyerId, productId, quality, quantity, agreedUnitPrice } = command;
+      if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+        tx.reject({ code: "INVALID_QUANTITY", field: "quantity", value: quantity });
+      } else {
+        const agreed = agreeDeal(tx.state, data, { buyerId, line: { productId, quality, quantity }, agreedUnitPrice }, ctx.tick);
+        if ("code" in agreed) {
+          tx.reject(agreed);
+        } else {
+          tx.update(() => agreed.state);
+          tx.emit(agreed.event);
+        }
+      }
+      const result = tx.commit();
+      return result.status === "committed" ? { status: "applied", state: result.state } : { status: "rejected", reason: result.reason };
+    },
+  });
 
   registry.onWorldEvent("SHORTAGE_START", (state, event, ctx) => {
     const { supplierId, materialId } = event;

@@ -43,14 +43,29 @@ function withFamily(patch: Partial<ScenarioDefinition["family"]>): ScenarioDefin
 
 const load = (scenario: ScenarioDefinition, data: GameData = GAME_DATA) => () => createInitialState(scenario, data);
 
-/** A one-case spot sale to Kessler's on its default (safe) route, county-road. */
-const toKessler: GameCommand = {
-  type: "DISPATCH_DELIVERY",
-  vehicleId: MODEL_TT_TRUCK,
-  cargo: [{ productId: MOONSHINE, quality: "basic", quantity: 1 }],
-  purpose: { kind: "SALE", buyerId: KESSLERS_BACK_ROOM, agreedUnitPrice: cents(1) },
-  routeId: null,
-};
+/**
+ * A one-case sale to Kessler's on its default (safe) route, county-road, against a
+ * deal held at today's quote (ADR 0022 decision 6). A rejected dispatch leaves its
+ * deal held, so the next call reuses it.
+ */
+function toKessler(sim: KernelSimulation): GameCommand {
+  const held = sim.state.heldDeals.find((d) => d.status === "HELD" && d.buyerId === KESSLERS_BACK_ROOM && d.quantity === 1);
+  if (!held) {
+    const unitPrice = sim.state.buyers.find((b) => b.id === KESSLERS_BACK_ROOM)!.wants.find((w) => w.minimumQuality === "basic")!.unitPrice;
+    const agreed = sim.dispatch({
+      command: { type: "AGREE_DEAL", buyerId: KESSLERS_BACK_ROOM, productId: MOONSHINE, quality: "basic", quantity: 1, agreedUnitPrice: unitPrice },
+    });
+    if (agreed.status !== "applied") throw new Error("AGREE_DEAL with Kessler's was rejected");
+  }
+  return {
+    type: "DISPATCH_DELIVERY",
+    vehicleId: MODEL_TT_TRUCK,
+    cargo: [{ productId: MOONSHINE, quality: "basic", quantity: 1 }],
+    purpose: { kind: "SALE", buyerId: KESSLERS_BACK_ROOM, dealId: held?.id ?? sim.state.heldDeals.at(-1)!.id },
+    routeId: null,
+    driver: { kind: "FOUNDER" },
+  };
+}
 
 function rejection(sim: KernelSimulation, command: GameCommand): RejectionReason | null {
   const result = sim.dispatch({ command });
@@ -182,15 +197,15 @@ describe("the rival closure fires (ADR 0019 decision 5, ADR 0020 decision 12)", 
     advanceTo(sim, CLOSES_AT - 1);
     expect(countyRoad().closure).toBeNull();
     // Open: the dispatch gets past the route check and stops at the (empty) stock.
-    expect(rejection(sim, toKessler)?.code).toBe("INSUFFICIENT_STOCK");
+    expect(rejection(sim, toKessler(sim))?.code).toBe("INSUFFICIENT_STOCK");
 
     advanceTo(sim, CLOSES_AT);
     expect(countyRoad().closure).toEqual({ reason: "RIVAL", reopensAt: REOPENS_AT });
     expect(sim.state.eventJournal.filter((e) => e.type === "ROUTE_CLOSED" && e.tick === CLOSES_AT)).toEqual([
       expect.objectContaining({ type: "ROUTE_CLOSED", routeId: COUNTY_ROAD, reason: "RIVAL", reopensAt: REOPENS_AT }),
     ]);
-    expect(rejection(sim, toKessler)).toEqual({ code: "ROUTE_CLOSED", routeId: COUNTY_ROAD, reopensAt: REOPENS_AT });
-    expect(rejection(sim, { ...toKessler, routeId: COUNTY_ROAD } as GameCommand)).toEqual({
+    expect(rejection(sim, toKessler(sim))).toEqual({ code: "ROUTE_CLOSED", routeId: COUNTY_ROAD, reopensAt: REOPENS_AT });
+    expect(rejection(sim, { ...toKessler(sim), routeId: COUNTY_ROAD } as GameCommand)).toEqual({
       code: "ROUTE_CLOSED",
       routeId: COUNTY_ROAD,
       reopensAt: REOPENS_AT,
@@ -199,13 +214,13 @@ describe("the rival closure fires (ADR 0019 decision 5, ADR 0020 decision 12)", 
     expect(sim.snapshot().routes.find((r) => r.id === COUNTY_ROAD)!.status).toEqual({ open: false, reopensAt: REOPENS_AT, reason: "RIVAL" });
 
     advanceTo(sim, REOPENS_AT - 1);
-    expect(rejection(sim, toKessler)?.code).toBe("ROUTE_CLOSED");
+    expect(rejection(sim, toKessler(sim))?.code).toBe("ROUTE_CLOSED");
 
     advanceTo(sim, REOPENS_AT);
     expect(countyRoad().closure).toBeNull();
     expect(sim.state.eventJournal.filter((e) => e.type === "ROUTE_REOPENED" && e.tick === REOPENS_AT)).toEqual([
       expect.objectContaining({ type: "ROUTE_REOPENED", routeId: COUNTY_ROAD }),
     ]);
-    expect(rejection(sim, toKessler)?.code).toBe("INSUFFICIENT_STOCK");
+    expect(rejection(sim, toKessler(sim))?.code).toBe("INSUFFICIENT_STOCK");
   });
 });

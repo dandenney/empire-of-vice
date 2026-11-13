@@ -13,7 +13,10 @@
 // with two records, two activity items and a catch-up; nothing reads it yet)
 // → fnv1a64:50e6c1bee8ce01c8 (P1, #193: `GameState.founder` and
 // `VehicleState.parkedAt`, which day0Save now carries; the fake systems never
-// read or write them).
+// read or write them)
+// → fnv1a64:43ff79f6e9801b39 (O1a, #192: `heldDeals`, the `Deal` counter and
+// `VehicleState.tripCount` in day0Save, and `issuer` on every command envelope;
+// removing them gives 50e6c1bee8ce01c8 again).
 
 import { tick } from "@eov/contracts";
 import { ids } from "@eov/contracts/fixtures";
@@ -45,7 +48,7 @@ describe("reference scenario", () => {
   });
 
   it("has a pinned state hash", () => {
-    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:50e6c1bee8ce01c8"`);
+    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:43ff79f6e9801b39"`);
   });
 
   it("replays from its command log to the same hash", () => {

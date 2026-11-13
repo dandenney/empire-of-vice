@@ -29,8 +29,8 @@ describe("market data validation (extra cases)", () => {
 describe("releaseDeal (extra cases)", () => {
   it("returns the state unchanged when the buyer has no such commitment", () => {
     const state = newGame().state;
-    expect(releaseDeal(state, GAME_DATA, CROSSROADS_ROADHOUSE, asId("Delivery", "delivery-404"))).toBe(state);
-    expect(releaseDeal(state, GAME_DATA, asId("Buyer", "nobody"), asId("Delivery", "delivery-404"))).toBe(state);
+    expect(releaseDeal(state, GAME_DATA, CROSSROADS_ROADHOUSE, asId("Deal", "deal-404"))).toBe(state);
+    expect(releaseDeal(state, GAME_DATA, asId("Buyer", "nobody"), asId("Deal", "deal-404"))).toBe(state);
   });
 });
 

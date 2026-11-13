@@ -97,21 +97,22 @@ describe("Sprint Zero: one case of moonshine", () => {
     expect(productionTx.kind).toBe("PRODUCTION");
     expect(productionTx.eventIds).toEqual(completed.map((e) => e.id));
 
-    // 4. Dispatch the truck: a deal struck at dispatch (ADR 0005). Cost moves to goods in transit.
+    // 4. Agree the deal, then dispatch the truck against it (ADR 0022 decision 6). Cost moves to goods in transit.
     const price = roadhouseQuote(sim.state);
     const budgetBefore = sim.state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!.budgetRemaining;
-    expectApplied(sim.dispatch({ command: sell(1, price) }));
+    expectApplied(sell(sim, 1, price));
     expectBalanced(sim.state);
     expect(balances(sim.state).FINISHED_GOODS).toBe(0);
     expect(balances(sim.state).GOODS_IN_TRANSIT).toBe(caseCost);
     expect(balanceSheet(sim.state).netWorth).toBe(openingNetWorth);
     const buyer = sim.state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!;
     expect(buyer.budgetRemaining).toBe(budgetBefore - price);
-    expect(buyer.commitments).toEqual([{ deliveryId: "delivery-1", productId: recipe.productId, quantity: 1, amount: price }]);
+    expect(buyer.commitments).toEqual([{ dealId: "deal-1", productId: recipe.productId, quality: "basic", quantity: 1, amount: price }]);
+    expect(sim.state.heldDeals).toEqual([expect.objectContaining({ id: "deal-1", status: "DISPATCHED", deliveryId: "delivery-1", unitPrice: price })]);
     const trip = sim.state.vehicles[0]!.trip!;
     expect(trip).toMatchObject({ leg: "OUTBOUND", routeId: STATE_HIGHWAY });
     expect(trip.arrivesAt).toBe(addTicks(trip.departedAt, route.durationTicks));
-    expect(typesOf(sim.takeEvents())).toEqual(["DELIVERY_DISPATCHED"]);
+    expect(typesOf(sim.takeEvents())).toEqual(["DEAL_AGREED", "DELIVERY_DISPATCHED"]);
 
     // 5. Arrival: cash on delivery, revenue and COGS recognized now.
     advanceTo(sim, trip.arrivesAt - 1);
@@ -130,12 +131,14 @@ describe("Sprint Zero: one case of moonshine", () => {
     expect(typesOf(sale)).toEqual(["SALE_COMPLETED"]);
     expect(sale[0]).toMatchObject({ revenue: price, costOfGoodsSold: caseCost, unitPrice: price, buyerId: CROSSROADS_ROADHOUSE });
     expect(sim.state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!.commitments).toEqual([]);
+    expect(sim.state.heldDeals).toEqual([]); // SETTLED: the deal leaves the list (ADR 0022 decision 6)
     expect(sim.state.ledger.transactions.map((t) => t.kind)).toEqual([
       "OPENING_BALANCE",
       "MATERIAL_PURCHASE",
       "MATERIAL_PURCHASE",
       "RESERVATION",
       "PRODUCTION",
+      "DAILY_SETTLEMENT", // DEAL_AGREED: no entries
       "DISPATCH",
       "SALE",
     ]);
@@ -183,7 +186,7 @@ describe("Sprint Zero: one case of moonshine", () => {
       sim.dispatch({ command: buySugar(qtyOf(SUGAR)) });
       sim.dispatch({ command: produce(1) });
       sim.advance(recipe.ticksPerCase + 1);
-      sim.dispatch({ command: sell(1, roadhouseQuote(sim.state)) });
+      sell(sim, 1, roadhouseQuote(sim.state));
       sim.advance(route.durationTicks * 2 + 1);
       return sim.stateHash();
     };

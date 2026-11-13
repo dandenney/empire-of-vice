@@ -26,7 +26,8 @@
 // test-writer's choice.
 //
 // src/economy/market/index.ts:
-//   Existing (S0), kept: `registerMarket` (issue), `commitDeal(state, deal, deliveryId, line)`,
+//   Existing (S0), kept: `registerMarket` (issue), `commitDeal(state, deal, dealId, line)`
+//     (re-keyed from deliveryId to dealId by ADR 0022 decision 6),
 //     `type Deal` ({ buyerId, unitPrice, quantity, amount }, plus whatever field
 //     records the matched want. These tests don't read that field.)
 //   Changed: `quoteDeal(state, data, buyerId, agreedUnitPrice, line): Deal | RejectionReason` (issue)
@@ -38,7 +39,11 @@
 //       It returns the clamped [M_D, M_S, M_E] in ppm, ready for `applyRatios`.
 //     `validateMarketData(data: GameData): void` (issue). Throws `MarketDataError` on invalid data.
 //     `MarketDataError` (the "typed error", a subclass of Error).
-//     `releaseDeal(state, data, buyerId, deliveryId): GameState` (issue)
+//     `releaseDeal(state, data, buyerId, dealId): GameState` (issue; dealId from ADR 0022 decision 6)
+//
+// ADR 0022 decision 6: M001's sale at dispatch is now AGREE_DEAL at the quote, then a
+// DISPATCH_DELIVERY of the same cargo naming that deal. The buyer checks (QUOTE_CHANGED,
+// BUYER_WILL_TAKE_LESS) run at AGREE_DEAL, and buyer commitments are keyed by dealId.
 //
 // @eov/game-data (issue, decisions 1–3):
 //   `MARKET_PRICE_BOUNDS` exported (shape is the implementer's choice; only its existence is checked).
@@ -73,6 +78,7 @@ import {
   type BuyerState,
   type CargoLine,
   type CommandResult,
+  type DealId,
   type GameCommand,
   type GameEvent,
   type GameState,
@@ -315,14 +321,37 @@ function stockCases(sim: KernelSimulation, cases: number): void {
   expect(casesInStock(sim.state)).toBe(before + cases);
 }
 
-function sell(buyerId: BuyerId, quantity: number, agreedUnitPrice: Money, quality: QualityTier = "basic"): GameCommand {
+function agree(buyerId: BuyerId, quantity: number, agreedUnitPrice: Money, quality: QualityTier = "basic"): GameCommand {
+  return { type: "AGREE_DEAL", buyerId, productId: MOONSHINE, quality, quantity, agreedUnitPrice };
+}
+
+function dealSale(buyerId: BuyerId, quantity: number, dealId: DealId, quality: QualityTier = "basic"): GameCommand {
   return {
     type: "DISPATCH_DELIVERY",
     vehicleId: MODEL_TT_TRUCK,
     cargo: [{ productId: MOONSHINE, quality, quantity }],
-    purpose: { kind: "SALE", buyerId, agreedUnitPrice },
+    purpose: { kind: "SALE", buyerId, dealId },
     routeId: null,
+    driver: { kind: "FOUNDER" },
   };
+}
+
+/** The newest held deal (IDs sort with compareIds, so the last one is the latest minted). */
+function lastDealId(state: GameState): DealId {
+  const d = state.heldDeals.at(-1);
+  if (!d) throw new Error("No held deal");
+  return d.id;
+}
+
+/**
+ * A sale as M001 dispatched it, split by ADR 0022 decision 6: AGREE_DEAL at the price,
+ * then a deal dispatch of the same cargo. Returns the agreement's result if it wasn't
+ * applied, otherwise the dispatch's.
+ */
+function sell(sim: KernelSimulation, buyerId: BuyerId, quantity: number, agreedUnitPrice: Money, quality: QualityTier = "basic"): CommandResult {
+  const agreed = sim.dispatch({ command: agree(buyerId, quantity, agreedUnitPrice, quality) });
+  if (agreed.status !== "applied") return agreed;
+  return sim.dispatch({ command: dealSale(buyerId, quantity, lastDealId(sim.state), quality) });
 }
 
 function lastDeliveryId(state: GameState) {
@@ -599,7 +628,7 @@ describe("ECO-001 midnight cycle", () => {
     const dispatchTick = DAY - Math.floor(route.durationTicks / 2);
     expect(sim.state.tick).toBeLessThan(dispatchTick);
     advanceTo(sim, dispatchTick - 1);
-    expectApplied(sim.dispatch({ command: sell(roadhouse, sold, wantOf(sim.state, roadhouse, "basic").unitPrice) }));
+    expectApplied(sell(sim, roadhouse, sold, wantOf(sim.state, roadhouse, "basic").unitPrice));
     advanceTo(sim, DAY - 1);
 
     const before = sim.state;
@@ -803,7 +832,7 @@ describe("ECO-001 prices are fixed within a day", () => {
     check();
     const buyer = buyerOf(sim.state, CROSSROADS_ROADHOUSE);
     const want = wantOf(sim.state, CROSSROADS_ROADHOUSE, "basic");
-    expectApplied(sim.dispatch({ command: sell(CROSSROADS_ROADHOUSE, 1, want.unitPrice) }));
+    expectApplied(sell(sim, CROSSROADS_ROADHOUSE, 1, want.unitPrice));
     expect(buyerOf(sim.state, CROSSROADS_ROADHOUSE).budgetRemaining).toBe(buyer.budgetRemaining - want.unitPrice);
     expect(wantOf(sim.state, CROSSROADS_ROADHOUSE, "basic").demandRemaining).toBe(want.demandRemaining - 1);
     check();
@@ -826,7 +855,8 @@ describe("ECO-001 prices are fixed within a day", () => {
       const sim = gameWithSeed(seed);
       stockCases(sim, 1);
       const yesterday = wantOf(sim.state, CROSSROADS_ROADHOUSE, "basic").unitPrice;
-      const queued = sim.dispatch({ command: sell(CROSSROADS_ROADHOUSE, 1, yesterday), scheduledTick: tick(DAY + 1) });
+      // The quote is checked by AGREE_DEAL (ADR 0022 decision 6), so that's the command queued.
+      const queued = sim.dispatch({ command: agree(CROSSROADS_ROADHOUSE, 1, yesterday), scheduledTick: tick(DAY + 1) });
       expect(queued.status).toBe("queued");
       advanceTo(sim, DAY);
       const today = wantOf(sim.state, CROSSROADS_ROADHOUSE, "basic").unitPrice;
@@ -841,7 +871,9 @@ describe("ECO-001 prices are fixed within a day", () => {
         expect(sim.state.deliveries).toEqual([]);
       } else {
         expect(rejected).toEqual([]);
-        expect(eventsOfType(events, "DELIVERY_DISPATCHED")).toHaveLength(1);
+        // The deal held: dispatch the cargo against it, as the M001 sale did in one command.
+        expectApplied(sim.dispatch({ command: dealSale(CROSSROADS_ROADHOUSE, 1, lastDealId(sim.state)) }));
+        expect(eventsOfType([...events, ...sim.takeEvents()], "DELIVERY_DISPATCHED")).toHaveLength(1);
       }
     }
     expect(movedSeen).toBeGreaterThan(0);
@@ -1067,16 +1099,18 @@ describe("ECO-001 want matching (follow-up from #47)", () => {
 
   it("commitDeal reduces the matched want's demand and the shared budget", () => {
     const { opening, basic, standard } = kesslers();
-    const deliveryId = asId("Delivery", "delivery-901");
+    const dealId = asId("Deal", "deal-901");
     const stdLine = line("standard", 2);
     const stdDeal = mustDeal(quoteDeal(opening, GAME_DATA, KESSLERS_BACK_ROOM, standard.unitPrice, stdLine));
-    const afterStd = commitDeal(opening, stdDeal, deliveryId, stdLine);
+    const afterStd = commitDeal(opening, stdDeal, dealId, stdLine);
     expect(wantOf(afterStd, KESSLERS_BACK_ROOM, "standard").demandRemaining).toBe(standard.demandRemaining - 2);
     expect(wantOf(afterStd, KESSLERS_BACK_ROOM, "basic").demandRemaining).toBe(basic.demandRemaining);
     expect(buyerOf(afterStd, KESSLERS_BACK_ROOM).budgetRemaining).toBe(buyerOf(opening, KESSLERS_BACK_ROOM).budgetRemaining - stdDeal.amount);
-    expect(buyerOf(afterStd, KESSLERS_BACK_ROOM).commitments).toEqual([{ deliveryId, productId: MOONSHINE, quantity: 2, amount: stdDeal.amount }]);
+    expect(buyerOf(afterStd, KESSLERS_BACK_ROOM).commitments).toEqual([
+      { dealId, productId: MOONSHINE, quality: "standard", quantity: 2, amount: stdDeal.amount },
+    ]);
 
-    const basicId = asId("Delivery", "delivery-902");
+    const basicId = asId("Deal", "deal-902");
     const basicLine = line("basic", 3);
     const basicDeal = mustDeal(quoteDeal(afterStd, GAME_DATA, KESSLERS_BACK_ROOM, basic.unitPrice, basicLine));
     const afterBoth = commitDeal(afterStd, basicDeal, basicId, basicLine);
@@ -1129,17 +1163,17 @@ describe("ECO-001 releaseDeal", () => {
     stockCases(sim, 3);
     const before = sim.state;
     const basic = wantOf(before, KESSLERS_BACK_ROOM, "basic");
-    expectApplied(sim.dispatch({ command: sell(KESSLERS_BACK_ROOM, 3, basic.unitPrice) }));
+    expectApplied(sell(sim, KESSLERS_BACK_ROOM, 3, basic.unitPrice));
     const during = sim.state;
-    const deliveryId = lastDeliveryId(during);
-    const commitment = buyerOf(during, KESSLERS_BACK_ROOM).commitments.find((c) => c.deliveryId === deliveryId)!;
+    const dealId = lastDealId(during);
+    const commitment = buyerOf(during, KESSLERS_BACK_ROOM).commitments.find((c) => c.dealId === dealId)!;
     expect(commitment).toMatchObject({ productId: MOONSHINE, quantity: 3 });
     const duringJson = JSON.stringify(during.buyers);
 
-    const released = releaseDeal(during, GAME_DATA, KESSLERS_BACK_ROOM, deliveryId);
+    const released = releaseDeal(during, GAME_DATA, KESSLERS_BACK_ROOM, dealId);
     expect(JSON.stringify(during.buyers)).toBe(duringJson); // pure
     const b = buyerOf(released, KESSLERS_BACK_ROOM);
-    expect(b.commitments.some((c) => c.deliveryId === deliveryId)).toBe(false);
+    expect(b.commitments.some((c) => c.dealId === dealId)).toBe(false);
     expect(wantOf(released, KESSLERS_BACK_ROOM, "basic").demandRemaining).toBe(basic.demandRemaining);
     expect(wantOf(released, KESSLERS_BACK_ROOM, "standard").demandRemaining).toBe(wantOf(during, KESSLERS_BACK_ROOM, "standard").demandRemaining);
     expect(b.budgetRemaining).toBe(Math.min(buyerDef(KESSLERS_BACK_ROOM).dailyBudget, buyerOf(during, KESSLERS_BACK_ROOM).budgetRemaining + commitment.amount));
@@ -1158,9 +1192,10 @@ describe("ECO-001 releaseDeal", () => {
     stockCases(sim, shipped);
     const route = GAME_DATA.routes.find((r) => r.toLocationId === def.locationId)!;
     advanceTo(sim, DAY - Math.floor(route.durationTicks / 2) - 1);
-    expectApplied(sim.dispatch({ command: sell(roadhouse, shipped, wantOf(sim.state, roadhouse, "basic").unitPrice) }));
+    expectApplied(sell(sim, roadhouse, shipped, wantOf(sim.state, roadhouse, "basic").unitPrice));
     const deliveryId = lastDeliveryId(sim.state);
-    const amount = buyerOf(sim.state, roadhouse).commitments.find((c) => c.deliveryId === deliveryId)!.amount;
+    const dealId = lastDealId(sim.state);
+    const amount = buyerOf(sim.state, roadhouse).commitments.find((c) => c.dealId === dealId)!.amount;
     advanceTo(sim, DAY + 1);
     const day1 = sim.state;
     expect(day1.deliveries.find((d) => d.id === deliveryId)!.status).toBe("OUTBOUND");
@@ -1172,10 +1207,10 @@ describe("ECO-001 releaseDeal", () => {
       const price = wantOf(day1, roadhouse, "basic").unitPrice;
       const todayLine = line("basic", soldToday);
       const deal = mustDeal(quoteDeal(day1, GAME_DATA, roadhouse, price, todayLine));
-      const withToday = commitDeal(day1, deal, asId("Delivery", "delivery-950"), todayLine);
-      const released = releaseDeal(withToday, GAME_DATA, roadhouse, deliveryId);
+      const withToday = commitDeal(day1, deal, asId("Deal", "deal-950"), todayLine);
+      const released = releaseDeal(withToday, GAME_DATA, roadhouse, dealId);
       const b = buyerOf(released, roadhouse);
-      expect(b.commitments.map((c) => c.deliveryId)).toEqual(["delivery-950"]);
+      expect(b.commitments.map((c) => c.dealId)).toEqual(["deal-950"]);
       expect(wantOf(released, roadhouse, "basic").demandRemaining).toBe(Math.min(daily, daily - soldToday + shipped));
       expect(b.budgetRemaining).toBe(Math.min(def.dailyBudget, def.dailyBudget - deal.amount + amount));
       if (soldToday < shipped) {
@@ -1211,7 +1246,7 @@ describe("ECO-001 no unlimited repeat arbitrage", () => {
     const cap = Math.min(daily, Math.floor(def.dailyBudget / price));
     expect(cap).toBeGreaterThan(0);
 
-    expect(expectRejected(sim, sell(roadhouse, cap + 1, price), "BUYER_WILL_TAKE_LESS")).toEqual({
+    expect(expectRejected(sim, agree(roadhouse, cap + 1, price), "BUYER_WILL_TAKE_LESS")).toEqual({
       code: "BUYER_WILL_TAKE_LESS",
       buyerId: roadhouse,
       requested: cap + 1,
@@ -1219,7 +1254,7 @@ describe("ECO-001 no unlimited repeat arbitrage", () => {
     });
 
     const stockBefore = casesInStock(sim.state);
-    expectApplied(sim.dispatch({ command: sell(roadhouse, cap, price) }));
+    expectApplied(sell(sim, roadhouse, cap, price));
     expect(casesInStock(sim.state)).toBe(stockBefore - cap);
     expect(buyerOf(sim.state, roadhouse).budgetRemaining).toBe(def.dailyBudget - cap * price);
     expect(buyerOf(sim.state, roadhouse).budgetRemaining).toBeGreaterThanOrEqual(0);
@@ -1228,7 +1263,7 @@ describe("ECO-001 no unlimited repeat arbitrage", () => {
     advanceUntil(sim, truckHome, 3 * DAY - sim.state.tick - 1);
     expect(sim.state.tick).toBeLessThan(3 * DAY);
     expect(casesInStock(sim.state)).toBe(stockBefore - cap);
-    expect(expectRejected(sim, sell(roadhouse, 1, price), "BUYER_WILL_TAKE_LESS")).toMatchObject({ requested: 1, acceptable: 0 });
+    expect(expectRejected(sim, agree(roadhouse, 1, price), "BUYER_WILL_TAKE_LESS")).toMatchObject({ requested: 1, acceptable: 0 });
     expect(buyerOf(sim.state, roadhouse).budgetRemaining).toBeGreaterThanOrEqual(0);
 
     // Tomorrow, the market remembers today's sales: M_S drops below 1.0, never below 0.80.
@@ -1300,18 +1335,20 @@ describe("ECO-001 spot sale end to end", () => {
     const buyerBefore = buyerOf(sim.state, roadhouse);
     const wantBefore = wantOf(sim.state, roadhouse, "basic");
 
-    // A rejected dispatch changes nothing.
-    expectRejected(sim, sell(roadhouse, cases, cents(quote + 1)), "QUOTE_CHANGED");
+    // A rejected agreement changes nothing (the quote is checked at AGREE_DEAL, ADR 0022 decision 6).
+    expectRejected(sim, agree(roadhouse, cases, cents(quote + 1)), "QUOTE_CHANGED");
 
+    expectApplied(sim.dispatch({ command: agree(roadhouse, cases, quote) }));
+    const dealId = lastDealId(sim.state);
     const beforeDispatch = sim.state;
     const cashBefore = sideTotal(beforeDispatch.ledger.transactions, "CASH", "DEBIT") - sideTotal(beforeDispatch.ledger.transactions, "CASH", "CREDIT");
-    expectApplied(sim.dispatch({ command: sell(roadhouse, cases, quote) }));
+    expectApplied(sim.dispatch({ command: dealSale(roadhouse, cases, dealId) }));
     const dispatchTxs = sim.state.ledger.transactions.slice(beforeDispatch.ledger.transactions.length);
     expect(dispatchTxs.map((t) => t.kind)).toEqual(["DISPATCH"]);
     const deliveryId = lastDeliveryId(sim.state);
     const amount = multiplyMoney(quote, cases);
-    // quoteDeal + commitDeal inside DISPATCH: the deal is committed with the delivery.
-    expect(buyerOf(sim.state, roadhouse).commitments).toEqual([{ deliveryId, productId: MOONSHINE, quantity: cases, amount }]);
+    // quoteDeal + commitDeal inside AGREE_DEAL: the deal is committed, keyed by the deal, and still held after dispatch.
+    expect(buyerOf(sim.state, roadhouse).commitments).toEqual([{ dealId, productId: MOONSHINE, quality: "basic", quantity: cases, amount }]);
     expect(buyerOf(sim.state, roadhouse).budgetRemaining).toBe(buyerBefore.budgetRemaining - amount);
     expect(wantOf(sim.state, roadhouse, "basic").demandRemaining).toBe(wantBefore.demandRemaining - cases);
     expect(casesInStock(sim.state)).toBe(casesInStock(beforeDispatch) - cases);
