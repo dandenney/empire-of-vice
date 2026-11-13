@@ -70,6 +70,8 @@ Delegation                        E2 (driver)  E3 (office hand)
 | D4 (#171) | ADR 0024: telephones and messages (COMM-001) | D1–D3 | orchestrator, contract review |
 | D5a (#172) | ADR 0025: employees, hiring, authority and standing orders, reports, the Distiller (PERS-001) | D1–D3, D4 | orchestrator, contract review |
 | D5b (#196) | ADR 0026: the Driver and the Office Hand | D4, D5a | orchestrator, contract review |
+| D4b (#213) | ADR 0027: earned phone access and message-taking (the human's #203 decision), amending ADR 0024 | D4, D5b | orchestrator, contract review |
+| D5c (#214) | ADR 0028: the hiring scene, the Distiller's hours and reports (the human's #209 decision), amending ADR 0025 | D5a, D5b, D4b | orchestrator, contract review |
 | K1 (#188) | Knowledge contract (ADR 0021), save v2 | D1 | agent, contract review |
 | P1 (#193) | Presence contract (ADR 0023), save v3; flag-off no-op founder commands | D3, K1 | agent, contract review |
 | O1a (#192) | Deals and every command-shape change (ADR 0022 + 0023 `driver`), save v4; one re-lock pass over nine locked files; M001-equivalent with the flag off | D2, D3, P1 | agent, contract review, two-step re-lock |
@@ -102,8 +104,8 @@ These are open; placeholders stand in until the human decides, each tracked as a
 - Milestone name, role names, candidate names, and the founder's name.
 - Scene art direction (M002 ships with placeholder art; playtests inform the final look).
 - How the ledger looks: period account book, faded ink, date stamps.
-- Where and how you find people to hire.
-- Which places have public phones.
+- Where and how you find people to hire: decided in #209 (Miller's, by word of mouth), recorded by D5c (#214).
+- Which places have phones, and who may use them: decided in #203 (earned access), recorded by D4b (#213).
 
 ## Factory metrics
 
@@ -113,3 +115,10 @@ These are open; placeholders stand in until the human decides, each tracked as a
 | D1 ADR 0021 (#168) | #187 | n | 5 | Round 1 (5 findings): the non-leak property could be satisfied by any leak and global ID counters leaked, always-known cash leaked installment outcomes, the live view went stale after paused commands, stored values carried world-computed affordances (a phone call leaked the buyer's budget through `maxAcceptableQuantity`), and nothing recorded which book rows were known. Round 2: hidden differences spread through the economy (fixed with a divergence set), `inTransit` leaked seizures, and the books were classified per kind instead of per transaction. Round 3: production completions are cash postings and leaked batch progress. Hit the 3-round cap, so `needs-human`; the human allowed rounds 4 and 5. Round 4: the round-3 edit left midnight wages at cash 0 with no rule. Round 5 approved. Follow-ups to #169, #172, #188 (K1). Human touches: 2 (round-cap decisions). Merged by: auto |
 | D2 ADR 0022 (#169) | #191 | n | 3 | Round 1 (12 findings): commands naming simulation-created IDs resolved their place from the world (`ACCEPT_CONTRACT`, `RELEASE_RESERVATION`, `REPEAT_OPERATION`); installment checks read hidden progress; a by-phone deal leaked the budget; vehicle rejections leaked whereabouts; the on-spec arrival was undefined (a false `GAME_LOST` risk); commitments keyed by delivery; an unsound migration; the new account missing from finance; a wrong funds-check claim; per-trip RNG still coupled; no channel mapping; the lab and sale form broken. Round 2: dispatched deals leaked through time-based expiry, the deal deadline silently changed M001's `TOO_LATE` rule, and the re-lock list was incomplete (all ten locked files). Round 3 approved. Written in parallel with ADR 0023 and aligned twice. Follow-ups to O1 #192, #172. Merged by: auto |
 | D3 ADR 0023 (#170) | #190 | n | 4 | Written by a forked agent. Round 1 (8 findings): the migration read game-data, `parkedAt` couldn't describe a moving truck, arrival-tick presence was undefined, the tick order and departure persistence were missing, the tiredness scope and no-trap bound were wrong, shapes were undefined, the TRAVEL/REST/WAKE rejections fell between ADRs, and pacing broke the lab's M001 targets. Round 2: the tick order didn't match the kernel, the no-trap bound could be postponed by queued commands, and a false claim about the dispatch origin. Round 3: a same-tick race at the end of a busy activity plus an off-by-one in the bound. Hit the cap, so `needs-human`; the human allowed round 4, which approved. Follow-ups to P1 #193. Human touches: 1. Merged by: auto |
+| Factory checklist (orchestrator) | #195 | n | 1 | Round 1: the reviewer half of the design-record checklist wasn't in §7.4's review steps, and "written one after another" had no dispatch mechanism (fixed: the refresh lists the earlier record under Depends on). Merged by: auto |
+| Milestone table (orchestrator) | #201 | n | 1 | Round 1: E2/E3 issues lacked the D5b dependency the table gave them, and K2's issue didn't carry the `GameSnapshot` lint boundary. Fixed in the issues; the table commit was re-approved unchanged. Merged by: auto |
+| D4 ADR 0024 (#171) | #202 | n | 1 | Round 1: "older never overwrites newer" let a same-tick older value win, the migration missed `CatchUp.messages`/`droppedMessages`, and one attendant hook signature couldn't express two requirements. Placeholders became #203, later answered by the human. Merged by: auto |
+| K1 knowledge contract (#188) | #204 | y | 0 | Nothing blocking. Merged by: auto |
+| P1 presence contract (#193) | #206 | y | 0 | Approved first round, but merged with red CI (a chained `checks; merge`): P1 broke the Linux map screenshot baseline. Fixed by #207; the orchestrator now gates merges on a green check. Merged by: auto |
+| Fix map baseline (orchestrator) | #207 | y | 0 | Restored green `main` after #206. Merged by: auto |
+| D5a ADR 0025 (#172) | #208 | n | 1 | Round 1: employee commands minting IDs from the founder's counters broke exact replay, the migration missed saved `DeliveredMessage`s, and re-hiring someone contradicted "the founder already knows them". Placeholders became #209, later answered by the human. Merged by: auto |
