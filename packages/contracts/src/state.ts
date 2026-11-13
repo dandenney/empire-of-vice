@@ -204,6 +204,14 @@ export interface ProductionJobState {
   readonly completesAt: Tick;
   /** The material reservations this job will consume on completion. */
   readonly reservationIds: readonly ReservationId[];
+  /**
+   * The conversion cost this job paid into PRODUCTION_IN_PROGRESS when it started
+   * (ADR 0022 decision 7). Completion and failure credit exactly this amount and move
+   * no cash. `null` marks a job migrated from a pre-M002 save, which prepaid nothing
+   * and settles under the old rule (cash first, then WAGES_PAYABLE). Invariant: the
+   * PRODUCTION_IN_PROGRESS balance equals the sum of this over running jobs.
+   */
+  readonly conversionPrepaid: Money | null;
 }
 
 // ---------------------------------------------------------------------------

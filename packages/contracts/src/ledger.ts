@@ -15,6 +15,12 @@ export const LEDGER_ACCOUNTS = {
   FINISHED_GOODS: "asset",
   /** Owned goods on a truck. Moving goods between owned locations doesn't change net worth. */
   GOODS_IN_TRANSIT: "asset",
+  /**
+   * Production conversion cost paid when a job starts and not yet settled (ADR 0022
+   * decision 7). A prepaid cost, not an expense. Its balance equals the sum of
+   * `ProductionJobState.conversionPrepaid` over running jobs.
+   */
+  PRODUCTION_IN_PROGRESS: "asset",
   /** Kept for later credit terms; unused in M001 (ADR 0005: cash on delivery). */
   RECEIVABLES: "asset",
   EQUIPMENT: "asset",
@@ -55,6 +61,12 @@ export type TransactionKind =
   | "MATERIAL_PURCHASE"
   | "PRODUCTION"
   | "PRODUCTION_WRITE_OFF"
+  /**
+   * Starting a production job (ADR 0022 decision 7): reserves its inputs and pays its
+   * conversion cost, Dr PRODUCTION_IN_PROGRESS / Cr CASH (no entries when that cost is 0).
+   * Its cash-flow kind default is WAGES (ADR 0015).
+   */
+  | "PRODUCTION_START"
   | "EQUIPMENT_PURCHASE"
   | "DISPATCH"
   | "SALE"

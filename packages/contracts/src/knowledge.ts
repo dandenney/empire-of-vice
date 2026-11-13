@@ -396,7 +396,12 @@ export const TRANSACTION_PRODUCERS = {
   EQUIPMENT_PURCHASE: { trigger: "FOUNDER_COMMAND", legs: ["CASH"] },
   ASSET_SALE: { trigger: "FOUNDER_COMMAND", legs: ["CASH", "NON_CASH"] },
   DISPATCH: { trigger: "FOUNDER_COMMAND", legs: ["NON_CASH", "NO_ENTRIES"] },
-  RESERVATION: { trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] },
+  /**
+   * START_PRODUCTION (ADR 0022 decision 7): reserves the inputs and prepays the
+   * conversion cost (no entries when that cost is 0). Replaces M001's entry-less
+   * `RESERVATION:<jobId>`, which old ledgers still hold but nothing posts any more.
+   */
+  PRODUCTION_START: { trigger: "FOUNDER_COMMAND", legs: ["CASH", "NO_ENTRIES"] },
   "RESERVATION:ACCEPT": { trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] },
   "RESERVATION:RELEASE": { trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] },
   "DAILY_SETTLEMENT:WORKFORCE": { trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] },
@@ -467,9 +472,13 @@ export const CASH_POSTING_REVEALS = {
   SALE: { subjects: ["CONTRACT_PROGRESS", "VEHICLE_WHEREABOUTS"], news: "NONE" },
   /** A shakedown (T07f). */
   "LOSS:SHAKEDOWN": { subjects: [], news: "THE_POSTING" },
-  /** A job completing, conversion cost paid from cash (ADR 0017; ADR 0022 decision 7 narrows this to migrated jobs). */
+  /**
+   * A job completing, conversion cost paid from cash at settlement (ADR 0017). Since
+   * ADR 0022 decision 7 only a migrated job (`conversionPrepaid: null`) posts cash
+   * here; a prepaid job's completion is non-cash and takes the books row instead.
+   */
   PRODUCTION: { subjects: ["FACILITY_OPERATIONS", "FACILITY_STOCK"], news: "NONE" },
-  /** A job failing, conversion cost paid from cash. */
+  /** A migrated job failing, conversion cost paid from cash (a prepaid failure takes the books row). */
   PRODUCTION_WRITE_OFF: { subjects: ["FACILITY_OPERATIONS", "FACILITY_STOCK"], news: "NONE" },
 } as const satisfies Readonly<Partial<Record<TransactionProducer, CashPostingReveal>>>;
 
@@ -477,7 +486,8 @@ export const CASH_POSTING_REVEALS = {
  * Decision 7's table: what an unknown transaction with entries but no CASH entry
  * concerns, by producer. It leaves `pendingBooks` when that subject is next
  * learned, or that news is delivered.
- * - PRODUCTION, PRODUCTION_WRITE_OFF: FACILITY_STOCK of the job's facility;
+ * - PRODUCTION, PRODUCTION_WRITE_OFF: FACILITY_STOCK of the job's facility (every
+ *   prepaid job's settlement, ADR 0022 decision 7);
  * - INSTALLMENT_SETTLEMENT: CONTRACT_PROGRESS of that contract;
  * - VEHICLE_RETURN: VEHICLE_WHEREABOUTS of that truck;
  * - CARGO_LOSS: news at the delivery's origin facility;

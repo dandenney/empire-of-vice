@@ -44,6 +44,8 @@ export const ASSET_COPY: Readonly<Record<keyof BalanceSheet["assets"], string>> 
   rawMaterials: "Raw materials",
   finishedGoods: "Finished goods",
   goodsInTransit: "Goods in transit",
+  // PLACEHOLDER (story decision): conversion cost prepaid for running batches (ADR 0022 decision 7).
+  productionInProgress: "Batches in progress",
   receivables: "Receivables",
   equipment: "Equipment",
   vehicles: "Vehicles",
@@ -80,6 +82,8 @@ export const TRANSACTION_KIND_COPY: Readonly<Record<TransactionKind, string>> = 
   MATERIAL_PURCHASE: "Material purchase",
   PRODUCTION: "Production",
   PRODUCTION_WRITE_OFF: "Production write-off",
+  // PLACEHOLDER (story decision): ADR 0022 decision 7.
+  PRODUCTION_START: "Production started",
   EQUIPMENT_PURCHASE: "Equipment purchase",
   DISPATCH: "Dispatch",
   SALE: "Sale",
@@ -101,6 +105,8 @@ export const ACCOUNT_COPY: Readonly<Record<LedgerAccount, string>> = {
   RAW_MATERIALS: "Raw materials",
   FINISHED_GOODS: "Finished goods",
   GOODS_IN_TRANSIT: "Goods in transit",
+  // PLACEHOLDER (story decision): ADR 0022 decision 7.
+  PRODUCTION_IN_PROGRESS: "Batches in progress",
   RECEIVABLES: "Receivables",
   EQUIPMENT: "Equipment",
   VEHICLES: "Vehicles",
