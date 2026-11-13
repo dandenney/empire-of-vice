@@ -2,7 +2,7 @@
 
 Status: accepted (decided by the orchestrator for M002 task D4b, issue #213, from the human's design decision on #203; implemented by PH1 #205 and C1 #179)
 
-Amends: ADR 0023 decisions 2a, 4 and 7 (a founder-phase checkout step, the `CHECK_IN` activity, a rented room as a rest place), ADR 0024 decisions 1, 3, 4, 5, 6, 9, 13, 14 and 15 (the phone table, who may call from where, the pause, the family's numbers, where messages are taken and delivered, the call-in hook's tick, the save fields, the rejection reasons, the contract list), ADR 0026 decisions 9 and 10 (road calls, which phones the founder may use to reach an Office Hand).
+Amends: ADR 0023 decisions 2a, 4 and 7 (a founder-phase checkout step, the `CHECK_IN` activity, a rented room as a rest place), ADR 0024 decisions 1, 3, 4, 5, 6, 8, 9, 13, 14 and 15 (the phone table, who may call from where, the pause, the family's numbers and callers' hours, where messages are taken and delivered, the `phones` phase's delivery step, the call-in hook's tick, the save fields, the rejection reasons, the contract list), ADR 0025 decision 7 ("a public phone that `holdsMessages`" becomes a place that takes messages under an arrangement), ADR 0026 decisions 9 and 10 (road calls, which phones the founder may use to reach an Office Hand).
 
 ## Context
 
@@ -67,7 +67,7 @@ export interface PhoneDefinition {
 
 **A phone's hours.** `phoneOpen(L, t)`: true for a family line; otherwise `minuteOfDay(t)` falls in `PHONES[L].hours`, or in `PLACE_HOURS[L]` when `hours` is null, or always when neither has an entry. One rule for using, answering and taking messages, so the founder can tell from known hours when a phone can be used or can take a message.
 
-**Load validation** (`PhoneDataError`): at most one entry per location, sorted by `compareIds`; every location exists; `hours`, if set, passes the same interval checks as `validatePlaceHours` (at least one interval, whole minutes of the day, ends that differ); a `PUBLIC` fee is a whole number of cents ≥ 0; a `GUEST` phone's location has a `ROOMS` entry (decision 4); an `ARRANGEMENT` rule, in `use` or `messages`, has an `ARRANGEMENTS` entry for the location (decision 3).
+**Load validation** (`PhoneDataError`): at most one entry per location, sorted by `compareIds`; every location exists; `hours`, if set, passes the same interval checks as `validatePlaceHours` (at least one interval, whole minutes of the day, ends that differ); a `PUBLIC` fee is a whole number of cents ≥ 1, so a connected call always posts a balanced, non-empty `CASH` leg; a `GUEST` phone's location has a `ROOMS` entry (decision 4); an `ARRANGEMENT` rule, in `use` or `messages`, has an `ARRANGEMENTS` entry for the location (decision 3).
 
 ### 2. The M002 phone table
 
@@ -135,7 +135,7 @@ export interface ArrangementDefinition {
   readonly dealing: DealingKind;
   /** Dealing days needed for each privilege. Whole numbers ≥ 1. */
   readonly dealingDaysNeeded: Readonly<Record<ArrangementPrivilege, number>>;
-  /** The arrangement lapses when no dealing happens for longer than this. ≥ TICKS_PER_DAY. */
+  /** The arrangement lapses when no dealing happens for longer than this. ≥ 2 × TICKS_PER_DAY (decision 3's validation). */
   readonly lapseTicks: number;
 }
 
@@ -168,7 +168,7 @@ export const ARRANGEMENTS: readonly ArrangementDefinition[] = [
 
 **The first call needs no grind.** With `PHONE_USE: 1`, the founder's first sack of corn earns the phone the same morning. That's #203 §1's "small, understandable, and achievable early". Messages take three days of trade.
 
-**Load validation:** one entry per location, sorted; the location has a supplier (for `SUPPLY_PURCHASE`); thresholds are whole numbers ≥ 1; `lapseTicks ≥ TICKS_PER_DAY`, so a founder who buys daily never lapses; `contactName` isn't empty.
+**Load validation:** one entry per location, sorted; the location has a supplier (for `SUPPLY_PURCHASE`); thresholds are whole numbers ≥ 1; `lapseTicks ≥ 2 × TICKS_PER_DAY`. Purchases on consecutive calendar days can be up to `2 × TICKS_PER_DAY − 1` ticks apart (midnight-to-midnight in general; with Miller's hours, 07:00 on day d to 17:59 on day d + 1, almost 35 h), so this bound is what guarantees a founder who buys on every calendar day never lapses; `contactName` isn't empty.
 
 ### 4. Renting a room at Lakeview
 
@@ -271,8 +271,9 @@ Every use of `holdsMessages` in ADR 0024 is replaced by **`takesMessages(L, t)`*
   1. **The founder**, if `PRESENT` (busy or not) at a family line, or at a `PHONES` place with `takesMessages(L, t)` and `phoneOpen(L, t)`, and that line isn't engaged. At Miller's, Miller hands the founder the phone.
   2. Otherwise the numbers that aren't engaged, in `compareIds` order. At a family line, the call-in attendant hook takes a message. At a `PHONES` place with `takesMessages(L, t)` and `phoneOpen(L, t)`, the keeper takes one, `takenBy: null`.
   3. Otherwise it rings out.
-- **Delivering held messages** (ADR 0024 decision 6): on arrival or waking at L, and while `PRESENT` at L, if `phoneOpen(L, t)` (a family line always is), and on an answered call to L (this record's decision 5). As there, delivery doesn't need `takesMessages(L, t)`: a lapse stops new messages, never delivery of old ones.
+- **Delivering held messages** (ADR 0024 decision 6, and decision 8's `phones` step 1, whose "it's open" becomes `phoneOpen`): on arrival or waking at L, and while `PRESENT` at L, if `phoneOpen(L, t)` (a family line always is), and on an answered call to L (this record's decision 5). As there, delivery doesn't need `takesMessages(L, t)`: a lapse stops new messages, never delivery of old ones.
 - **Common conditions for a call in** ("the family has at least one number") read the same set.
+- **A party calls only while its own phone is in its hours.** ADR 0024 decision 5's caller condition "the caller's place is open (`PLACE_HOURS`)" becomes "the caller's place is open (`PLACE_HOURS`) **and** `phoneOpen(caller, t)`", the mirror of this record's decision 5 answering rule: the back room at Lakeview can't ring out through a lobby phone the desk has shut, so at 01:00 it doesn't call, and its rule's window is skipped with no draw. Employees' calls in come from a family line, which is always open, so ADR 0025's rule is unchanged.
 - **The `PROPRIETOR` row** (ADR 0024 decision 3): restated in this record's decision 5.
 - **`takenBy: null`** still means "the keeper of the place". The copy names them from `ARRANGEMENTS[L].contactName` (decision 10).
 
@@ -304,7 +305,7 @@ An orchestrator call (the issue's recommendation, under factory.md §8).
 ### 9. ADR 0026's uses of phones, checked
 
 - **The Office Hand at a family line** (ADR 0026 decision 10). A family line is always the founder's to use, at any hour, and who answers it is still the attendant hooks' call under the availability rule (ADR 0028, #214). Nothing here changes either. "From any phone the founder may use" (ADR 0026's Context and Consequences) now means: the family's own line, Miller's once `PHONE_USE` is granted, Lakeview's during a room stay, and the depot's for its fee (decision 5).
-- **Report calls in from the station** (ADR 0025 decision 7, ADR 0026 decision 9's table). They need a family number other than the station. Miller's counts once `TAKES_MESSAGES` is granted (decision 6), so "Walt calls the store, Miller takes it, you hear it when you buy corn" works in M002 once the still has a line. ADR 0026's "as a message" row reads `takesMessages(L, t)` for "a contact who takes messages for the family".
+- **Report calls in from the station** (ADR 0025 decision 7, ADR 0026 decision 9's table). They need a family number other than the station. Miller's counts once `TAKES_MESSAGES` is granted (decision 6), so "Walt calls the store, Miller takes it, you hear it when you buy corn" works in M002 once the still has a line. ADR 0026's "as a message" row reads `takesMessages(L, t)` for "a contact who takes messages for the family", and so does ADR 0025 decision 7's "a public phone that `holdsMessages`" (its *Needs design* item is settled the same way).
 - **The call-in attendant hook's tick** (the #211 review's non-blocking note). ADR 0026 decision 10 has `CallInAttendant` evaluate `isAvailable(employee, tick)`, but ADR 0024's type takes no tick, and `TickContext` says `state.tick` is still the previous tick while a phase runs. Reading `state.tick` would be one tick early. **The hook gains the tick argument**, as `CallOutAttendant` already has:
 
   ```ts
@@ -336,8 +337,9 @@ No shape changes are needed for the message entry: `DeliveredMessage.takenAt` (A
 
 **Where the pause lives: the worker's speed control, never the simulation.** ADR 0024 decision 4's mechanism stands, and this record pins it down:
 
-- The host (`apps/game/src/workers/simulation-host.ts`) sets the scheduler's `Speed` to 0, the same pause the player's button sets, on the tick a call connects. It reads that from the player snapshot: `founder.whereabouts.call` turning non-null, which is always known. The batch that applies the connecting `PLACE_CALL` ends at that tick.
-- It does the same when a `CALL_RECEIVED` activity item lands (the founder answered a call in), so that call can be read too.
+- **The batch is split at the call** (C1, in `apps/game`). Today `simulation-host.ts`'s `step()` passes the scheduler's whole batch to `sim.advance(ticks)`, up to `MAX_TICKS_PER_STEP` (60) ticks, which is longer than a `PHONE_CALL` (15). A call could start and end inside one `advance`, and the host would never see it connected. So while a `PLACE_CALL` the player sent hasn't applied yet (the host dispatched it, or it sits in `queuedCommands`), the host ends the batch at that command's apply tick: it advances only up to and including that tick (one tick for an eager command, `state.tick + 1`). Then it reads `founder.whereabouts.call`, which is always known. If it's non-null, the host sets the scheduler's `Speed` to 0, the same pause the player's button sets, and the rest of the batch stays in the scheduler's backlog, as for any pause. If it's null (no answer, or rejected), stepping carries on as usual.
+- **Determinism is untouched.** The same ticks run in the same order, only cut into different `advance` calls, which ADR 0014 lets the host choose. While paused, every by-phone order applies at `state.tick + 1 ≤ busy.until`, so it lands on the call (ADR 0024 decision 4).
+- **Calls in may overshoot.** The host also pauses when a `CALL_RECEIVED` activity item lands (the founder answered a call in), but it doesn't split batches for it. A call in can't be foreseen without reading hidden state, and it leaves no `call` to act on. So, like the victory pause (ADR 0020 decision 16, "past the deciding tick by up to one batch"), the clock may be up to one batch past the call when it stops. The item stays in `activity` to read.
 - An unanswered call doesn't pause: there's nothing to read but one line.
 - "End call" restores the speed from before the pause. It isn't a command, and the call's game time is spent either way.
 - There's no simulation field, command or event for the pause, and the simulation never reads wall-clock time. The lab never pauses. Menus and scenes never cost game time (ADR 0023 decision 4).
@@ -469,11 +471,11 @@ New union members (`ActivityKind` `CHECK_IN`, the command, the events, the activ
 
 ### 17. Contract changes: ADR 0024 decision 15, restated as amended (for PH1, #205)
 
-One contract-change task, PH1, after O1b in the contract sequence. **Bold** marks what this record adds or changes. Everything else is ADR 0024's list as written.
+One contract-change task, PH1, after O1b in the contract sequence. **Bold** marks what this record adds or changes. Everything else repeats ADR 0024's list, with its payloads, so PH1 can work from this list alone.
 
 - `state.ts`:
-  - `FacilityState.phoneLine`;
-  - `ActiveCall`, `CallAnswerer`, `FounderWhereabouts.PRESENT.call`;
+  - `FacilityState.phoneLine: { readonly bookValue: Money } | null`;
+  - `CallParty`, `ActiveCall`, `CallAnswerer`, `FounderWhereabouts.PRESENT.call`;
   - `ActivityKind` gains `PHONE_CALL`, `PHONE_NO_ANSWER`, `INSTALL_PHONE` **and `CHECK_IN`**;
   - **`RoomStay` and `FounderState.room: RoomStay | null`;**
   - **`ArrangementPrivilege`, `ARRANGEMENT_PRIVILEGES`, `ArrangementState`, and `GameState.arrangements`.**
@@ -484,21 +486,22 @@ One contract-change task, PH1, after O1b in the contract sequence. **Bold** mark
 - `events.ts`: `CALL_PLACED { fromLocationId, locationId, answered, answeredBy: CallAnswerer | null, transactionId }`, `CALL_RECEIVED { callerLocationId, phoneLocationId, reason }`, `MESSAGE_TAKEN { callerLocationId, heldAtLocationId, takenBy, reason }`, `MESSAGES_DELIVERED { locationId, count, dropped, via }`, `PHONE_INSTALLED { facilityId, price, transactionId }`, **`ROOM_RENTED { locationId, until, price, transactionId }`**, **`ARRANGEMENT_GRANTED { locationId, privilege }`**.
 - `ledger.ts`: `TransactionKind` `TELEPHONE` **and `LODGING`**. `projection/finance.ts`'s `CASH_FLOW_CATEGORY` maps both to `OVERHEAD` (simulation code, landing with whichever task adds the kind, as ADR 0024 says for `TELEPHONE`).
 - `knowledge.ts`:
-  - `HeldMessage`, `DeliveredMessage`, `PendingMessages`, `KnowledgeState.pendingMessages`;
+  - `HeldMessage`, `DeliveredMessage`, `PendingMessages`, `KnowledgeState.pendingMessages` (and `EMPTY_KNOWLEDGE.pendingMessages: []`);
   - `CatchUp` and `KNOWLEDGE_CAUGHT_UP` unchanged;
-  - `ActivityItem` gains `CALL_PLACED`, `CALL_RECEIVED`, `MESSAGE_DELIVERED`, `MESSAGES_DROPPED`, `PHONE_INSTALLED` **and `ARRANGEMENT_GRANTED { locationId, privilege }`**, each with K1's `tick`;
+  - `ActivityItem` gains `CALL_PLACED { locationId, answered, answeredBy: CallAnswerer["kind"] | null }`, `CALL_RECEIVED { callerLocationId, phoneLocationId, reason }`, `MESSAGE_DELIVERED { message: DeliveredMessage }`, `MESSAGES_DROPPED { locationId, count }`, `PHONE_INSTALLED { facilityId }` **and `ARRANGEMENT_GRANTED { locationId, privilege: ArrangementPrivilege }`**, each with K1's `tick`;
   - `ACTIVITY_IMPORTANCE`: `CALL_RECEIVED` and `MESSAGE_DELIVERED` are `"notify"`; the others, **including `ARRANGEMENT_GRANTED`**, are `"log"` (ADR 0024's "`info`" is the code's `"log"`). PLACEHOLDER;
-  - `CallInReason`;
+  - `CallInReason = "NEW_CONTRACT_OFFER" | "INSTALLMENT_DUE"`, defined here in contracts (a domain type: held messages carry it), so game-data's `CallInRule` imports it (ADR 0012). ADR 0025 later adds `"EMPLOYEE_REPORT"`;
   - `TRANSACTION_PRODUCERS`: ADR 0024's three `TELEPHONE` families **and `"LODGING:ROOM": { trigger: "FOUNDER_COMMAND", legs: ["CASH"] }`** land with their call sites in C1 (the #179 follow-up), so the coverage test keeps passing in PH1.
 - `player-snapshot.ts`: **`PlacePhone` as restated in decision 12** (no `public`, no `holdsMessages`), `PlaceGeography.phone`, **`PlaceGeography.arrangement` with `PlayerArrangement`, `PlaceGeography.rooms` with `PlaceRooms`**, and the `EmptyPlace` variant (`kind: "NONE"`).
-- `snapshot.ts` (world): `FacilitySnapshot.phoneLine`.
+- `snapshot.ts` (world): `FacilitySnapshot.phoneLine: { bookValue: Money } | null`, for the debug view.
 - `schemas.ts`, `save.ts`: Zod for all of the above; the bump and migration in ADR 0024 decision 13 **plus decision 15's two fields**, with an old-version fixture.
 - `packages/game-data/src/phones.ts` (new): **`PhoneUseRule`, `MessageTakingRule`, `PhoneDefinition` and `PHONES` as in decisions 1–2**, `PhoneLineDefinition`, `PHONE_LINE`, `CALL_COST`, `CALL_ANSWER_PPM`, `CallInRule`, `CALL_IN_RULES`, `CALL_IN_INTERVAL_TICKS`, `MESSAGE_LIMIT`, **`DealingKind`, `ArrangementDefinition`, `ARRANGEMENTS`**, with load validation (ADR 0024's, **plus decisions 1 and 3's**).
-- `packages/game-data/src/presence.ts`: `ACTIVITY_DURATIONS` rows `PHONE_CALL`, `PHONE_NO_ANSWER`, `INSTALL_PHONE` **and `CHECK_IN` (15)**; **`RoomDefinition`, `ROOMS`, `LAKEVIEW_LOBBY_HOURS`; `PresenceDefinition.rooms`; `validatePresence` checks rooms (known, unique locations; non-empty valid `deskHours`; `checkoutMinute` a minute of the day; `minStayTicks ≥ 1`; `nightlyRate ≥ 0`) and `0 < PHONE_NO_ANSWER < PHONE_CALL`**. PH1's owned files need `presence.ts` for the duration rows anyway.
+- `packages/game-data/src/presence.ts`: `ACTIVITY_DURATIONS` rows `PHONE_CALL`, `PHONE_NO_ANSWER`, `INSTALL_PHONE` **and `CHECK_IN` (15)**; **`RoomDefinition`, `ROOMS`, `LAKEVIEW_LOBBY_HOURS`; `PresenceDefinition.rooms`; `validatePresence` checks rooms (known, unique locations; non-empty valid `deskHours`; `checkoutMinute` a minute of the day; `minStayTicks ≥ 1`; `nightlyRate ≥ 1` cent, so the rental always posts a non-empty `CASH` leg) and `0 < PHONE_NO_ANSWER < PHONE_CALL`**. PH1's owned files need `presence.ts` for the duration rows anyway.
 - Other game-data: `KNOWLEDGE_VISIBILITY` `MESSAGE` rows (ADR 0024 decision 6).
-- `packages/simulation/src/kernel/registry.ts` and `simulation.ts`: `phones` in `PHASES`. **The flag-off `RENT_ROOM` no-op handler.**
+- **`GameData` (`packages/game-data/src/index.ts`) gains `phones: PhoneData`**, one bundle with `PHONES`, `PHONE_LINE`, `CALL_COST`, `CALL_ANSWER_PPM`, `CALL_IN_RULES`, `CALL_IN_INTERVAL_TICKS`, `MESSAGE_LIMIT` and `ARRANGEMENTS`, because the hooks and the handlers take `data: GameData` and need them (ADR 0025 does the same for its tables). `ROOMS` and `LAKEVIEW_LOBBY_HOURS` ride in `PresenceDefinition` with the other presence tables. `PRESENCE` isn't in `GameData` on `main`, so `ROOMS` goes wherever SK1a (#198) puts `PRESENCE`, without a separate decision.
+- `packages/simulation/src/kernel/registry.ts` and `simulation.ts`: `phones` in `PHASES` between `founder` and `deadlines` (its hooks are C1's), plus the flag-off no-op handlers for `PLACE_CALL`, `INSTALL_PHONE` **and `RENT_ROOM`**.
 
-**C1 (#179) implements the behaviour**: ADR 0024's list; **the use rule and charge (decision 5); `phoneOpen`; `takesMessages` and the family's numbers (decision 6); dealing counts in `registerMarket`'s `PURCHASE_MATERIALS` handler (decision 3); `RENT_ROOM`; the room as a rest place and checkout step 5 (decision 4, in SK1a's founder phase); the pause on `CALL_RECEIVED` (decision 10)**; and the `TELEPHONE` and `LODGING:ROOM` producer rows. If C1 is too big at its refresh, the orchestrator may split `RENT_ROOM` with the rest-place and checkout rules into its own task. E3 (#183) passes `ctx.tick` to the call-in hook (decision 9).
+**C1 (#179) implements the behaviour**: ADR 0024's list; **the use rule and charge (decision 5); `phoneOpen`; `takesMessages` and the family's numbers (decision 6); dealing counts in `registerMarket`'s `PURCHASE_MATERIALS` handler (decision 3); `RENT_ROOM`; the room as a rest place and checkout step 5 (decision 4, in SK1a's founder phase); the host's batch split at a pending `PLACE_CALL` and the pause on `CALL_RECEIVED` (decision 10, `apps/game/src/workers/simulation-host.ts`); the callers' `phoneOpen` condition (decision 6)**; and the `TELEPHONE` and `LODGING:ROOM` producer rows. If C1 is too big at its refresh, the orchestrator may split `RENT_ROOM` with the rest-place and checkout rules into its own task. E3 (#183) passes `ctx.tick` to the call-in hook (decision 9).
 
 ## Design-record checklist (factory.md §1)
 
@@ -516,11 +519,15 @@ Every input below is always-known state (the founder's whereabouts, `busy`, `cal
 | Call in, message taken at Miller's | — | None until delivered | None until delivered | Entry-less | None. `pendingMessages` isn't projected |
 | Message delivery after a lapse | — | `MESSAGE_DELIVERED` as ADR 0024 | Unchanged | As ADR 0024 | As ADR 0024. Delivery doesn't read `takesMessages`, so whether held messages are delivered depends only on the channel |
 | Checkout (founder phase step 5) | — | None | None | None | `founder.room` cleared: tick and founder state only |
-| Pause on connect or `CALL_RECEIVED` | — | — | — | — | Scheduler state, not snapshot. It reads `founder.call` and `activity`, both known |
+| Pause on connect or `CALL_RECEIVED` | — | — | — | — | Scheduler state, not snapshot. The batch split reads only the founder's own pending `PLACE_CALL` and its apply tick; the pause reads `founder.call` and `activity`. All known, and the split doesn't change which ticks run |
 
 **The static half of ADR 0021 decision 9.** `arrangements` and `room` are equal in two worlds that differ only in hidden state, given the same commands. A purchase's acceptance depends only on the player view (the live view at the supplier, cash), and a room's on game-data, presence and cash. So `granted`, `takesMessages`, the family's numbers and the use rule are equal too.
 
-**The dynamic half.** No new channel. The answer table's added `phoneOpen` condition is geography. Which number takes a message is still decided only from known state before the hidden `CallInAttendant` is consulted, so decision 9's ordering argument in ADR 0024 holds.
+**The dynamic half.** No new channel. The added `phoneOpen` conditions, for answering (decision 5) and for a caller (decision 6), are geography. Where a call in ends up follows ADR 0024 decision 5:
+- Step 1, whether the founder answers, reads only always-known state (`takesMessages` and `phoneOpen` included). It comes first, so whether the founder hears a call never depends on a hook.
+- Step 2 visits the numbers in `compareIds` order, so `hollow-creek` (a family line, once installed) comes before `millers-feed`. The still's `CallInAttendant` is therefore consulted first, and Miller takes the message only when the hook returns null. **Where a message is held can depend on the hook's output.** That's allowed: ADR 0024 decision 9 lets `CallInAttendant`'s output become player-visible only "through a delivered message", and a message held at Miller's rather than at the still reaches the founder only when it's delivered, which is a channel (ADR 0024 decision 10's delivery clause). In M002 the hook reads only agreements, game-data and the tick (ADR 0026 decision 10), so its output is always-known anyway.
+
+So ADR 0024's non-leak argument holds with Miller's as a number.
 
 ### 2. Coverage tables (ADR 0021 decisions 6 and 7)
 
@@ -555,7 +562,7 @@ Decision 14. `RENT_ROOM` is a no-op, purchases count nothing, and the room, arra
 
 ### 7. Randomness
 
-No new draws. Arrangements, rooms, checkout, `phoneOpen` and `takesMessages` are deterministic. ADR 0024's keyed draws keep their keys (`call-out:<locationId>` with the apply tick, `call-in:<caller>:<reason>` with the window). The added `phoneOpen` condition only skips draws at hours the founder knows, and a keyed draw stores nothing, so skipping one shifts no other.
+No new draws. Arrangements, rooms, checkout, `phoneOpen` and `takesMessages` are deterministic. ADR 0024's keyed draws keep their keys (`call-out:<locationId>` with the apply tick, `call-in:<caller>:<reason>` with the window). The added `phoneOpen` conditions (answering a call out, and a party calling in) only skip draws at hours the founder knows, and a keyed draw stores nothing, so skipping one shifts no other.
 
 ### 8. Rejection reasons
 
@@ -572,8 +579,8 @@ Every payload is always known: the founder's place, game-data rules, and hours.
 - **The arrangement shape is reusable.** Kessler's later favours, the hotel regular, introductions and credit become a `DealingKind`, an `ARRANGEMENTS` row and a privilege. #203 §5 asks that those stay out of M002, and they do.
 - **Lapsing is silent but visible.** No event fires when Miller stops taking messages: the snapshot shows the date it holds until, and that it has lapsed. If PT3 finds players are surprised, a later change can add a midnight check that writes an activity item, with no shape change.
 - **A cheap purchase keeps the arrangement alive.** Any purchase counts, once a day. If playtests find a token sack too cheap a way to keep Miller's goodwill, a minimum spend per dealing is one game-data field.
-- **Lakeview's back room is reachable by phone only from 20:00 to 23:00** (the back room's hours intersected with the lobby's). That's a consequence of #203's separate lobby hours. PT3 judges it.
-- **The pause covers answered calls in as well as calls out.** If that interrupts too often, it's a host setting, not a simulation change.
+- **Lakeview's back room is reachable by phone only from 20:00 to 23:00, both ways** (the back room's hours intersected with the lobby's; decisions 5 and 6). That's a consequence of #203's separate lobby hours, and it's listed under *Needs design*. PT3 judges it.
+- **The pause covers answered calls in as well as calls out.** Calls out stop exactly on the connect tick, because the host splits its batch there. Calls in may stop up to one batch late. If either interrupts too often, it's a host setting, not a simulation change.
 
 ## Needs design (placeholders in this record)
 
@@ -583,5 +590,6 @@ Story and visual direction (factory.md §8). #203 settled which places have phon
 - **Copy for milestones and lapses:** what the founder sees when Miller agrees to let them use the phone or to take messages (`ARRANGEMENT_GRANTED`), and when the arrangement has lapsed.
 - **The room scene:** checking in at the Lakeview desk, and how the stay and checkout read.
 - **The call scene's visuals** at Miller's counter, the Lakeview lobby and the depot (direction approved in #203 §4; the visual design is open), and how the pause and "End call" look.
+- **Lakeview's back room by phone only 20:00–23:00.** Decisions 5 and 6 derive this from #203's separate lobby hours (the back room's 20:00–02:00 intersected with the lobby's 07:00–23:00), which narrows ADR 0024's reachability. It wasn't stated in #203, so the human may want later lobby hours or a night clerk.
 - **Tuning (R1, PT3, T-LAB):** `ARRANGEMENTS` thresholds (1 and 3 dealing days) and `lapseTicks` (7 days); `ROOMS` rate ($2.00), checkout (11:00), minimum stay (8 h) and `LAKEVIEW_LOBBY_HOURS` (07:00–23:00); the depot fee (10¢); `CHECK_IN` (15 min); and ADR 0024's numbers.
 - **Later stages, not M002:** the returning guest and the established regular at Lakeview (decision 7, a planned issue), Kessler's favours, and road calls under decision 8's rule.

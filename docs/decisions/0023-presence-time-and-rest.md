@@ -2,6 +2,8 @@
 
 Status: accepted (decided by the orchestrator for M002 task D3, issue #170; implemented by the contract task it names and SK1)
 
+Amended by ADR 0027 (#213, earned phone access and message-taking): decisions 2a (a founder-phase checkout step 5), 4 (the `CHECK_IN` activity) and 7 (a rented room is a rest place for its stay).
+
 ## Context
 
 GDD §18 (PRES-001) makes the founder a piece on the map. Arriving at a place opens its scene, being there gates what the founder can do, and time costs represent meaningful in-world activity, not interface clicks. The founder needs sleep. GDD §16 (PLAY-001) says the day has a shape (places keep hours, the founder needs rest), and it sets the M002 pacing hypothesis: 1× = 1 game hour per 20 real seconds. It also notes the knock-on effect on session length.

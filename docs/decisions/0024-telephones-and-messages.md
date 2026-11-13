@@ -4,7 +4,7 @@ Status: accepted (decided by the orchestrator for M002 task D4, issue #171; impl
 
 Amends: ADR 0021 decisions 5, 7, 8 and 9 (the call view, held messages, older values, a `PlayerPlace` for a place with no occupant), ADR 0023 decisions 1, 2a and 4 (the founder's call, the `phones` phase, orders on a call while busy).
 
-Amended by ADR 0027 (#213, earned phone access and message-taking): decisions 1, 3, 4, 5, 6, 9, 13, 14 and 15. `public` and `holdsMessages` are replaced by separate has-a-phone, may-use and takes-messages privileges; ADR 0027 decision 17 restates decision 15's contract list.
+Amended by ADR 0027 (#213, earned phone access and message-taking): decisions 1, 3, 4, 5, 6, 8, 9, 13, 14 and 15. `public` and `holdsMessages` are replaced by separate has-a-phone, may-use and takes-messages privileges; ADR 0027 decision 17 restates decision 15's contract list.
 
 ## Context
 
