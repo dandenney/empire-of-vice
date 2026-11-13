@@ -70,6 +70,7 @@ export const day0Save: SaveGame = {
         Contract: 1,
         Reservation: 1,
         Deal: 1,
+        StandingOrder: 1,
       },
     },
     rng: { market: rng(1_001), contracts: rng(2_002), routes: rng(3_003), production: rng(4_004) },
@@ -247,6 +248,9 @@ export const day0Save: SaveGame = {
     },
     // One day of dealings at the feed store, counted inside the purchase (ADR 0027 decision 3).
     arrangements: [{ locationId: ids.locSupplier, dealingDays: 1, lastDealingAt: tick(541) }],
+    // No one hired yet (ADR 0025); test/employees.test.ts exercises the shapes.
+    employees: [],
+    formerEmployees: [],
   },
 };
 

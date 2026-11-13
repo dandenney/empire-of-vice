@@ -12,6 +12,7 @@ import { restValidator, travelValidator, wakeValidator } from "../founder/founde
 import { releaseReservationValidator } from "../inventory/release.ts";
 import type { GameRules } from "../kernel/rules.ts";
 import { dispatchDeliveryValidator } from "../logistics/logistics.ts";
+import { acceptEveryView } from "../personnel/personnel.ts";
 import { purchaseEquipmentValidator, sellEquipmentValidator } from "../production/equipment.ts";
 import { startProductionValidator } from "../production/jobs.ts";
 import { setWorkforceValidator } from "../production/workforce.ts";
@@ -50,6 +51,11 @@ export function orderValidators(data: GameData, rules: GameRules): OrderValidato
     PLACE_CALL: acceptedNoOp,
     INSTALL_PHONE: acceptedNoOp,
     RENT_ROOM: acceptedNoOp,
+    // EM1's accepted no-ops (ADR 0025 decision 13, and with the flag on until
+    // E1, #180): their validators live with the handlers.
+    HIRE_EMPLOYEE: acceptEveryView,
+    SET_STANDING_ORDER: acceptEveryView,
+    DISMISS_EMPLOYEE: acceptEveryView,
   };
   const checked = (type: GameCommandType) => {
     const validate = validators[type] as OrderValidator<GameCommandType>;

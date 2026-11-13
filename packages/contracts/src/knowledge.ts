@@ -19,7 +19,10 @@ import type {
   ContractId,
   FacilityId,
   LocationId,
+  MaterialId,
+  RecipeId,
   RouteId,
+  StandingOrderId,
   SupplierId,
   TierId,
   TransactionId,
@@ -68,6 +71,8 @@ export const SUBJECT_KINDS = [
   "ROUTE_CONDITION",
   "VEHICLE_WHEREABOUTS",
   "STANDING",
+  // ADR 0025 decision 8: appended last, so existing records keep their order and hash.
+  "EMPLOYEE_PERFORMANCE",
 ] as const;
 export type SubjectKind = (typeof SUBJECT_KINDS)[number];
 
@@ -87,7 +92,9 @@ export type KnowledgeSubject =
   | { readonly kind: "MARKET_PRICES" }
   | { readonly kind: "ROUTE_CONDITION"; readonly routeId: RouteId }
   | { readonly kind: "VEHICLE_WHEREABOUTS"; readonly vehicleId: VehicleId }
-  | { readonly kind: "STANDING" };
+  | { readonly kind: "STANDING" }
+  /** How an employee's work has gone (ADR 0025 decision 8): a facility-party subject of their station. */
+  | { readonly kind: "EMPLOYEE_PERFORMANCE"; readonly characterId: CharacterId };
 
 /**
  * The latest known value of a subject, discriminated by the same kind and
@@ -142,7 +149,15 @@ export type KnowledgeValue =
       readonly parkedAt: LocationId | null;
       readonly trip: VehicleTrip | null;
     }
-  | { readonly kind: "STANDING"; readonly reputation: number; readonly tierId: TierId; readonly unlocked: readonly UnlockId[] };
+  | { readonly kind: "STANDING"; readonly reputation: number; readonly tierId: TierId; readonly unlocked: readonly UnlockId[] }
+  | {
+      readonly kind: "EMPLOYEE_PERFORMANCE";
+      readonly characterId: CharacterId;
+      /** Batches they've run for the family, over every stint. */
+      readonly batchesRun: number;
+      /** The true competence, once `batchesRun ≥ COMPETENCE_REVEAL_BATCHES` (game-data); null before. */
+      readonly competence: number | null;
+    };
 
 /** One subject kind's value: `KnowledgeValueOf<"BUYER_BUDGET">`. */
 export type KnowledgeValueOf<K extends SubjectKind> = Extract<KnowledgeValue, { readonly kind: K }>;
@@ -201,6 +216,8 @@ export function knowledgeSubjectKey(subject: KnowledgeSubject): string {
       return subject.routeId;
     case "VEHICLE_WHEREABOUTS":
       return subject.vehicleId;
+    case "EMPLOYEE_PERFORMANCE":
+      return subject.characterId;
     case "MARKET_PRICES":
     case "STANDING":
       return "";
@@ -278,10 +295,10 @@ export interface CatchUp {
 
 /**
  * Why a party calls the family (ADR 0024 decision 5). A domain type, because held
- * messages carry it; game-data's `CallInRule` imports it (ADR 0012). ADR 0025
- * adds `"EMPLOYEE_REPORT"`.
+ * messages carry it; game-data's `CallInRule` imports it (ADR 0012).
+ * `EMPLOYEE_REPORT`: an employee phoning in their report (ADR 0025 decision 7).
  */
-export type CallInReason = "NEW_CONTRACT_OFFER" | "INSTALLMENT_DUE";
+export type CallInReason = "NEW_CONTRACT_OFFER" | "INSTALLMENT_DUE" | "EMPLOYEE_REPORT";
 
 /** A message taken for the family and held where it was taken, until delivered (ADR 0024 decision 6). */
 export interface HeldMessage {
@@ -295,6 +312,8 @@ export interface HeldMessage {
    * KNOWLEDGE_VISIBILITY.MESSAGE[partyKind] grants, sorted like knowledge records.
    */
   readonly values: readonly { readonly subject: KnowledgeSubject; readonly value: KnowledgeValue }[];
+  /** The employee's report it carries: non-null exactly when `reason` is EMPLOYEE_REPORT (ADR 0025 decision 7). */
+  readonly report: ReportContent | null;
 }
 
 /** Messages waiting at one place, oldest first, at most MESSAGE_LIMIT (game-data). Like PendingNews. */
@@ -312,7 +331,96 @@ export interface DeliveredMessage {
   readonly takenBy: CharacterId | null;
   readonly reason: CallInReason;
   readonly subjects: readonly KnowledgeSubject[];
+  /** The employee's report it carried: non-null exactly when `reason` is EMPLOYEE_REPORT (ADR 0025 decision 7). */
+  readonly report: ReportContent | null;
 }
+
+// ---------------------------------------------------------------------------
+// Employees' reports (ADR 0025 decision 7, ADR 0028 decision 8)
+// ---------------------------------------------------------------------------
+
+/**
+ * Why a Distiller's standing order couldn't start a batch (ADR 0025 decision 6),
+ * the first that applies in this order. NO_CASH and SPENDING_CAP are separate:
+ * an empty purse and the cap are different reports (ADR 0028 decision 8).
+ */
+export type HoldReason =
+  /** The station no longer owns the recipe's equipment. */
+  | { readonly kind: "RECIPE_NOT_SUPPORTED" }
+  | { readonly kind: "NO_STORAGE" }
+  /** The first of the recipe's inputs, in recipe order, that's short. */
+  | { readonly kind: "NO_MATERIALS"; readonly materialId: MaterialId }
+  | { readonly kind: "NO_CASH" }
+  | { readonly kind: "SPENDING_CAP" };
+
+/**
+ * What made a batch smaller than the order's `batchSize` (ADR 0028 decision 8): the
+ * first bound equal to the batch's quantity, in hold order (storage room, each
+ * input in recipe order, cash, then the cap). MATERIALS is "limited by available
+ * ingredients" (#224).
+ */
+export type BatchLimit =
+  | { readonly kind: "STORAGE" }
+  | { readonly kind: "MATERIALS"; readonly materialId: MaterialId }
+  | { readonly kind: "CASH" }
+  | { readonly kind: "SPENDING_CAP" };
+
+/**
+ * One thing an employee will tell the founder (ADR 0025 decision 7). Problem
+ * lines are HELD_BACK, ORDER_REFUSED and BATCH_FINISHED with FAILED.
+ */
+export type ReportLine =
+  | {
+      readonly kind: "BATCH_STARTED";
+      readonly tick: Tick;
+      readonly standingOrderId: StandingOrderId;
+      readonly recipeId: RecipeId;
+      readonly quantity: number;
+      readonly conversionCost: Money;
+      /** null when `quantity` is the order's `batchSize`; otherwise what cut it short (ADR 0028 decision 8). */
+      readonly limitedBy: BatchLimit | null;
+    }
+  | {
+      readonly kind: "BATCH_FINISHED";
+      readonly tick: Tick;
+      readonly recipeId: RecipeId;
+      readonly quantity: number;
+      readonly outcome: "COMPLETED" | "FAILED";
+    }
+  | {
+      /** The order couldn't start a batch. Written once per change of hold, never every tick. */
+      readonly kind: "HELD_BACK";
+      readonly tick: Tick;
+      readonly standingOrderId: StandingOrderId;
+      readonly hold: HoldReason;
+    }
+  | {
+      /** A command the order issued was rejected, with its typed reason. Written once per change of reason. */
+      readonly kind: "ORDER_REFUSED";
+      readonly tick: Tick;
+      readonly standingOrderId: StandingOrderId;
+      readonly command: GameCommand;
+      readonly reason: RejectionReason;
+    };
+
+/** `EmployeeState.report`: what an employee will tell the founder next. */
+export interface PendingReport {
+  /** Oldest first, at most REPORT_LINE_LIMIT (game-data); older lines drop and are counted. */
+  readonly lines: readonly ReportLine[];
+  readonly dropped: number;
+  /** A problem line arrived under `callWhen: "PROBLEMS"`, and no report has gone out since. */
+  readonly callPending: boolean;
+}
+
+/** A report as delivered. */
+export interface ReportContent {
+  readonly characterId: CharacterId;
+  readonly lines: readonly ReportLine[];
+  readonly dropped: number;
+}
+
+/** How a report reached the founder (ADR 0025 decision 7). A report in a message comes as MESSAGE_DELIVERED. */
+export type ReportVia = "IN_PERSON" | "CALL_OUT" | "CALL_IN";
 
 /**
  * What the founder saw or was told (decision 8). Written only by the founder's
@@ -387,6 +495,20 @@ export type ActivityItem =
       readonly tick: Tick;
       readonly locationId: LocationId;
       readonly privilege: ArrangementPrivilege;
+    }
+  | {
+      /** An employee's report reached the founder in person, on a call out or on a call in (ADR 0025 decision 7). */
+      readonly kind: "REPORT";
+      readonly tick: Tick;
+      readonly characterId: CharacterId;
+      readonly via: ReportVia;
+      readonly report: ReportContent;
+      /**
+       * True when delivered with an arrival's or a waking's catch-up (in the
+       * founder phase, or inside WAKE): "Since you were last here" (ADR 0028
+       * decision 8). False for deliveries while the founder is already there.
+       */
+      readonly atArrival: boolean;
     };
 
 /**
@@ -403,7 +525,9 @@ export type ActivityItem =
  * - CASH_POSTING: money moved while the founder was elsewhere;
  * - CALL_RECEIVED, MESSAGE_DELIVERED: someone reached the family by phone
  *   (ADR 0024 decision 15); the other phone and arrangement items are `log`
- *   (ADR 0024's "info", ADR 0027 decision 17).
+ *   (ADR 0024's "info", ADR 0027 decision 17);
+ * - REPORT: an employee's report reached the founder (ADR 0025 decision 16).
+ *   It's delivered by a channel, not a world-event toast (ADR 0028 decision 8).
  */
 export const ACTIVITY_IMPORTANCE: Readonly<Record<ActivityItem["kind"], "notify" | "log">> = {
   COMMAND: "notify",
@@ -415,6 +539,7 @@ export const ACTIVITY_IMPORTANCE: Readonly<Record<ActivityItem["kind"], "notify"
   MESSAGES_DROPPED: "log",
   PHONE_INSTALLED: "log",
   ARRANGEMENT_GRANTED: "log",
+  REPORT: "notify",
 };
 
 // ---------------------------------------------------------------------------
@@ -490,7 +615,10 @@ export interface TransactionProducerDefinition {
  * M001 producers plus ADR 0022's deals (O1a). Later tasks add theirs (ADR 0022's
  * other outcomes, ADR 0025's employees). ADR 0024's three TELEPHONE families and
  * ADR 0027's `LODGING:ROOM` land with their call sites in C1 (#179): the
- * transaction kinds exist from PH1, but nothing posts them yet.
+ * transaction kinds exist from PH1, but nothing posts them yet. Likewise ADR
+ * 0025's five `PERSONNEL` families and `PRODUCTION_START:EMPLOYEE` (with its
+ * `CASH_POSTING_REVEALS` row) land with their call sites in E1 (#180): the
+ * `PERSONNEL` kind exists from EM1 (#210).
  */
 export const TRANSACTION_PRODUCERS = {
   // Game creation and founder commands (rule 1).

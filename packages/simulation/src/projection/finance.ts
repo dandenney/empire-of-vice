@@ -117,6 +117,8 @@ const CASH_FLOW_CATEGORY: Readonly<Record<TransactionKind, CashFlowCategory | nu
   // installation files under EQUIPMENT through its account's category.
   TELEPHONE: "OVERHEAD",
   LODGING: "OVERHEAD",
+  // A hire's signing cost (ADR 0025 decision 4): the kind's default is WAGES.
+  PERSONNEL: "WAGES",
 };
 
 export class FinanceProjectionError extends Error {

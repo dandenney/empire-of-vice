@@ -272,10 +272,12 @@ describe("v4 → v5: conversionPrepaid on production jobs (O1b, ADR 0022 decisio
     const transactions = save.state.ledger.transactions.map((t) =>
       t.idempotencyKey === running ? { ...t, kind: "RESERVATION", idempotencyKey: running.replace(/^PRODUCTION_START:/, "RESERVATION:"), entries: [] } : t,
     );
-    // Without v6's fields (PH1), which a v4 save didn't have either.
+    // Without v6's fields (PH1) and v7's (EM1), which a v4 save didn't have either.
     const founder = save.state["founder"] as Obj & { whereabouts: Obj };
+    const counters = save.state["counters"] as Obj & { nextId: Obj };
     const v5State = {
-      ...omit(save.state, "arrangements"),
+      ...omit(save.state, "arrangements", "employees", "formerEmployees"),
+      counters: { ...counters, nextId: omit(counters.nextId, "StandingOrder") },
       facilities: (save.state["facilities"] as Obj[]).map((f) => omit(f, "phoneLine")),
       founder: { whereabouts: omit(founder.whereabouts, "call"), awakeSince: founder["awakeSince"] },
       knowledge: omit(save.state["knowledge"] as Obj, "pendingMessages"),
@@ -397,7 +399,8 @@ describe("v5 → v6: phones, rooms and arrangements (PH1, ADR 0024 decision 13, 
   });
 
   it("loads, and plays on with nothing written to the new fields (founder rules off)", () => {
-    const result = migrate(v5.save);
+    // Through to the current version, which the schema and loadGame expect.
+    const result = migrateSave(v5.save, 5);
     if (!result.ok) throw new Error(JSON.stringify(result.error));
     const sim = loadGame(saveGameSchema.parse(result.save));
     sim.advance(1_440);
@@ -405,6 +408,101 @@ describe("v5 → v6: phones, rooms and arrangements (PH1, ADR 0024 decision 13, 
     expect(sim.state.facilities.every((f) => f.phoneLine === null)).toBe(true);
     expect(sim.state.founder.room).toBeNull();
     expect(sim.state.knowledge.pendingMessages).toEqual([]);
+  });
+
+  it("chains from v1", () => {
+    const v1 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v1.json", import.meta.url)), "utf8")) as { save: Record<string, unknown> };
+    const result = migrateSave(v1.save, 1);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.save["schemaVersion"]).toBe(SAVE_SCHEMA_VERSION);
+    expect(saveGameSchema.safeParse(result.save).success).toBe(true);
+  });
+});
+
+describe("v6 → v7: employees, standing orders and reports (EM1, ADR 0025 decision 14)", () => {
+  type Obj = Record<string, unknown>;
+  type RawSave = Obj & { state: Obj & { counters: Obj & { nextId: Obj }; knowledge: Obj & { activity: Obj[]; pendingMessages: Obj[] } } };
+  const v6 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v6.json", import.meta.url)), "utf8")) as { save: RawSave };
+  const migrate = (save: Readonly<Record<string, unknown>>) => migrateSave(save, 6, SAVE_MIGRATIONS, 7);
+  const withState = (patch: Obj): RawSave => ({ ...v6.save, state: { ...v6.save.state, ...patch } });
+  const withKnowledge = (patch: Obj): RawSave => withState({ knowledge: { ...v6.save.state.knowledge, ...patch } });
+
+  // A v6 message as ADR 0024 shaped it: Kessler called the feed store about an installment.
+  const held: Obj = {
+    takenAt: 840,
+    callerLocationId: "kessler-pharmacy",
+    takenBy: null,
+    reason: "INSTALLMENT_DUE",
+    values: [],
+  };
+  const delivered: Obj = {
+    takenAt: 840,
+    heldAtLocationId: "millers-feed",
+    callerLocationId: "kessler-pharmacy",
+    takenBy: null,
+    reason: "INSTALLMENT_DUE",
+    subjects: [],
+  };
+  const withMessages = withKnowledge({
+    pendingMessages: [{ locationId: "millers-feed", items: [held, held], dropped: 1 }],
+    activity: [...v6.save.state.knowledge.activity, { kind: "MESSAGE_DELIVERED", tick: 900, message: delivered }, { kind: "MESSAGES_DROPPED", tick: 900, locationId: "millers-feed", count: 1 }],
+  });
+
+  it("adds no employees, no former employees and the StandingOrder counter at 1", () => {
+    const result = migrate(v6.save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.save["schemaVersion"]).toBe(7);
+    const state = result.save["state"] as RawSave["state"];
+    expect(state["employees"]).toEqual([]);
+    expect(state["formerEmployees"]).toEqual([]);
+    expect(state.counters).toEqual({ ...v6.save.state.counters, nextId: { ...v6.save.state.counters.nextId, StandingOrder: 1 } });
+  });
+
+  it("gives every held and delivered message report: null, and leaves other activity items alone", () => {
+    const result = migrate(withMessages);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const knowledge = (result.save["state"] as RawSave["state"]).knowledge;
+    expect(knowledge.pendingMessages).toEqual([{ locationId: "millers-feed", items: [{ ...held, report: null }, { ...held, report: null }], dropped: 1 }]);
+    expect(knowledge.activity).toEqual([
+      ...v6.save.state.knowledge.activity,
+      { kind: "MESSAGE_DELIVERED", tick: 900, message: { ...delivered, report: null } },
+      { kind: "MESSAGES_DROPPED", tick: 900, locationId: "millers-feed", count: 1 },
+    ]);
+    expect(saveGameSchema.safeParse(result.save).success).toBe(true);
+  });
+
+  it("changes nothing else", () => {
+    const result = migrate(v6.save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const strip = (s: Obj) => omit(s, "counters", "knowledge", "employees", "formerEmployees");
+    expect(strip(result.save["state"] as Obj)).toEqual(strip(v6.save.state));
+    expect((result.save["state"] as RawSave["state"]).knowledge).toEqual(v6.save.state.knowledge);
+    expect(omit(result.save, "state", "schemaVersion")).toEqual(omit(v6.save, "state", "schemaVersion"));
+  });
+
+  it.each([
+    ["a state that already has employees", withState({ employees: [] }), /already has employees/],
+    ["a state that already has former employees", withState({ formerEmployees: [] }), /already has formerEmployees/],
+    ["a StandingOrder counter already there", withState({ counters: { ...v6.save.state.counters, nextId: { ...v6.save.state.counters.nextId, StandingOrder: 1 } } }), /already has StandingOrder/],
+    ["a held message that already has a report", withKnowledge({ pendingMessages: [{ locationId: "millers-feed", items: [{ ...held, report: null }], dropped: 0 }] }), /already has report/],
+    ["a delivered message that already has a report", withKnowledge({ activity: [{ kind: "MESSAGE_DELIVERED", tick: 900, message: { ...delivered, report: null } }] }), /already has report/],
+    ["an EMPLOYEE_REPORT message, which v6 can't hold", withKnowledge({ pendingMessages: [{ locationId: "millers-feed", items: [{ ...held, reason: "EMPLOYEE_REPORT" }], dropped: 0 }] }), /EMPLOYEE_REPORT/],
+    ["messages that aren't a list", withKnowledge({ pendingMessages: {} }), /pendingMessages/],
+    ["no counters", withState({ counters: undefined }), /counters/],
+  ])("fails cleanly on %s", (_label, save, message) => {
+    const result = migrate(save);
+    expect(result).toMatchObject({ ok: false, error: { code: "MIGRATION_FAILED", fromVersion: 6, toVersion: 7 } });
+    if (!result.ok && result.error.code === "MIGRATION_FAILED") expect(result.error.message).toMatch(message);
+  });
+
+  it("loads, and plays on with nothing written to the new fields (founder rules off)", () => {
+    const result = migrate(v6.save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const sim = loadGame(saveGameSchema.parse(result.save));
+    sim.advance(1_440);
+    expect(sim.state.employees).toEqual([]);
+    expect(sim.state.formerEmployees).toEqual([]);
+    expect(sim.state.counters.nextId.StandingOrder).toBe(1);
   });
 
   it("chains from v1", () => {

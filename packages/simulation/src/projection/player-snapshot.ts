@@ -517,6 +517,10 @@ export function projectPlayerSnapshot(state: GameState, ctx: ProjectionContext, 
     finance: projectFinance(state, data, known, observedAt, standing, contracts),
     activity: state.knowledge.activity,
     catchUp: state.knowledge.lastCatchUp,
+    // Projecting employees and the hiring slate is E1's (#180). Until then no
+    // employee can exist: EM1's HIRE_EMPLOYEE is an accepted no-op.
+    employees: [],
+    hiring: null,
   };
 }
 

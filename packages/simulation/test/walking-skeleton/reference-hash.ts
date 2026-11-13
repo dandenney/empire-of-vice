@@ -6,4 +6,4 @@
  * regenerates it and explains the move in its PR, as
  * `sprint-zero/reference-hash.ts` works for M001.
  */
-export const WALKING_SKELETON_HASH = "fnv1a64:e07641186e97bc2c";
+export const WALKING_SKELETON_HASH = "fnv1a64:6c39c6a1f363b044";

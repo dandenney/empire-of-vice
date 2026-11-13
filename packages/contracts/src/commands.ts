@@ -25,12 +25,13 @@ import type {
   RecipeId,
   ReservationId,
   RouteId,
+  StandingOrderId,
   SupplierId,
   UnlockId,
   VehicleId,
 } from "./ids.ts";
 import type { Money } from "./money.ts";
-import type { DriverRef, RouteLeg, Transport } from "./state.ts";
+import type { DriverRef, EmployeeRole, RouteLeg, StandingOrderTerms, Transport } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 // ---------------------------------------------------------------------------
@@ -234,6 +235,46 @@ export interface RentRoomCommand {
   readonly locationId: LocationId;
 }
 
+/**
+ * The founder hires a candidate on the slate where they stand (ADR 0025 decision 4,
+ * ADR 0028 decisions 4 and 5). A timed activity (HIRE), in person at an open
+ * hiring place for the role. A no-op with `founderRules: false` (decision 13).
+ */
+export interface HireEmployeeCommand {
+  readonly type: "HIRE_EMPLOYEE";
+  readonly characterId: CharacterId;
+  readonly role: EmployeeRole;
+  readonly stationId: FacilityId;
+  /** The asking wage the founder accepted. Guards against a slate changing under a stale UI (CANDIDATE_TERMS_CHANGED). */
+  readonly dailyWage: Money;
+  /**
+   * The first standing order, given in the hiring conversation (ADR 0028
+   * decision 5), or null to brief them later.
+   */
+  readonly standingOrder: StandingOrderTerms | null;
+}
+
+/**
+ * Gives, changes or cancels an employee's standing order (ADR 0025 decision 5).
+ * Reaches them in person at their station (timed: BRIEF_EMPLOYEE) or on a call
+ * they answered. A no-op with `founderRules: false`.
+ */
+export interface SetStandingOrderCommand {
+  readonly type: "SET_STANDING_ORDER";
+  readonly characterId: CharacterId;
+  /** null cancels: the employee stays on the books and idles. */
+  readonly terms: StandingOrderTerms | null;
+}
+
+/**
+ * Lets an employee go (ADR 0025 decision 4). Reaches them as SET_STANDING_ORDER
+ * does. A no-op with `founderRules: false`.
+ */
+export interface DismissEmployeeCommand {
+  readonly type: "DISMISS_EMPLOYEE";
+  readonly characterId: CharacterId;
+}
+
 export type GameCommand =
   | PurchaseMaterialsCommand
   | StartProductionCommand
@@ -250,7 +291,10 @@ export type GameCommand =
   | AgreeDealCommand
   | PlaceCallCommand
   | InstallPhoneCommand
-  | RentRoomCommand;
+  | RentRoomCommand
+  | HireEmployeeCommand
+  | SetStandingOrderCommand
+  | DismissEmployeeCommand;
 
 export type GameCommandType = GameCommand["type"];
 
@@ -274,6 +318,9 @@ export const GAME_COMMAND_TYPES = [
   "PLACE_CALL",
   "INSTALL_PHONE",
   "RENT_ROOM",
+  "HIRE_EMPLOYEE",
+  "SET_STANDING_ORDER",
+  "DISMISS_EMPLOYEE",
 ] as const satisfies readonly GameCommandType[];
 
 // ---------------------------------------------------------------------------
@@ -291,11 +338,19 @@ export interface CommandRequest {
   readonly scheduledTick?: Tick;
 }
 
+/** The founder: the issuer of every player command, and so of every envelope. */
+export type FounderIssuer = { readonly kind: "FOUNDER" };
+
 /**
- * Who issued a command (ADR 0022 decision 5). Player commands are always the
- * FOUNDER's. The EMPLOYEE variant (standing orders) is ADR 0025's task.
+ * Who issued a command (ADR 0022 decision 5, amended by ADR 0025 decision 6).
+ * Player commands are always the FOUNDER's. An EMPLOYEE command is issued under
+ * a standing order by the `employees` phase; it has no envelope, so this type
+ * rides on the simulation's command context and on `EMPLOYEE_ACTED`, never on
+ * `CommandEnvelope`.
  */
-export type CommandIssuer = { readonly kind: "FOUNDER" };
+export type CommandIssuer =
+  | FounderIssuer
+  | { readonly kind: "EMPLOYEE"; readonly characterId: CharacterId; readonly standingOrderId: StandingOrderId };
 
 /**
  * A command as journaled and saved. The simulation assigns `id` and `sequence`
@@ -305,7 +360,11 @@ export interface CommandEnvelope {
   readonly id: CommandId;
   readonly scheduledTick: Tick;
   readonly sequence: number;
-  readonly issuer: CommandIssuer;
+  /**
+   * Always the founder (ADR 0025 decision 6): employee commands have no
+   * envelope, are never logged or queued, and replay re-derives them from state.
+   */
+  readonly issuer: FounderIssuer;
   readonly command: GameCommand;
 }
 
@@ -444,6 +503,26 @@ export type RejectionReason =
    */
   | { readonly code: "PHONE_USE_NOT_GRANTED"; readonly locationId: LocationId; readonly rule: "PRIVATE" | "GUEST" | "ARRANGEMENT" }
   /** RENT_ROOM where there are no rooms to rent (no ROOMS entry, ADR 0027 decision 4). */
-  | { readonly code: "NO_ROOMS_HERE"; readonly locationId: LocationId };
+  | { readonly code: "NO_ROOMS_HERE"; readonly locationId: LocationId }
+  // Employees (ADR 0025 decision 15). Every payload is the candidate's ID and the
+  // slate's wage (shown in person), the founder's own facilities, the role, or
+  // the standing order: always known or in the founder's view.
+  /** HIRE_EMPLOYEE for someone not on the role's current slate here, including someone already employed. */
+  | { readonly code: "CANDIDATE_UNAVAILABLE"; readonly characterId: CharacterId }
+  /** HIRE_EMPLOYEE at a wage other than the candidate's current asking wage (`current`). */
+  | { readonly code: "CANDIDATE_TERMS_CHANGED"; readonly characterId: CharacterId; readonly agreed: Money; readonly current: Money }
+  /** The station can't host the role: a Distiller at a facility without recipe equipment. */
+  | { readonly code: "STATION_UNSUITABLE"; readonly facilityId: FacilityId; readonly role: EmployeeRole }
+  /** The station already has someone in that role. */
+  | { readonly code: "POSITION_FILLED"; readonly facilityId: FacilityId; readonly role: EmployeeRole }
+  /**
+   * An employee's command outside their standing order's authority (ADR 0022
+   * gate 4, ADR 0025 decision 5). Only ever an employee command's result,
+   * reported in a report line, never a founder command's immediate result.
+   */
+  | { readonly code: "OUTSIDE_AUTHORITY"; readonly characterId: CharacterId; readonly standingOrderId: StandingOrderId; readonly limit: AuthorityLimit };
+
+/** Which part of a standing order an employee's command went beyond (ADR 0025 decision 5). */
+export type AuthorityLimit = "COMMAND" | "STATION" | "RECIPE" | "BATCH_SIZE" | "SPENDING_CAP";
 
 export type RejectionCode = RejectionReason["code"];

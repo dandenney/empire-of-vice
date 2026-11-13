@@ -91,6 +91,10 @@ export const REJECTION_FIELD_COPY: Readonly<Record<RejectionField, string>> = {
   characterId: "characterId",
   // ADR 0024 / 0027 phone reasons (PH1, #205). PLACEHOLDER: raw field names, like the rest.
   rule: "rule",
+  // ADR 0025 employee reasons (EM1, #210). PLACEHOLDER: raw field names, like the rest.
+  role: "role",
+  standingOrderId: "standingOrderId",
+  limit: "limit",
 };
 
 /** The label for each quality tier. Placeholder: the raw tier. */
@@ -158,4 +162,13 @@ export const REJECTION_COPY: Readonly<Record<RejectionCode, string>> = {
   PHONE_USE_NOT_GRANTED: "That telephone isn't yours to use",
   NO_ROOMS_HERE: "No rooms to let here",
   NO_WAY_TO_REACH: "No way to reach them",
+  // ADR 0025 employee reasons (EM1, #210). None can happen in M001 (founder rules
+  // off), nor before E1 (#180): the handlers are no-ops. OUTSIDE_AUTHORITY is only
+  // ever an employee's, in a report. PLACEHOLDER copy until E1's hiring scene and
+  // report feed write it.
+  CANDIDATE_UNAVAILABLE: "They're not looking for work here now",
+  CANDIDATE_TERMS_CHANGED: "They're asking a different wage now",
+  STATION_UNSUITABLE: "That place can't use them",
+  POSITION_FILLED: "Someone already has that job there",
+  OUTSIDE_AUTHORITY: "That's beyond what they were told to do",
 };

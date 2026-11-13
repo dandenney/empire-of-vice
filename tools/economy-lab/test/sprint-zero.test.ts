@@ -80,8 +80,12 @@ describe("sprint-zero runner", () => {
   // gains `arrangements` ([]), each facility `phoneLine` (null), the founder `room` (null) and, while
   // PRESENT, `call` (null), and `knowledge.pendingMessages` ([]). With founder rules off nothing
   // writes any of them. Hashing the same final state without those five fields gives
-  // 4c4ec75b6f6f3256 again, so nothing else moved).
+  // 4c4ec75b6f6f3256 again, so nothing else moved);
+  // fnv1a64:347b65f830e27930 (EM1, issue #210, ADR 0025 decision 14: state gains `employees` ([]),
+  // `formerEmployees` ([]) and the `StandingOrder` counter (1). With founder rules off nothing
+  // writes any of them. Hashing the same final state without those three fields gives
+  // dd5dfccb2e28dad2 again, so nothing else moved).
   it("has a pinned replay hash", async () => {
-    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:dd5dfccb2e28dad2"`);
+    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:347b65f830e27930"`);
   });
 });

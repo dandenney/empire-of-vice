@@ -14,6 +14,7 @@ import {
   cents,
   tick,
   type BuyerId,
+  type CharacterId,
   type EquipmentId,
   type FacilityId,
   type FamilyId,
@@ -117,6 +118,12 @@ export interface ScenarioDefinition {
   readonly founderRules: boolean;
   /** Where the founder starts (ADR 0023 decision 7). Checked against game-data at load. */
   readonly founderStartLocationId: LocationId;
+  /**
+   * Candidates on the first slate (slate index 0) of each of their roles, in this
+   * order, ahead of the drawn ones (ADR 0025 decision 3). Read only with founder
+   * rules on. M001: none; M002: Walt Hagen. Checked against the candidate pool at load.
+   */
+  readonly firstCandidates: readonly CharacterId[];
 }
 
 export class ScenarioError extends TypeError {
@@ -223,5 +230,6 @@ export function parseScenario(raw: unknown): ScenarioDefinition {
     realMsPerGameHourAt1x: int(s["realMsPerGameHourAt1x"], "realMsPerGameHourAt1x", 1),
     founderRules: bool(s["founderRules"], "founderRules"),
     founderStartLocationId: asId("Location", str(s["founderStartLocationId"], "founderStartLocationId")),
+    firstCandidates: ids("Character", s["firstCandidates"], "firstCandidates"),
   };
 }

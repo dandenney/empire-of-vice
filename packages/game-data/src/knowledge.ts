@@ -90,7 +90,8 @@ export function validateLiveViewRoutes(
 export const KNOWLEDGE_VISIBILITY: KnowledgeVisibility = validateKnowledgeVisibility({
   // Being there: the live view (decision 5). MARKET_PRICES at any buyer or supplier; STANDING anywhere.
   IN_PERSON: {
-    FACILITY: ["FACILITY_STOCK", "FACILITY_OPERATIONS", "ROUTE_CONDITION", "VEHICLE_WHEREABOUTS", "STANDING"],
+    // EMPLOYEE_PERFORMANCE: of each employee stationed there (ADR 0025 decision 8).
+    FACILITY: ["FACILITY_STOCK", "FACILITY_OPERATIONS", "ROUTE_CONDITION", "VEHICLE_WHEREABOUTS", "STANDING", "EMPLOYEE_PERFORMANCE"],
     SUPPLIER: ["SUPPLIER_OFFER", "MARKET_PRICES", "ROUTE_CONDITION", "VEHICLE_WHEREABOUTS", "STANDING"],
     BUYER: [
       "BUYER_WANTS",
@@ -111,18 +112,25 @@ export const KNOWLEDGE_VISIBILITY: KnowledgeVisibility = validateKnowledgeVisibi
     BUYER: ["CONTRACT_PROGRESS", "VEHICLE_WHEREABOUTS"],
   },
   // Decision 6. Not BUYER_BUDGET: Kessler tells you his price, not what's in his safe.
-  // Your own facility tells you only what someone there tells you (ADR 0025).
+  // Your own facility tells you only what someone there tells you: the station's
+  // facility-party subjects, from the employee who answered (ADR 0025 decision 7).
   PHONE: {
-    FACILITY: [], // PLACEHOLDER until ADR 0025
+    FACILITY: ["FACILITY_STOCK", "FACILITY_OPERATIONS", "EMPLOYEE_PERFORMANCE"], // PLACEHOLDER (ADR 0025)
     SUPPLIER: ["SUPPLIER_OFFER", "STANDING"], // PLACEHOLDER (ADR 0024 tunes)
     BUYER: ["BUYER_WANTS", "CONTRACT_OFFERS", "CONTRACT_PROGRESS", "STANDING"], // PLACEHOLDER (ADR 0024 tunes)
   },
   // ADR 0024 decision 6: a buyer's message is about the contract, not his price
   // ("Kessler wants 20 more by Thursday"), so no BUYER_WANTS, BUYER_BUDGET or
-  // STANDING. Suppliers leave none in M002; your own facility waits for ADR 0025.
-  MESSAGE: { FACILITY: [], SUPPLIER: [], BUYER: ["CONTRACT_OFFERS", "CONTRACT_PROGRESS"] }, // PLACEHOLDER
-  // Defined by ADR 0025 (reports). Nothing until then.
-  REPORT: { FACILITY: [], SUPPLIER: [], BUYER: [] },
+  // STANDING. Suppliers leave none in M002. An employee's report message carries
+  // the station's facility-party subjects (ADR 0025 decision 7).
+  MESSAGE: {
+    FACILITY: ["FACILITY_STOCK", "FACILITY_OPERATIONS", "EMPLOYEE_PERFORMANCE"],
+    SUPPLIER: [],
+    BUYER: ["CONTRACT_OFFERS", "CONTRACT_PROGRESS"],
+  }, // PLACEHOLDER
+  // ADR 0025 decision 7: a report reveals the station's facility-party subjects,
+  // and nothing about suppliers or buyers in M002 (ADR 0026 adds the Driver's rows).
+  REPORT: { FACILITY: ["FACILITY_STOCK", "FACILITY_OPERATIONS", "EMPLOYEE_PERFORMANCE"], SUPPLIER: [], BUYER: [] },
 });
 
 /** Default: every route that starts or ends at the place ("people talk" about the roads in and out). PLACEHOLDER. */

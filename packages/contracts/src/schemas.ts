@@ -11,7 +11,7 @@
 // coordinator's job (ADR 0010).
 
 import { z } from "zod";
-import type { CommandIssuer, DeliveryPurpose, GameCommand } from "./commands.ts";
+import type { AuthorityLimit, CommandIssuer, DeliveryPurpose, FounderIssuer, GameCommand } from "./commands.ts";
 import { GAME_COMMAND_TYPES } from "./commands.ts";
 import type { EventMeta } from "./events.ts";
 import { QUALITY_TIERS } from "./goods.ts";
@@ -20,24 +20,39 @@ import {
   knowledgeSubjectKey,
   SUBJECT_KINDS,
   TRANSACTION_PRODUCERS,
+  type BatchLimit,
   type CallInReason,
+  type HoldReason,
   type KnowledgeSubject,
   type KnowledgeValue,
+  type PendingReport,
+  type ReportContent,
+  type ReportLine,
+  type ReportVia,
   type TransactionProducer,
 } from "./knowledge.ts";
 import { LEDGER_ACCOUNTS, type LedgerAccount, type TransactionKind } from "./ledger.ts";
 import { isMoney, type Money, type Ratio } from "./money.ts";
+import { COMPETENCE_BAND_KINDS, type PlayerCandidate, type PlayerEmployee, type PlayerHiring } from "./player-snapshot.ts";
 import {
   ACTIVITY_KINDS,
   ARRANGEMENT_PRIVILEGES,
+  EMPLOYEE_ROLES,
   RNG_STREAMS,
   type ActiveCall,
   type ArrangementState,
   type CallAnswerer,
+  type CompetenceEstimate,
+  type DistillOrderTerms,
   type DriverRef,
+  type EmployeeState,
+  type EmployeeWork,
+  type FormerEmployeeState,
   type FounderState,
   type RoomStay,
   type RouteLeg,
+  type StandingOrderState,
+  type StandingOrderTerms,
   type Transport,
 } from "./state.ts";
 import { SAVE_FORMAT, SAVE_SCHEMA_VERSION } from "./save.ts";
@@ -169,6 +184,37 @@ export const driverRefSchema = z.discriminatedUnion("kind", [
 ]) satisfies z.ZodType<DriverRef>;
 
 // ---------------------------------------------------------------------------
+// Employees and standing orders (ADR 0025 decisions 1 and 5)
+// ---------------------------------------------------------------------------
+
+export const employeeRoleSchema = z.enum(EMPLOYEE_ROLES);
+
+/** 0–100, as competence, reliability and loyalty are. */
+const percent = z.number().int().min(0).max(100);
+
+export const competenceEstimateSchema = z
+  .strictObject({ low: percent, high: percent })
+  .refine((e) => e.low <= e.high, "An estimate's low is at most its high") satisfies z.ZodType<CompetenceEstimate>;
+
+export const distillOrderTermsSchema = z.strictObject({
+  kind: z.literal("DISTILL"),
+  recipeId: idSchema("Recipe"),
+  keepOnHand: count,
+  batchSize: positiveQuantity,
+  spendingCap: moneySchema,
+  callWhen: z.enum(["NEVER", "PROBLEMS"]),
+}) satisfies z.ZodType<DistillOrderTerms>;
+
+/** One branch per role's order kind; ADR 0026 adds DRIVE. */
+export const standingOrderTermsSchema = z.discriminatedUnion("kind", [distillOrderTermsSchema]) satisfies z.ZodType<StandingOrderTerms>;
+
+export const standingOrderStateSchema = z.strictObject({
+  id: idSchema("StandingOrder"),
+  givenAt: tickSchema,
+  terms: standingOrderTermsSchema,
+}) satisfies z.ZodType<StandingOrderState>;
+
+// ---------------------------------------------------------------------------
 // Commands (ADR 0004)
 // ---------------------------------------------------------------------------
 
@@ -233,6 +279,16 @@ export const gameCommandSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("PLACE_CALL"), locationId: idSchema("Location") }),
   z.strictObject({ type: z.literal("INSTALL_PHONE"), facilityId: idSchema("Facility") }),
   z.strictObject({ type: z.literal("RENT_ROOM"), locationId: idSchema("Location") }),
+  z.strictObject({
+    type: z.literal("HIRE_EMPLOYEE"),
+    characterId: idSchema("Character"),
+    role: employeeRoleSchema,
+    stationId: idSchema("Facility"),
+    dailyWage: moneySchema,
+    standingOrder: standingOrderTermsSchema.nullable(),
+  }),
+  z.strictObject({ type: z.literal("SET_STANDING_ORDER"), characterId: idSchema("Character"), terms: standingOrderTermsSchema.nullable() }),
+  z.strictObject({ type: z.literal("DISMISS_EMPLOYEE"), characterId: idSchema("Character") }),
 ]) satisfies z.ZodType<GameCommand>;
 
 /** What the worker gateway validates before calling `Simulation.dispatch`. */
@@ -241,14 +297,20 @@ export const commandRequestSchema = z.strictObject({
   scheduledTick: tickSchema.optional(),
 });
 
-/** `CommandIssuer` (ADR 0022 decision 5): FOUNDER only until ADR 0025's task. */
-export const commandIssuerSchema = z.strictObject({ kind: z.literal("FOUNDER") }) satisfies z.ZodType<CommandIssuer>;
+/** The issuer of every envelope (ADR 0025 decision 6): employee commands have none. */
+export const founderIssuerSchema = z.strictObject({ kind: z.literal("FOUNDER") }) satisfies z.ZodType<FounderIssuer>;
+
+/** `CommandIssuer` (ADR 0022 decision 5, ADR 0025 decision 6). */
+export const commandIssuerSchema = z.discriminatedUnion("kind", [
+  founderIssuerSchema,
+  z.strictObject({ kind: z.literal("EMPLOYEE"), characterId: idSchema("Character"), standingOrderId: idSchema("StandingOrder") }),
+]) satisfies z.ZodType<CommandIssuer>;
 
 export const commandEnvelopeSchema = z.strictObject({
   id: idSchema("Command"),
   scheduledTick: tickSchema,
   sequence: nonNegativeInt,
-  issuer: commandIssuerSchema,
+  issuer: founderIssuerSchema,
   command: gameCommandSchema,
 });
 
@@ -262,8 +324,10 @@ void (GAME_COMMAND_TYPES satisfies readonly z.infer<typeof gameCommandSchema>["t
 const idKindSchema = z.enum([
   "Location", "Facility", "Supplier", "Buyer", "Vehicle", "Route", "Material", "Product", "Recipe",
   "Equipment", "Character", "Family", "Unlock", "Tier", "Scenario", "Command", "Event", "Transaction",
-  "ProductionJob", "Delivery", "ContractOffer", "Contract", "Reservation", "Deal",
+  "ProductionJob", "Delivery", "ContractOffer", "Contract", "Reservation", "Deal", "StandingOrder",
 ] as const satisfies readonly IdKind[]);
+
+const authorityLimitSchema = z.enum(["COMMAND", "STATION", "RECIPE", "BATCH_SIZE", "SPENDING_CAP"] as const satisfies readonly AuthorityLimit[]);
 
 export const rejectionReasonSchema = z.discriminatedUnion("code", [
   z.strictObject({ code: z.literal("INVALID_QUANTITY"), field: z.string(), value: z.number() }),
@@ -333,6 +397,16 @@ export const rejectionReasonSchema = z.discriminatedUnion("code", [
     rule: z.enum(["PRIVATE", "GUEST", "ARRANGEMENT"]),
   }),
   z.strictObject({ code: z.literal("NO_ROOMS_HERE"), locationId: idSchema("Location") }),
+  z.strictObject({ code: z.literal("CANDIDATE_UNAVAILABLE"), characterId: idSchema("Character") }),
+  z.strictObject({ code: z.literal("CANDIDATE_TERMS_CHANGED"), characterId: idSchema("Character"), agreed: moneySchema, current: moneySchema }),
+  z.strictObject({ code: z.literal("STATION_UNSUITABLE"), facilityId: idSchema("Facility"), role: employeeRoleSchema }),
+  z.strictObject({ code: z.literal("POSITION_FILLED"), facilityId: idSchema("Facility"), role: employeeRoleSchema }),
+  z.strictObject({
+    code: z.literal("OUTSIDE_AUTHORITY"),
+    characterId: idSchema("Character"),
+    standingOrderId: idSchema("StandingOrder"),
+    limit: authorityLimitSchema,
+  }),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -539,6 +613,13 @@ const routeConditionValueSchema = z.strictObject({
   status: routeStatusSchema,
 });
 
+const employeePerformanceValueSchema = z.strictObject({
+  kind: z.literal("EMPLOYEE_PERFORMANCE"),
+  characterId: idSchema("Character"),
+  batchesRun: count,
+  competence: percent.nullable(),
+});
+
 const vehicleWhereaboutsValueSchema = z.strictObject({
   kind: z.literal("VEHICLE_WHEREABOUTS"),
   vehicleId: idSchema("Vehicle"),
@@ -565,6 +646,7 @@ export const knowledgeSubjectSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("ROUTE_CONDITION"), routeId: idSchema("Route") }),
   z.strictObject({ kind: z.literal("VEHICLE_WHEREABOUTS"), vehicleId: idSchema("Vehicle") }),
   z.strictObject({ kind: z.literal("STANDING") }),
+  z.strictObject({ kind: z.literal("EMPLOYEE_PERFORMANCE"), characterId: idSchema("Character") }),
 ]) satisfies z.ZodType<KnowledgeSubject>;
 
 // Every subject kind has a subject branch.
@@ -582,6 +664,7 @@ export const knowledgeValueSchema = z.discriminatedUnion("kind", [
   routeConditionValueSchema,
   vehicleWhereaboutsValueSchema,
   standingValueSchema,
+  employeePerformanceValueSchema,
 ]);
 
 export const knowledgeSourceSchema = z.discriminatedUnion("kind", [
@@ -638,20 +721,86 @@ const catchUpShape = {
 
 export const catchUpSchema = z.strictObject({ ...catchUpShape, tick: tickSchema });
 
-export const callInReasonSchema = z.enum(["NEW_CONTRACT_OFFER", "INSTALLMENT_DUE"] as const satisfies readonly CallInReason[]);
+export const callInReasonSchema = z.enum(["NEW_CONTRACT_OFFER", "INSTALLMENT_DUE", "EMPLOYEE_REPORT"] as const satisfies readonly CallInReason[]);
+
+// Employees' reports (ADR 0025 decision 7, ADR 0028 decision 8).
+
+export const holdReasonSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("RECIPE_NOT_SUPPORTED") }),
+  z.strictObject({ kind: z.literal("NO_STORAGE") }),
+  z.strictObject({ kind: z.literal("NO_MATERIALS"), materialId: idSchema("Material") }),
+  z.strictObject({ kind: z.literal("NO_CASH") }),
+  z.strictObject({ kind: z.literal("SPENDING_CAP") }),
+]) satisfies z.ZodType<HoldReason>;
+
+export const batchLimitSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("STORAGE") }),
+  z.strictObject({ kind: z.literal("MATERIALS"), materialId: idSchema("Material") }),
+  z.strictObject({ kind: z.literal("CASH") }),
+  z.strictObject({ kind: z.literal("SPENDING_CAP") }),
+]) satisfies z.ZodType<BatchLimit>;
+
+export const reportLineSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("BATCH_STARTED"),
+    tick: tickSchema,
+    standingOrderId: idSchema("StandingOrder"),
+    recipeId: idSchema("Recipe"),
+    quantity: positiveQuantity,
+    conversionCost: moneySchema,
+    limitedBy: batchLimitSchema.nullable(),
+  }),
+  z.strictObject({
+    kind: z.literal("BATCH_FINISHED"),
+    tick: tickSchema,
+    recipeId: idSchema("Recipe"),
+    quantity: positiveQuantity,
+    outcome: z.enum(["COMPLETED", "FAILED"]),
+  }),
+  z.strictObject({ kind: z.literal("HELD_BACK"), tick: tickSchema, standingOrderId: idSchema("StandingOrder"), hold: holdReasonSchema }),
+  z.strictObject({
+    kind: z.literal("ORDER_REFUSED"),
+    tick: tickSchema,
+    standingOrderId: idSchema("StandingOrder"),
+    command: gameCommandSchema,
+    reason: rejectionReasonSchema,
+  }),
+]) satisfies z.ZodType<ReportLine>;
+
+export const pendingReportSchema = z.strictObject({
+  lines: z.array(reportLineSchema),
+  dropped: count,
+  callPending: z.boolean(),
+}) satisfies z.ZodType<PendingReport>;
+
+export const reportContentSchema = z.strictObject({
+  characterId: idSchema("Character"),
+  lines: z.array(reportLineSchema),
+  dropped: count,
+}) satisfies z.ZodType<ReportContent>;
+
+export const reportViaSchema = z.enum(["IN_PERSON", "CALL_OUT", "CALL_IN"] as const satisfies readonly ReportVia[]);
+
+/** A message carries a report exactly when it's an employee's report (ADR 0025 decision 7). */
+const reportMatchesReason = (m: { readonly reason: CallInReason; readonly report: ReportContent | null }) =>
+  (m.reason === "EMPLOYEE_REPORT") === (m.report !== null);
+const REPORT_MATCHES_REASON = "A message carries a report exactly when its reason is EMPLOYEE_REPORT";
 
 /** `HeldMessage` (ADR 0024 decision 6): each copied value belongs to its subject. */
-export const heldMessageSchema = z.strictObject({
-  takenAt: tickSchema,
-  callerLocationId: idSchema("Location"),
-  takenBy: idSchema("Character").nullable(),
-  reason: callInReasonSchema,
-  values: z.array(
-    z
-      .strictObject({ subject: knowledgeSubjectSchema, value: knowledgeValueSchema })
-      .refine((v) => valueMatches(v.subject, v.value), "A message's value must have its subject's kind and key"),
-  ),
-});
+export const heldMessageSchema = z
+  .strictObject({
+    takenAt: tickSchema,
+    callerLocationId: idSchema("Location"),
+    takenBy: idSchema("Character").nullable(),
+    reason: callInReasonSchema,
+    values: z.array(
+      z
+        .strictObject({ subject: knowledgeSubjectSchema, value: knowledgeValueSchema })
+        .refine((v) => valueMatches(v.subject, v.value), "A message's value must have its subject's kind and key"),
+    ),
+    report: reportContentSchema.nullable(),
+  })
+  .refine(reportMatchesReason, REPORT_MATCHES_REASON);
 
 export const pendingMessagesSchema = z.strictObject({
   locationId: idSchema("Location"),
@@ -659,14 +808,17 @@ export const pendingMessagesSchema = z.strictObject({
   dropped: count,
 });
 
-export const deliveredMessageSchema = z.strictObject({
-  takenAt: tickSchema,
-  heldAtLocationId: idSchema("Location"),
-  callerLocationId: idSchema("Location"),
-  takenBy: idSchema("Character").nullable(),
-  reason: callInReasonSchema,
-  subjects: z.array(knowledgeSubjectSchema),
-});
+export const deliveredMessageSchema = z
+  .strictObject({
+    takenAt: tickSchema,
+    heldAtLocationId: idSchema("Location"),
+    callerLocationId: idSchema("Location"),
+    takenBy: idSchema("Character").nullable(),
+    reason: callInReasonSchema,
+    subjects: z.array(knowledgeSubjectSchema),
+    report: reportContentSchema.nullable(),
+  })
+  .refine(reportMatchesReason, REPORT_MATCHES_REASON);
 
 const transactionProducerSchema = z.enum(
   Object.keys(TRANSACTION_PRODUCERS) as [TransactionProducer, ...TransactionProducer[]],
@@ -716,6 +868,14 @@ export const activityItemSchema = z.discriminatedUnion("kind", [
     tick: tickSchema,
     locationId: idSchema("Location"),
     privilege: arrangementPrivilegeSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("REPORT"),
+    tick: tickSchema,
+    characterId: idSchema("Character"),
+    via: reportViaSchema,
+    report: reportContentSchema,
+    atArrival: z.boolean(),
   }),
 ]);
 
@@ -940,6 +1100,30 @@ export const gameEventSchema = z.discriminatedUnion("type", [
   ev("PHONE_INSTALLED", { facilityId: idSchema("Facility"), price: moneySchema, transactionId: idSchema("Transaction") }),
   ev("ROOM_RENTED", { locationId: idSchema("Location"), until: tickSchema, price: moneySchema, transactionId: idSchema("Transaction") }),
   ev("ARRANGEMENT_GRANTED", { locationId: idSchema("Location"), privilege: arrangementPrivilegeSchema }),
+  ev("EMPLOYEE_HIRED", {
+    characterId: idSchema("Character"),
+    role: employeeRoleSchema,
+    stationId: idSchema("Facility"),
+    dailyWage: moneySchema,
+    signingCost: moneySchema,
+    startsAt: tickSchema,
+    transactionId: idSchema("Transaction"),
+  }),
+  ev("STANDING_ORDER_SET", {
+    characterId: idSchema("Character"),
+    standingOrderId: idSchema("StandingOrder").nullable(),
+    terms: standingOrderTermsSchema.nullable(),
+    transactionId: idSchema("Transaction"),
+  }),
+  ev("EMPLOYEE_DISMISSED", { characterId: idSchema("Character"), transactionId: idSchema("Transaction") }),
+  ev("EMPLOYEE_ACTED", {
+    characterId: idSchema("Character"),
+    standingOrderId: idSchema("StandingOrder"),
+    command: gameCommandSchema,
+    status: z.enum(["APPLIED", "REJECTED"]),
+    reason: rejectionReasonSchema.nullable(),
+  }),
+  ev("REPORT_DELIVERED", { characterId: idSchema("Character"), via: reportViaSchema, lineCount: count, dropped: count }),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -951,7 +1135,7 @@ const ledgerAccountSchema = z.enum(Object.keys(LEDGER_ACCOUNTS) as [LedgerAccoun
 const transactionKindSchema = z.enum([
   "OPENING_BALANCE", "MATERIAL_PURCHASE", "PRODUCTION", "PRODUCTION_WRITE_OFF", "PRODUCTION_START", "EQUIPMENT_PURCHASE",
   "DISPATCH", "SALE", "TRANSFER", "CARGO_LOSS", "DAILY_SETTLEMENT", "INSTALLMENT_SETTLEMENT",
-  "RESERVATION", "ASSET_SALE", "VEHICLE_RETURN", "LOSS", "PROGRESSION", "TELEPHONE", "LODGING",
+  "RESERVATION", "ASSET_SALE", "VEHICLE_RETURN", "LOSS", "PROGRESSION", "TELEPHONE", "LODGING", "PERSONNEL",
 ] as const satisfies readonly TransactionKind[]);
 
 const ledgerEntrySchema = z.strictObject({
@@ -992,6 +1176,37 @@ const outcomeStateSchema = z.discriminatedUnion("status", [
 ]);
 
 const scheduledBase = { tick: tickSchema, sequence: nonNegativeInt };
+
+export const employeeWorkSchema = z.strictObject({
+  currentJobId: idSchema("ProductionJob").nullable(),
+  batchesRun: count,
+  lastHold: holdReasonSchema.nullable(),
+  lastRefusal: rejectionReasonSchema.nullable(),
+  spending: z.strictObject({ periodIndex: nonNegativeInt, spent: moneySchema }),
+}) satisfies z.ZodType<EmployeeWork>;
+
+const employeeStateShape = {
+  characterId: idSchema("Character"),
+  role: employeeRoleSchema,
+  stationId: idSchema("Facility"),
+  dailyWage: moneySchema,
+  hiredAt: tickSchema,
+  startsAt: tickSchema,
+  competenceEstimate: competenceEstimateSchema,
+  standingOrder: standingOrderStateSchema.nullable(),
+  competence: percent,
+  reliability: percent,
+  loyalty: percent,
+  work: employeeWorkSchema,
+  report: pendingReportSchema,
+};
+
+export const employeeStateSchema = z.strictObject(employeeStateShape) satisfies z.ZodType<EmployeeState>;
+
+export const formerEmployeeStateSchema = z.strictObject({
+  characterId: idSchema("Character"),
+  batchesRun: count,
+}) satisfies z.ZodType<FormerEmployeeState>;
 
 export const gameStateSchema = z.strictObject({
   scenarioId: idSchema("Scenario"),
@@ -1239,6 +1454,8 @@ export const gameStateSchema = z.strictObject({
   knowledge: knowledgeStateSchema,
   founder: founderStateSchema,
   arrangements: z.array(arrangementStateSchema),
+  employees: z.array(employeeStateSchema),
+  formerEmployees: z.array(formerEmployeeStateSchema),
 });
 
 export const saveGameSchema = z.strictObject({
@@ -1426,6 +1643,38 @@ const cashFlowCategorySchema = z.enum([
 
 const progressSchema = <S extends z.ZodType>(value: S) => z.strictObject({ current: value, target: value });
 
+const competenceBandSchema = z.enum(COMPETENCE_BAND_KINDS);
+
+export const playerEmployeeSchema = z.strictObject({
+  characterId: idSchema("Character"),
+  name: z.string(),
+  role: employeeRoleSchema,
+  stationId: idSchema("Facility"),
+  dailyWage: moneySchema,
+  hiredAt: tickSchema,
+  startsAt: tickSchema,
+  competenceEstimate: competenceEstimateSchema,
+  competenceBand: competenceBandSchema,
+  standingOrder: standingOrderStateSchema.nullable(),
+  performance: known(employeePerformanceValueSchema),
+}) satisfies z.ZodType<PlayerEmployee>;
+
+export const playerCandidateSchema = z.strictObject({
+  characterId: idSchema("Character"),
+  name: z.string(),
+  role: employeeRoleSchema,
+  competenceEstimate: competenceEstimateSchema,
+  competenceBand: competenceBandSchema,
+  dailyWage: moneySchema,
+  signingCost: moneySchema,
+}) satisfies z.ZodType<PlayerCandidate>;
+
+export const playerHiringSchema = z.strictObject({
+  locationId: idSchema("Location"),
+  slateEndsAt: tickSchema,
+  candidates: z.array(playerCandidateSchema),
+}) satisfies z.ZodType<PlayerHiring>;
+
 export const playerSnapshotSchema = z.strictObject({
   clock: z.strictObject({
     tick: tickSchema,
@@ -1491,6 +1740,8 @@ export const playerSnapshotSchema = z.strictObject({
   }),
   activity: z.array(activityItemSchema),
   catchUp: catchUpSchema.nullable(),
+  employees: z.array(playerEmployeeSchema),
+  hiring: playerHiringSchema.nullable(),
 });
 
 // ---------------------------------------------------------------------------

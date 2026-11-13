@@ -10,7 +10,7 @@ import type { ScenarioId } from "./ids.ts";
 import type { GameState } from "./state.ts";
 
 /** Bump on any change to SaveGame or GameState, and add a migration (ADR 0009). */
-export const SAVE_SCHEMA_VERSION = 6;
+export const SAVE_SCHEMA_VERSION = 7;
 
 export const SAVE_FORMAT = "empire-of-vice/save";
 
