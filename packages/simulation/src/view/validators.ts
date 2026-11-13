@@ -16,6 +16,9 @@ import { startProductionValidator } from "../production/jobs.ts";
 import { setWorkforceValidator } from "../production/workforce.ts";
 import type { OrderValidators } from "./order.ts";
 
+/** A command every view accepts. */
+const acceptedNoOp = (): null => null;
+
 /** One validator per command type, for these game-data and rules. */
 export function orderValidators(data: GameData, rules: GameRules): OrderValidators {
   const repeatable = {
@@ -35,5 +38,10 @@ export function orderValidators(data: GameData, rules: GameRules): OrderValidato
     TRAVEL: travelValidator(data, rules),
     REST: restValidator(rules),
     WAKE: wakeValidator(rules),
+    // PH1's accepted no-ops (ADR 0024 decision 12, ADR 0027 decision 14): nothing
+    // to check until C1 (#179) gives them behaviour and their validators.
+    PLACE_CALL: acceptedNoOp,
+    INSTALL_PHONE: acceptedNoOp,
+    RENT_ROOM: acceptedNoOp,
   };
 }
