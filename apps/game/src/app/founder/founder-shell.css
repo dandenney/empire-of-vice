@@ -1,33 +1,85 @@
 /*
- * The First Hire's placeholder shell (SK2a, #174), in the dock. Plain on
- * purpose: SK2b (#234) owns the visible layer. Every value is a token.
+ * The First Hire's founder-rules layout (SK2b, #234): the map's bar and travel
+ * card, and the new-game choice. PLACEHOLDER layout; every value is a token.
  */
-
-.founder-shell {
-  padding: var(--space-6);
-}
-
-.founder-shell-note {
-  margin: 0 0 var(--space-6);
-  color: var(--color-text-muted);
-}
-
-.founder-shell-facts {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: var(--space-2) var(--space-6);
-  margin: 0 0 var(--space-6);
-}
-
-.founder-shell-facts dt {
-  color: var(--color-text-muted);
-}
 
 .new-game-choice {
   padding: var(--space-6);
 }
 
-.founder-shell-facts dd {
-  margin: 0;
-  font-variant-numeric: tabular-nums;
+/* Under founder rules there's no icon rail: the map takes its column. */
+.shell-founder {
+  grid-template-areas:
+    "top top dock"
+    "map map dock";
+}
+
+@media (max-width: 960px) {
+  .shell-founder {
+    grid-template-areas:
+      "top top"
+      "map map"
+      "dock dock";
+  }
+}
+
+.founder-map-bar {
+  position: absolute;
+  top: var(--space-5);
+  left: var(--space-5);
+  right: var(--space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  pointer-events: none;
+}
+
+.founder-map-bar > * {
+  pointer-events: auto;
+}
+
+.founder-map-hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.founder-map-bar .button {
+  margin-left: auto;
+}
+
+.travel-card {
+  position: absolute;
+  left: var(--space-5);
+  bottom: var(--space-5);
+  max-width: 420px;
+  padding: var(--space-5);
+  border: 1px solid var(--color-accent-dim);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  box-shadow: 0 4px 16px var(--color-shadow);
+}
+
+.travel-card-title {
+  margin: 0 0 var(--space-4);
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  letter-spacing: 0.04em;
+  color: var(--color-accent-strong);
+}
+
+.travel-card-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.travel-card-note {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.travel-card-note[data-status="rejected"],
+.travel-card-note[data-status="invalid"] {
+  color: var(--color-loss);
 }

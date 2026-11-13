@@ -12,9 +12,14 @@
 
 import type { GameSnapshot, LocationId, LocationSnapshot, WorldPoint } from "@eov/contracts";
 
-/** One drawn shape, in world units. The test hook exposes these as the map scene query (architecture §4). */
+/**
+ * One drawn shape, in world units. The test hook exposes these as the map scene query (architecture §4).
+ * PLACE (a location with nobody of ours or the scenario's on it, such as the
+ * depot) and FOUNDER (the founder's token) appear only under founder rules
+ * (player-scene.ts); M001's scene never has them.
+ */
 export interface SceneShape {
-  readonly kind: "FACILITY" | "SUPPLIER" | "BUYER" | "ROUTE" | "VEHICLE";
+  readonly kind: "FACILITY" | "SUPPLIER" | "BUYER" | "PLACE" | "ROUTE" | "VEHICLE" | "FOUNDER";
   readonly id: string;
   readonly label: string;
   readonly position: WorldPoint;
@@ -30,7 +35,7 @@ export interface MapEntity extends SceneShape {
   readonly waypoints: readonly WorldPoint[];
   /** Routes only: false while the route is closed. */
   readonly open: boolean;
-  /** Vehicles only: true when parked at home (no trip). */
+  /** Vehicles: true when parked at home (no trip). The founder: true when at a place (not on a road). */
   readonly parked: boolean;
   /** Vehicles only: true when the trip is running late. */
   readonly delayed: boolean;
@@ -71,6 +76,9 @@ export const MAP_METRICS = {
   routeHitDistance: 6,
   /** Where a parked truck is drawn relative to its home location. */
   parkedOffset: { x: -34, y: 0 },
+  /** Founder rules: the founder's token, and where it sits relative to the place they're at. */
+  founderRadius: 9,
+  founderOffset: { x: 24, y: -20 },
 } as const;
 
 function occupantId(location: LocationSnapshot): string {
@@ -147,7 +155,11 @@ export function sceneOf(snapshot: GameSnapshot): readonly MapEntity[] {
 
 /** The view that fits every location and waypoint into a `width` × `height` map, centred, with padding. */
 export function fitView(snapshot: GameSnapshot, width: number, height: number): MapView {
-  const points = [...snapshot.locations.map((l) => l.position), ...snapshot.routes.flatMap((r) => r.waypoints)];
+  return fitPoints([...snapshot.locations.map((l) => l.position), ...snapshot.routes.flatMap((r) => r.waypoints)], width, height);
+}
+
+/** The view that fits `points` (world units) into a `width` × `height` map, centred, with padding. */
+export function fitPoints(points: readonly WorldPoint[], width: number, height: number): MapView {
   if (points.length === 0) return { scale: 1, offsetX: width / 2, offsetY: height / 2, width, height };
   const minX = Math.min(...points.map((p) => p.x));
   const minY = Math.min(...points.map((p) => p.y));
@@ -177,6 +189,11 @@ export function place(scene: readonly MapEntity[], view: MapView): readonly Plac
     if (entity.kind === "VEHICLE") {
       const screen = entity.parked ? { x: at.x + MAP_METRICS.parkedOffset.x, y: at.y + MAP_METRICS.parkedOffset.y } : at;
       return { entity, screen, radius: MAP_METRICS.vehicleRadius };
+    }
+    if (entity.kind === "FOUNDER") {
+      // At a place (not on a road), the token sits beside it so it doesn't hide it.
+      const screen = entity.parked ? { x: at.x + MAP_METRICS.founderOffset.x, y: at.y + MAP_METRICS.founderOffset.y } : at;
+      return { entity, screen, radius: MAP_METRICS.founderRadius };
     }
     if (entity.kind === "ROUTE") return { entity, screen: at, radius: MAP_METRICS.routeHitDistance };
     return { entity, screen: at, radius: MAP_METRICS.locationRadius };
@@ -208,7 +225,7 @@ function hits(placed: PlacedEntity, view: MapView, x: number, y: number): boolea
 }
 
 /** Draw order, front to back: what a click at a point lands on first. */
-const FRONT_TO_BACK: Readonly<Record<SceneShape["kind"], number>> = { VEHICLE: 0, FACILITY: 1, SUPPLIER: 1, BUYER: 1, ROUTE: 2 };
+const FRONT_TO_BACK: Readonly<Record<SceneShape["kind"], number>> = { FOUNDER: 0, VEHICLE: 0, FACILITY: 1, SUPPLIER: 1, BUYER: 1, PLACE: 1, ROUTE: 2 };
 
 /** Every entity under the screen point (CSS pixels from the map's top-left), frontmost first. */
 export function entitiesAt(placed: readonly PlacedEntity[], view: MapView, x: number, y: number): readonly PlacedEntity[] {

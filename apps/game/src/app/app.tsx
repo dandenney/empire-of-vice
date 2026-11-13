@@ -6,11 +6,13 @@
 // rendered from the latest snapshot.
 //
 // Under founder rules (the First Hire) the view holds only the player
-// snapshot: no rail, no map, no M001 panels, and no toasts reach it (the
-// worker forwards no world events). The dock shows the placeholder founder
-// shell until SK2b (#234). The First Hire's placeholder new-game choice sits
-// in the dock whenever no world snapshot is shown.
+// snapshot: no rail, no M001 map or panels, and no toasts reach it (the
+// worker forwards no world events). The map region shows the founder's map or
+// the scene of the place they're at, and the dock the HUD over the ledger
+// (SK2b, #234; app/founder/founder-shell.tsx). The First Hire's placeholder
+// new-game choice sits in the dock whenever no world snapshot is shown.
 
+import { THE_FIRST_HIRE_SCENARIO } from "@eov/game-data";
 import { useState } from "react";
 import { SHELL_COPY } from "../components/copy.ts";
 import { formatGameDate } from "../components/format.ts";
@@ -24,7 +26,7 @@ import { ToastHost } from "../ui/toasts/toast-host.tsx";
 import "../ui/fonts.ts";
 import "../ui/components.css";
 import { EndScreen } from "./end-screen/end-screen.tsx";
-import { FounderShell } from "./founder/founder-shell.tsx";
+import { FounderDock, FounderStage } from "./founder/founder-shell.tsx";
 import { NewGameChoice } from "./founder/new-game-choice.tsx";
 import "./founder/founder-shell.css";
 import { MapSlot } from "./map-slot.tsx";
@@ -33,7 +35,7 @@ import type { SaveLibrary } from "./saves/save-library.ts";
 import "./shell.css";
 
 export function App({ showStateHash, saves }: { readonly showStateHash: boolean; readonly saves: SaveLibrary }) {
-  const { snapshot, playerSnapshot, stateHash, fault, scheduler } = useGatewayView();
+  const { snapshot, playerSnapshot, stateHash, fault, scheduler, game } = useGatewayView();
   const clock = snapshot?.clock ?? playerSnapshot?.clock ?? null;
   const openPanelId = useUi((s) => s.openPanelId);
   const openPanel = useUi((s) => s.openPanel);
@@ -43,7 +45,7 @@ export function App({ showStateHash, saves }: { readonly showStateHash: boolean;
   const Panel = panel.component;
 
   return (
-    <div className="shell" data-testid="shell">
+    <div className={playerSnapshot ? "shell shell-founder" : "shell"} data-testid="shell">
       <TokenStyle />
       <header className="topbar">
         <div className="clock">
@@ -68,6 +70,11 @@ export function App({ showStateHash, saves }: { readonly showStateHash: boolean;
             <MapSlot snapshot={snapshot} />
           </FontsReady>
         )}
+        {playerSnapshot && (
+          <FontsReady>
+            <FounderStage key={game} player={playerSnapshot} />
+          </FontsReady>
+        )}
       </div>
       <div className="dock">
         <header className="masthead">
@@ -79,7 +86,7 @@ export function App({ showStateHash, saves }: { readonly showStateHash: boolean;
         {/* With no game, the masthead's status line says so. */}
         <main>
           {snapshot && <Panel snapshot={snapshot} />}
-          {playerSnapshot && <FounderShell player={playerSnapshot} scheduler={scheduler} />}
+          {playerSnapshot && <FounderDock key={game} player={playerSnapshot} scheduler={scheduler} title={THE_FIRST_HIRE_SCENARIO.name} />}
           {/* No world snapshot: no game yet, or a First Hire game. M001's dock is unchanged. */}
           {!snapshot && <NewGameChoice busy={busy} setBusy={setBusy} say={setMessage} />}
         </main>

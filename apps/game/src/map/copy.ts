@@ -7,4 +7,6 @@ export const MAP_COPY = {
   label: "Map",
   /** Shown inside the map region if the browser can't draw it. The location buttons still work. */
   unavailable: "The map can't be drawn in this browser.",
+  /** Founder rules (SK2b): the founder's token on the map. */
+  founder: "You",
 } as const;

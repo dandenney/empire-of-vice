@@ -1,25 +1,21 @@
-// PLACEHOLDER copy (story decision): the First Hire's placeholder shell and its
-// new-game choice (SK2a, #174). SK2b (#234) replaces the shell with the map,
-// the place scenes, the ledger and the HUD, and their wording is the human's.
-
-import type { FounderWhereabouts } from "@eov/contracts";
+// PLACEHOLDER copy (story decision): the First Hire's founder-rules layout
+// (SK2a #174, SK2b #234): the new-game choice and the map's travel card. The
+// HUD, scenes and ledger have their own copy files. The wording is the human's.
 
 export const FOUNDER_COPY = {
   /** The dock's new-game choice for the First Hire; the top bar's New game starts the First Shipment. */
   newGame: (scenarioName: string) => `New game: ${scenarioName}`,
-  placeholder: (scenarioName: string) => `${scenarioName}: the map and scenes are coming in SK2b.`,
-  statusLabel: "Founder status",
-  time: "Time",
-  founder: "Founder",
-  cash: "Cash",
-  activity: "Activity items",
-  fastForward: "Fast-forwarding while the founder sleeps",
-  /** Where the founder is and what they're doing; `place` is the location's name. */
-  whereabouts: {
-    PRESENT: (place: string) => `At ${place}`,
-    BUSY: (place: string) => `Busy at ${place}`,
-    TRAVELLING: (place: string) => `Travelling to ${place}`,
-    ON_DELIVERY: () => "Riding a delivery",
-    RESTING: (place: string) => `Asleep at ${place}`,
-  } satisfies Readonly<Record<FounderWhereabouts["kind"] | "BUSY", (place: string) => string>>,
+  placeholderArt: "Placeholder map",
+  travel: {
+    hint: "Pick a place to go there.",
+    title: (place: string) => `Go to ${place}`,
+    goIn: (place: string) => `Go into ${place}`,
+    walk: "Walk there",
+    drive: (truck: string) => `Drive the ${truck}`,
+    cancel: "Not now",
+    busy: "You're busy. Finish first.",
+    travelling: "You're already on the road.",
+    riding: "You're riding with the truck.",
+    resting: "You're asleep.",
+  },
 } as const;
