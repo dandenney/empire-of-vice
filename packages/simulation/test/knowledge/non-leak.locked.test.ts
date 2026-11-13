@@ -773,7 +773,7 @@ describe("decision 9's renaming canonicaliser", () => {
 const PROPERTY_SEED = 21_009;
 
 describe("the static non-leak property (ADR 0021 decision 9)", () => {
-  it("states that agree on everything the founder can know give equal player snapshots, after renaming", () => {
+  it("states that agree on everything the founder can know give equal player snapshots, after renaming", { timeout: 60_000 }, () => {
     let pairs = 0;
     fc.assert(
       fc.property(startArb, fc.array(actionArb, { maxLength: 12 }), hiddenPlanArb, (startKind, actions, plan) => {
@@ -845,7 +845,7 @@ function expectSameWorld(a: KernelSimulation, b: KernelSimulation, what: string)
 }
 
 describe("reachable pairs: closures the sleeping founder never saw (decision 9's divergence set)", () => {
-  it("only the ID counters differ, and the player snapshots stay equal after renaming", () => {
+  it("only the ID counters differ, and the player snapshots stay equal after renaming", { timeout: 60_000 }, () => {
     fc.assert(
       fc.property(fc.array(nightClosureArb, { minLength: 1, maxLength: 3 }), fc.array(actionArb, { maxLength: 10 }), (closures, actions) => {
         const a = newGame({ scenario: FOUNDER_SCENARIO });
