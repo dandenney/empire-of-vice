@@ -16,6 +16,7 @@ import { registerInventory } from "../inventory/release.ts";
 import { createRegistry, type SystemRegistry } from "../kernel/registry.ts";
 import { M001_RULES, type GameRules } from "../kernel/rules.ts";
 import { registerLogistics } from "../logistics/logistics.ts";
+import { registerPhones } from "../phones/phones.ts";
 import { registerProduction } from "../production/production.ts";
 import { registerProgression } from "../progression/index.ts";
 import { PROJECTION_SYSTEM } from "../projection/index.ts";
@@ -40,6 +41,7 @@ export const SYSTEMS: readonly SystemEntry[] = [
   { name: "progression (T05e)", register: registerProgression },
   { name: "shakedown (T07f)", register: registerShakedown },
   { name: "founder (SK1a)", register: registerFounder },
+  { name: "phones (PH1 no-ops; C1)", register: registerPhones },
 ];
 
 /** A registry with every system in SYSTEMS, sharing one coordinator, under the scenario's rules (default: M001's). */

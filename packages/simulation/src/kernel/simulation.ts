@@ -327,10 +327,12 @@ export class KernelSimulation implements Simulation {
     s = this.#runPhase("production", s, ctx);
     s = this.#runPhase("vehicles", s, ctx);
     // 4. World events due now, then fulfillment and payments, then the
-    //    founder's transitions (ADR 0023 decision 2a), then penalties.
+    //    founder's transitions (ADR 0023 decision 2a), then phones (ADR 0024
+    //    decision 8: deliveries and calls in), then penalties.
     s = this.#resolveWorldEvents(s, ctx);
     s = this.#runPhase("resolution", s, ctx);
     s = this.#runPhase("founder", s, ctx);
+    s = this.#runPhase("phones", s, ctx);
     s = this.#runPhase("deadlines", s, ctx);
     // 5. Midnight settlement.
     if (ctx.isMidnight) s = this.#runPhase("midnight", s, ctx);

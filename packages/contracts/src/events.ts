@@ -12,9 +12,10 @@
 
 import type { DeliveryPurpose, GameCommandType, RejectionReason } from "./commands.ts";
 import type { CargoLine, QualityTier } from "./goods.ts";
-import type { CatchUp } from "./knowledge.ts";
+import type { CallInReason, CatchUp } from "./knowledge.ts";
 import type {
   BuyerId,
+  CharacterId,
   CommandId,
   ContractId,
   ContractOfferId,
@@ -37,7 +38,7 @@ import type {
   VehicleId,
 } from "./ids.ts";
 import type { Money } from "./money.ts";
-import type { Transport } from "./state.ts";
+import type { ArrangementPrivilege, CallAnswerer, Transport } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 /** Fields every event has. */
@@ -495,6 +496,75 @@ export type FounderRestedEvent = GameEventOf<"FOUNDER_RESTED", { readonly locati
 export type FounderWokeEvent = GameEventOf<"FOUNDER_WOKE", { readonly locationId: LocationId; readonly early: boolean }>;
 
 // ---------------------------------------------------------------------------
+// Telephones, rooms and arrangements (ADR 0024, ADR 0027). None fires with
+// `founderRules: false`.
+// ---------------------------------------------------------------------------
+
+/**
+ * The founder placed a call from `fromLocationId` to `locationId` (ADR 0024
+ * decision 3). Applied either way: `answeredBy` is null when nobody answered,
+ * and then the transaction has no entries (the coin comes back).
+ */
+export type CallPlacedEvent = GameEventOf<
+  "CALL_PLACED",
+  {
+    readonly fromLocationId: LocationId;
+    readonly locationId: LocationId;
+    readonly answered: boolean;
+    readonly answeredBy: CallAnswerer | null;
+    readonly transactionId: TransactionId;
+  }
+>;
+
+/** A party called the family and the founder answered at `phoneLocationId` (ADR 0024 decision 5). */
+export type CallReceivedEvent = GameEventOf<
+  "CALL_RECEIVED",
+  { readonly callerLocationId: LocationId; readonly phoneLocationId: LocationId; readonly reason: CallInReason }
+>;
+
+/** A party called and a message was taken at `heldAtLocationId` (ADR 0024 decision 6). Hidden until delivered. */
+export type MessageTakenEvent = GameEventOf<
+  "MESSAGE_TAKEN",
+  {
+    readonly callerLocationId: LocationId;
+    readonly heldAtLocationId: LocationId;
+    /** null: the keeper of the place, not a character. */
+    readonly takenBy: CharacterId | null;
+    readonly reason: CallInReason;
+  }
+>;
+
+/** The messages held at `locationId` reached the founder (ADR 0024 decision 6). */
+export type MessagesDeliveredEvent = GameEventOf<
+  "MESSAGES_DELIVERED",
+  {
+    readonly locationId: LocationId;
+    readonly count: number;
+    /** Messages dropped there past MESSAGE_LIMIT before this delivery. */
+    readonly dropped: number;
+    readonly via: "ARRIVAL" | "PRESENT" | "CALL";
+  }
+>;
+
+/** A telephone line was installed at one of the family's facilities (ADR 0024 decision 2). */
+export type PhoneInstalledEvent = GameEventOf<
+  "PHONE_INSTALLED",
+  { readonly facilityId: FacilityId; readonly price: Money; readonly transactionId: TransactionId }
+>;
+
+/** The founder rented a room for a stay until `until` (ADR 0027 decision 4). */
+export type RoomRentedEvent = GameEventOf<
+  "ROOM_RENTED",
+  { readonly locationId: LocationId; readonly until: Tick; readonly price: Money; readonly transactionId: TransactionId }
+>;
+
+/** A dealing newly granted a privilege of the arrangement at `locationId` (ADR 0027 decision 3). */
+export type ArrangementGrantedEvent = GameEventOf<
+  "ARRANGEMENT_GRANTED",
+  { readonly locationId: LocationId; readonly privilege: ArrangementPrivilege }
+>;
+
+// ---------------------------------------------------------------------------
 // The union
 // ---------------------------------------------------------------------------
 
@@ -541,7 +611,14 @@ export type GameEvent =
   | DealAgreedEvent
   | DealExpiredEvent
   | SpecSaleSettledEvent
-  | RouteFoundClosedEvent;
+  | RouteFoundClosedEvent
+  | CallPlacedEvent
+  | CallReceivedEvent
+  | MessageTakenEvent
+  | MessagesDeliveredEvent
+  | PhoneInstalledEvent
+  | RoomRentedEvent
+  | ArrangementGrantedEvent;
 
 export type GameEventType = GameEvent["type"];
 
@@ -606,6 +683,16 @@ export const EVENT_IMPORTANCE: Readonly<Record<GameEventType, "notify" | "log">>
   DEAL_EXPIRED: "log",
   SPEC_SALE_SETTLED: "log",
   ROUTE_FOUND_CLOSED: "log",
+  // Telephones, rooms and arrangements (ADR 0024, ADR 0027). The founder learns
+  // them through the player snapshot (activity items, `founder`, `places`), never
+  // as world-event toasts; MESSAGE_TAKEN is hidden until the message is delivered.
+  CALL_PLACED: "log",
+  CALL_RECEIVED: "log",
+  MESSAGE_TAKEN: "log",
+  MESSAGES_DELIVERED: "log",
+  PHONE_INSTALLED: "log",
+  ROOM_RENTED: "log",
+  ARRANGEMENT_GRANTED: "log",
 };
 
 export const GAME_EVENT_TYPES = Object.keys(EVENT_IMPORTANCE) as readonly GameEventType[];
@@ -667,6 +754,16 @@ export const EVENT_CONCERNS_PLACE = {
   SPEC_SALE_SETTLED: null,
   // News at the delivery's origin facility; learned directly if aboard (ADR 0022 decision 9).
   ROUTE_FOUND_CLOSED: "DELIVERY_ORIGIN",
+  // The founder's own commands, and channels with their own delivery: a call in
+  // the founder answers is learned at once, a message when it's delivered
+  // (ADR 0024 decision 6), never as news.
+  CALL_PLACED: null,
+  CALL_RECEIVED: null,
+  MESSAGE_TAKEN: null,
+  MESSAGES_DELIVERED: null,
+  PHONE_INSTALLED: null,
+  ROOM_RENTED: null,
+  ARRANGEMENT_GRANTED: null,
 } as const satisfies Readonly<Record<GameEventType, "FACILITY" | "DELIVERY_ORIGIN" | null>>;
 
 /** Event types that become news at the place they concern. */

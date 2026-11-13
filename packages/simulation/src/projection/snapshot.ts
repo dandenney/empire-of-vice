@@ -321,6 +321,7 @@ function projectFacility(state: GameState, facility: FacilityState, deps: Projec
     recipes: [...data.recipes].sort(byId).map((r) => recipeOption(state, facility, r, deps, ctx)),
     products,
     materials,
+    phoneLine: facility.phoneLine === null ? null : { bookValue: facility.phoneLine.bookValue },
   };
 }
 

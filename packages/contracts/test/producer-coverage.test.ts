@@ -249,7 +249,7 @@ describe("the producer registry matches the simulation", () => {
     const kinds: readonly TransactionKind[] = [
       "OPENING_BALANCE", "MATERIAL_PURCHASE", "PRODUCTION", "PRODUCTION_WRITE_OFF", "PRODUCTION_START", "EQUIPMENT_PURCHASE",
       "DISPATCH", "SALE", "TRANSFER", "CARGO_LOSS", "DAILY_SETTLEMENT", "INSTALLMENT_SETTLEMENT",
-      "RESERVATION", "ASSET_SALE", "VEHICLE_RETURN", "LOSS", "PROGRESSION",
+      "RESERVATION", "ASSET_SALE", "VEHICLE_RETURN", "LOSS", "PROGRESSION", "TELEPHONE", "LODGING",
     ];
     for (const family of Object.keys(TRANSACTION_PRODUCERS)) expect(kinds, family).toContain(family.split(":")[0]);
   });

@@ -75,8 +75,13 @@ describe("sprint-zero runner", () => {
   // paid when the job starts. The start transaction is now PRODUCTION_START:job-1 with
   // Dr PRODUCTION_IN_PROGRESS / Cr CASH $4.00 instead of the entry-less RESERVATION:job-1, and the
   // completion credits PRODUCTION_IN_PROGRESS instead of CASH. Rewriting those two transactions
-  // back gives 59a882e0fd44576d again, so nothing else moved: same IDs, ticks, events and final cash).
+  // back gives 59a882e0fd44576d again, so nothing else moved: same IDs, ticks, events and final cash);
+  // fnv1a64:dd5dfccb2e28dad2 (PH1, issue #205, ADR 0024 decision 13 and ADR 0027 decision 15: state
+  // gains `arrangements` ([]), each facility `phoneLine` (null), the founder `room` (null) and, while
+  // PRESENT, `call` (null), and `knowledge.pendingMessages` ([]). With founder rules off nothing
+  // writes any of them. Hashing the same final state without those five fields gives
+  // 4c4ec75b6f6f3256 again, so nothing else moved).
   it("has a pinned replay hash", async () => {
-    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:4c4ec75b6f6f3256"`);
+    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:dd5dfccb2e28dad2"`);
   });
 });

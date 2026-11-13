@@ -20,13 +20,26 @@ import {
   knowledgeSubjectKey,
   SUBJECT_KINDS,
   TRANSACTION_PRODUCERS,
+  type CallInReason,
   type KnowledgeSubject,
   type KnowledgeValue,
   type TransactionProducer,
 } from "./knowledge.ts";
 import { LEDGER_ACCOUNTS, type LedgerAccount, type TransactionKind } from "./ledger.ts";
 import { isMoney, type Money, type Ratio } from "./money.ts";
-import { ACTIVITY_KINDS, RNG_STREAMS, type DriverRef, type FounderState, type RouteLeg, type Transport } from "./state.ts";
+import {
+  ACTIVITY_KINDS,
+  ARRANGEMENT_PRIVILEGES,
+  RNG_STREAMS,
+  type ActiveCall,
+  type ArrangementState,
+  type CallAnswerer,
+  type DriverRef,
+  type FounderState,
+  type RoomStay,
+  type RouteLeg,
+  type Transport,
+} from "./state.ts";
 import { SAVE_FORMAT, SAVE_SCHEMA_VERSION } from "./save.ts";
 import type { CashFlowCategory } from "./snapshot.ts";
 import type { Tick } from "./time.ts";
@@ -86,12 +99,34 @@ export const routeLegSchema = z.strictObject({ routeId: idSchema("Route"), rever
 
 export const activityKindSchema = z.enum(ACTIVITY_KINDS);
 
+/** `CallAnswerer` (ADR 0024 decision 3): a party is never one of the family's facilities. */
+export const callAnswererSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("PARTY"),
+    party: z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("SUPPLIER"), supplierId: idSchema("Supplier") }),
+      z.strictObject({ kind: z.literal("BUYER"), buyerId: idSchema("Buyer") }),
+    ]),
+  }),
+  z.strictObject({ kind: z.literal("EMPLOYEE"), characterId: idSchema("Character") }),
+  z.strictObject({ kind: z.literal("PROPRIETOR") }),
+]) satisfies z.ZodType<CallAnswerer>;
+
+export const activeCallSchema = z.strictObject({
+  locationId: idSchema("Location"),
+  answeredBy: callAnswererSchema,
+  connectedAt: tickSchema,
+}) satisfies z.ZodType<ActiveCall>;
+
+export const roomStaySchema = z.strictObject({ locationId: idSchema("Location"), until: tickSchema }) satisfies z.ZodType<RoomStay>;
+
 export const founderStateSchema = z.strictObject({
   whereabouts: z.discriminatedUnion("kind", [
     z.strictObject({
       kind: z.literal("PRESENT"),
       locationId: idSchema("Location"),
       busy: z.strictObject({ activity: activityKindSchema, until: tickSchema }).nullable(),
+      call: activeCallSchema.nullable(),
     }),
     z.strictObject({
       kind: z.literal("TRAVELLING"),
@@ -116,7 +151,16 @@ export const founderStateSchema = z.strictObject({
     }),
   ]),
   awakeSince: tickSchema,
+  room: roomStaySchema.nullable(),
 }) satisfies z.ZodType<FounderState>;
+
+export const arrangementStateSchema = z.strictObject({
+  locationId: idSchema("Location"),
+  dealingDays: positiveQuantity,
+  lastDealingAt: tickSchema,
+}) satisfies z.ZodType<ArrangementState>;
+
+const arrangementPrivilegeSchema = z.enum(ARRANGEMENT_PRIVILEGES);
 
 /** `DriverRef` (ADR 0023 decision 5). `DISPATCH_DELIVERY.driver` and `DeliveryState.driver` use it from O1a. */
 export const driverRefSchema = z.discriminatedUnion("kind", [
@@ -186,6 +230,9 @@ export const gameCommandSchema = z.discriminatedUnion("type", [
     quantity: positiveQuantity,
     agreedUnitPrice: moneySchema,
   }),
+  z.strictObject({ type: z.literal("PLACE_CALL"), locationId: idSchema("Location") }),
+  z.strictObject({ type: z.literal("INSTALL_PHONE"), facilityId: idSchema("Facility") }),
+  z.strictObject({ type: z.literal("RENT_ROOM"), locationId: idSchema("Location") }),
 ]) satisfies z.ZodType<GameCommand>;
 
 /** What the worker gateway validates before calling `Simulation.dispatch`. */
@@ -277,6 +324,15 @@ export const rejectionReasonSchema = z.discriminatedUnion("code", [
   z.strictObject({ code: z.literal("NO_PATH"), destinationLocationId: idSchema("Location") }),
   z.strictObject({ code: z.literal("INVALID_REST_LENGTH"), min: tickSchema, max: tickSchema }),
   z.strictObject({ code: z.literal("NOT_RESTING") }),
+  z.strictObject({ code: z.literal("NO_PHONE_HERE"), locationId: idSchema("Location") }),
+  z.strictObject({ code: z.literal("NO_PHONE_THERE"), locationId: idSchema("Location") }),
+  z.strictObject({ code: z.literal("PHONE_ALREADY_INSTALLED"), facilityId: idSchema("Facility") }),
+  z.strictObject({
+    code: z.literal("PHONE_USE_NOT_GRANTED"),
+    locationId: idSchema("Location"),
+    rule: z.enum(["PRIVATE", "GUEST", "ARRANGEMENT"]),
+  }),
+  z.strictObject({ code: z.literal("NO_ROOMS_HERE"), locationId: idSchema("Location") }),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -582,6 +638,36 @@ const catchUpShape = {
 
 export const catchUpSchema = z.strictObject({ ...catchUpShape, tick: tickSchema });
 
+export const callInReasonSchema = z.enum(["NEW_CONTRACT_OFFER", "INSTALLMENT_DUE"] as const satisfies readonly CallInReason[]);
+
+/** `HeldMessage` (ADR 0024 decision 6): each copied value belongs to its subject. */
+export const heldMessageSchema = z.strictObject({
+  takenAt: tickSchema,
+  callerLocationId: idSchema("Location"),
+  takenBy: idSchema("Character").nullable(),
+  reason: callInReasonSchema,
+  values: z.array(
+    z
+      .strictObject({ subject: knowledgeSubjectSchema, value: knowledgeValueSchema })
+      .refine((v) => valueMatches(v.subject, v.value), "A message's value must have its subject's kind and key"),
+  ),
+});
+
+export const pendingMessagesSchema = z.strictObject({
+  locationId: idSchema("Location"),
+  items: z.array(heldMessageSchema),
+  dropped: count,
+});
+
+export const deliveredMessageSchema = z.strictObject({
+  takenAt: tickSchema,
+  heldAtLocationId: idSchema("Location"),
+  callerLocationId: idSchema("Location"),
+  takenBy: idSchema("Character").nullable(),
+  reason: callInReasonSchema,
+  subjects: z.array(knowledgeSubjectSchema),
+});
+
 const transactionProducerSchema = z.enum(
   Object.keys(TRANSACTION_PRODUCERS) as [TransactionProducer, ...TransactionProducer[]],
 );
@@ -608,6 +694,29 @@ export const activityItemSchema = z.discriminatedUnion("kind", [
     revealed: z.array(knowledgeSubjectSchema),
     news: z.array(newsItemSchema),
   }),
+  z.strictObject({
+    kind: z.literal("CALL_PLACED"),
+    tick: tickSchema,
+    locationId: idSchema("Location"),
+    answered: z.boolean(),
+    answeredBy: z.enum(["PARTY", "EMPLOYEE", "PROPRIETOR"]).nullable(),
+  }),
+  z.strictObject({
+    kind: z.literal("CALL_RECEIVED"),
+    tick: tickSchema,
+    callerLocationId: idSchema("Location"),
+    phoneLocationId: idSchema("Location"),
+    reason: callInReasonSchema,
+  }),
+  z.strictObject({ kind: z.literal("MESSAGE_DELIVERED"), tick: tickSchema, message: deliveredMessageSchema }),
+  z.strictObject({ kind: z.literal("MESSAGES_DROPPED"), tick: tickSchema, locationId: idSchema("Location"), count: positiveQuantity }),
+  z.strictObject({ kind: z.literal("PHONE_INSTALLED"), tick: tickSchema, facilityId: idSchema("Facility") }),
+  z.strictObject({
+    kind: z.literal("ARRANGEMENT_GRANTED"),
+    tick: tickSchema,
+    locationId: idSchema("Location"),
+    privilege: arrangementPrivilegeSchema,
+  }),
 ]);
 
 export const knowledgeStateSchema = z.strictObject({
@@ -626,6 +735,7 @@ export const knowledgeStateSchema = z.strictObject({
   ),
   activity: z.array(activityItemSchema),
   lastCatchUp: catchUpSchema.nullable(),
+  pendingMessages: z.array(pendingMessagesSchema),
 });
 
 export const gameEventSchema = z.discriminatedUnion("type", [
@@ -807,6 +917,29 @@ export const gameEventSchema = z.discriminatedUnion("type", [
     unitPrice: moneySchema,
   }),
   ev("ROUTE_FOUND_CLOSED", routeFoundClosedShape),
+  ev("CALL_PLACED", {
+    fromLocationId: idSchema("Location"),
+    locationId: idSchema("Location"),
+    answered: z.boolean(),
+    answeredBy: callAnswererSchema.nullable(),
+    transactionId: idSchema("Transaction"),
+  }),
+  ev("CALL_RECEIVED", { callerLocationId: idSchema("Location"), phoneLocationId: idSchema("Location"), reason: callInReasonSchema }),
+  ev("MESSAGE_TAKEN", {
+    callerLocationId: idSchema("Location"),
+    heldAtLocationId: idSchema("Location"),
+    takenBy: idSchema("Character").nullable(),
+    reason: callInReasonSchema,
+  }),
+  ev("MESSAGES_DELIVERED", {
+    locationId: idSchema("Location"),
+    count,
+    dropped: count,
+    via: z.enum(["ARRIVAL", "PRESENT", "CALL"]),
+  }),
+  ev("PHONE_INSTALLED", { facilityId: idSchema("Facility"), price: moneySchema, transactionId: idSchema("Transaction") }),
+  ev("ROOM_RENTED", { locationId: idSchema("Location"), until: tickSchema, price: moneySchema, transactionId: idSchema("Transaction") }),
+  ev("ARRANGEMENT_GRANTED", { locationId: idSchema("Location"), privilege: arrangementPrivilegeSchema }),
 ]);
 
 // ---------------------------------------------------------------------------
@@ -818,7 +951,7 @@ const ledgerAccountSchema = z.enum(Object.keys(LEDGER_ACCOUNTS) as [LedgerAccoun
 const transactionKindSchema = z.enum([
   "OPENING_BALANCE", "MATERIAL_PURCHASE", "PRODUCTION", "PRODUCTION_WRITE_OFF", "PRODUCTION_START", "EQUIPMENT_PURCHASE",
   "DISPATCH", "SALE", "TRANSFER", "CARGO_LOSS", "DAILY_SETTLEMENT", "INSTALLMENT_SETTLEMENT",
-  "RESERVATION", "ASSET_SALE", "VEHICLE_RETURN", "LOSS", "PROGRESSION",
+  "RESERVATION", "ASSET_SALE", "VEHICLE_RETURN", "LOSS", "PROGRESSION", "TELEPHONE", "LODGING",
 ] as const satisfies readonly TransactionKind[]);
 
 const ledgerEntrySchema = z.strictObject({
@@ -884,6 +1017,7 @@ export const gameStateSchema = z.strictObject({
       id: idSchema("Facility"),
       equipment: z.array(z.strictObject({ equipmentId: idSchema("Equipment"), bookValue: moneySchema })),
       workerCount: count,
+      phoneLine: z.strictObject({ bookValue: moneySchema }).nullable(),
     }),
   ),
   productPools: z.array(
@@ -1104,6 +1238,7 @@ export const gameStateSchema = z.strictObject({
   eventJournal: z.array(gameEventSchema),
   knowledge: knowledgeStateSchema,
   founder: founderStateSchema,
+  arrangements: z.array(arrangementStateSchema),
 });
 
 export const saveGameSchema = z.strictObject({
@@ -1150,7 +1285,42 @@ const worldPointSchema = z.strictObject({
   y: z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
 });
 
-const placeGeographyShape = { id: idSchema("Location"), name: z.string(), position: worldPointSchema };
+const placePhoneSchema = z.strictObject({
+  familyLine: z.boolean(),
+  use: z.strictObject({
+    rule: z.enum(["FAMILY_LINE", "PUBLIC", "GUEST", "ARRANGEMENT", "PRIVATE"]),
+    allowed: z.boolean(),
+  }),
+  callCharge: moneySchema,
+  open: z.boolean(),
+  opensAt: tickSchema.nullable(),
+  takesMessages: z.boolean(),
+});
+
+const playerArrangementSchema = z.strictObject({
+  contactName: z.string(),
+  dealingDays: count,
+  holdsUntil: tickSchema.nullable(),
+  lapsed: z.boolean(),
+  milestones: z.array(
+    z.strictObject({ privilege: arrangementPrivilegeSchema, dealingDaysNeeded: positiveQuantity, granted: z.boolean() }),
+  ),
+});
+
+const placeRoomsSchema = z.strictObject({
+  nightlyRate: moneySchema,
+  deskOpen: z.boolean(),
+  deskOpensAt: tickSchema.nullable(),
+});
+
+const placeGeographyShape = {
+  id: idSchema("Location"),
+  name: z.string(),
+  position: worldPointSchema,
+  phone: placePhoneSchema.nullable(),
+  arrangement: playerArrangementSchema.nullable(),
+  rooms: placeRoomsSchema.nullable(),
+};
 
 const playerFacilitySchema = z.strictObject({
   id: idSchema("Facility"),
@@ -1215,6 +1385,7 @@ const playerPlaceSchema = z.discriminatedUnion("kind", [
       ),
     }),
   }),
+  z.strictObject({ ...placeGeographyShape, kind: z.literal("NONE") }),
 ]);
 
 const playerRouteSchema = z.strictObject({

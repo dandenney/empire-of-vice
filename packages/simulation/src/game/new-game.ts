@@ -121,8 +121,10 @@ function initialFounder(scenario: ScenarioDefinition): FounderState {
   return {
     whereabouts: scenario.founderRules
       ? { kind: "RESTING", locationId, startedAt: tick(0), until: tick(START_WAKE_TICK) }
-      : { kind: "PRESENT", locationId, busy: null },
+      : { kind: "PRESENT", locationId, busy: null, call: null },
     awakeSince: tick(0),
+    // No room held: renting one is a command (ADR 0027 decision 4).
+    room: null,
   };
 }
 
@@ -140,6 +142,8 @@ export function createInitialState(
         id: f.id,
         equipment: f.equipmentIds.map((equipmentId) => ({ equipmentId, bookValue: find(data.equipment, equipmentId, "equipment").price })),
         workerCount: f.workerCount,
+        // No scenario starts with a line of its own (ADR 0024 decision 2).
+        phoneLine: null,
       };
     })
     .sort(byId);
@@ -191,6 +195,8 @@ export function createInitialState(
     // Nothing is known yet; the live view shows the founder's place at once (ADR 0021 decision 5).
     knowledge: EMPTY_KNOWLEDGE,
     founder: initialFounder(scenario),
+    // No dealings yet (ADR 0027 decision 3).
+    arrangements: [],
   };
   // The scenario's world events, in file order (ADR 0020 decision 12).
   const blank = scenario.scheduledEvents.reduce<GameState>(

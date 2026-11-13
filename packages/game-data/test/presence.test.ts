@@ -35,6 +35,11 @@ describe("presence tables (PLACEHOLDER values)", () => {
       BUY_EQUIPMENT: 60,
       SELL_EQUIPMENT: 60,
       SET_WORKFORCE: 30,
+      // ADR 0024 decisions 2 and 3, ADR 0027 decision 4 (PH1).
+      PHONE_CALL: 15,
+      PHONE_NO_ANSWER: 5,
+      INSTALL_PHONE: 60,
+      CHECK_IN: 15,
     });
   });
 

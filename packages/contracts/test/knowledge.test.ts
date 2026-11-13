@@ -84,7 +84,7 @@ describe("knowledge types (ADR 0021 decision 4)", () => {
   });
 
   it("starts empty", () => {
-    expect(EMPTY_KNOWLEDGE).toEqual({ records: [], pendingNews: [], pendingBooks: [], activity: [], lastCatchUp: null });
+    expect(EMPTY_KNOWLEDGE).toEqual({ records: [], pendingNews: [], pendingBooks: [], activity: [], lastCatchUp: null, pendingMessages: [] });
     expect(knowledgeStateSchema.parse(roundTrip(EMPTY_KNOWLEDGE))).toEqual(EMPTY_KNOWLEDGE);
   });
 });
@@ -225,6 +225,22 @@ const rich: KnowledgeState = {
     },
   ],
   lastCatchUp: catchUp,
+  // ADR 0024 decision 6: Kessler called the feed store while the founder was out.
+  pendingMessages: [
+    {
+      locationId: ids.locSupplier,
+      items: [
+        {
+          takenAt: tick(840),
+          callerLocationId: ids.locSpeakeasy,
+          takenBy: null,
+          reason: "NEW_CONTRACT_OFFER",
+          values: [{ subject: { kind: "CONTRACT_OFFERS", buyerId: ids.speakeasy }, value: { kind: "CONTRACT_OFFERS", buyerId: ids.speakeasy, offers: [] } }],
+        },
+      ],
+      dropped: 0,
+    },
+  ],
 };
 
 describe("knowledge schemas", () => {
@@ -278,8 +294,9 @@ describe("player snapshot schema (decision 8)", () => {
     clock: { tick: tick(900), dayIndex: 0, date: { year: 1920, month: 1, day: 17, hour: 15, minute: 0 } },
     outcome: { status: "PLAYING" },
     founder: {
-      whereabouts: { kind: "PRESENT", locationId: ids.locDistillery, busy: { activity: "START_BATCH", until: tick(920) } },
+      whereabouts: { kind: "PRESENT", locationId: ids.locDistillery, busy: { activity: "START_BATCH", until: tick(920) }, call: null },
       awakeSince: tick(360),
+      room: null,
       tired: false,
       currentLeg: null,
     },
@@ -290,6 +307,9 @@ describe("player snapshot schema (decision 8)", () => {
         id: ids.locDistillery,
         name: "Hollow Creek",
         position: { x: 10, y: -4 },
+        phone: null,
+        arrangement: null,
+        rooms: null,
         facility: {
           id: ids.distillery,
           name: "The Still",
@@ -323,6 +343,17 @@ describe("player snapshot schema (decision 8)", () => {
         id: ids.locSpeakeasy,
         name: "Kessler's",
         position: { x: 0, y: 0 },
+        // Kessler's private line: he answers for business, the founder never uses it (ADR 0027 decision 2).
+        phone: {
+          familyLine: false,
+          use: { rule: "PRIVATE", allowed: false },
+          callCharge: cents(5),
+          open: true,
+          opensAt: null,
+          takesMessages: false,
+        },
+        arrangement: null,
+        rooms: null,
         buyer: {
           id: ids.speakeasy,
           name: "Kessler's back room",
@@ -339,7 +370,49 @@ describe("player snapshot schema (decision 8)", () => {
           offers: null,
         },
       },
-      { kind: "SUPPLIER", id: ids.locSupplier, name: "Miller's", position: { x: 3, y: 3 }, supplier: { id: ids.supplier, name: "Miller's Feed", offer: null } },
+      {
+        kind: "SUPPLIER",
+        id: ids.locSupplier,
+        name: "Miller's",
+        position: { x: 3, y: 3 },
+        phone: {
+          familyLine: false,
+          use: { rule: "ARRANGEMENT", allowed: true },
+          callCharge: cents(5),
+          open: true,
+          opensAt: null,
+          takesMessages: false,
+        },
+        arrangement: {
+          contactName: "Miller",
+          dealingDays: 1,
+          holdsUntil: tick(10_621),
+          lapsed: false,
+          milestones: [
+            { privilege: "PHONE_USE", dealingDaysNeeded: 1, granted: true },
+            { privilege: "TAKES_MESSAGES", dealingDaysNeeded: 3, granted: false },
+          ],
+        },
+        rooms: null,
+        supplier: { id: ids.supplier, name: "Miller's Feed", offer: null },
+      },
+      // A place with a phone and no occupant (ADR 0024 decision 1): the hotel lobby, closed at night.
+      {
+        kind: "NONE",
+        id: ids.locHotel,
+        name: "Lakeview",
+        position: { x: 38, y: 18 },
+        phone: {
+          familyLine: false,
+          use: { rule: "GUEST", allowed: false },
+          callCharge: cents(5),
+          open: false,
+          opensAt: tick(1_860),
+          takesMessages: false,
+        },
+        arrangement: null,
+        rooms: { nightlyRate: cents(200), deskOpen: false, deskOpensAt: tick(1_860) },
+      },
     ],
     routes: [
       {
@@ -441,6 +514,12 @@ describe("player snapshot schema (decision 8)", () => {
     // The player's list shows only what the founder knows: never a world-side terminal status (ADR 0022 round-3 follow-up).
     ["a deal shown SETTLED", { ...snapshot, deals: [{ ...snapshot.deals[0], status: "SETTLED" }] }],
     ["no deal list", withoutDeals(snapshot)],
+    // ADR 0027 decision 12: no `public`, no `holdsMessages`, and never whether messages are waiting.
+    ["a phone with ADR 0024's public flag", { ...snapshot, places: [{ ...snapshot.places[1], phone: { ...snapshot.places[1]!.phone, public: false } }] }],
+    ["a phone showing messages waiting", { ...snapshot, places: [{ ...snapshot.places[2], phone: { ...snapshot.places[2]!.phone, messagesWaiting: 1 } }] }],
+    ["a place without its phone field", { ...snapshot, places: [Object.fromEntries(Object.entries(snapshot.places[3]!).filter(([k]) => k !== "phone"))] }],
+    ["an unknown use rule", { ...snapshot, places: [{ ...snapshot.places[2], phone: { ...snapshot.places[2]!.phone, use: { rule: "BORROWED", allowed: true } } }] }],
+    ["an unknown privilege", { ...snapshot, places: [{ ...snapshot.places[2], arrangement: { ...snapshot.places[2]!.arrangement, milestones: [{ privilege: "CREDIT", dealingDaysNeeded: 5, granted: false }] } }] }],
   ])("rejects %s", (_label, bad) => {
     expect(playerSnapshotSchema.safeParse(roundTrip(bad)).success).toBe(false);
   });

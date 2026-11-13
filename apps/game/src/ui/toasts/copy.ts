@@ -87,4 +87,8 @@ export const COMMAND_COPY: Readonly<Record<GameCommandType, string>> = {
   WAKE: "Wake",
   // ADR 0022 (O1a, #192). PLACEHOLDER copy.
   AGREE_DEAL: "Agree a deal",
+  // ADR 0024 / 0027 (PH1, #205). No-ops in M001. PLACEHOLDER copy.
+  PLACE_CALL: "Place a call",
+  INSTALL_PHONE: "Install a telephone",
+  RENT_ROOM: "Rent a room",
 };

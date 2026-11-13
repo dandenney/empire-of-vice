@@ -117,8 +117,11 @@ export const KNOWLEDGE_VISIBILITY: KnowledgeVisibility = validateKnowledgeVisibi
     SUPPLIER: ["SUPPLIER_OFFER", "STANDING"], // PLACEHOLDER (ADR 0024 tunes)
     BUYER: ["BUYER_WANTS", "CONTRACT_OFFERS", "CONTRACT_PROGRESS", "STANDING"], // PLACEHOLDER (ADR 0024 tunes)
   },
-  // Defined by ADR 0024 (messages) and ADR 0025 (reports). Nothing until then.
-  MESSAGE: { FACILITY: [], SUPPLIER: [], BUYER: [] },
+  // ADR 0024 decision 6: a buyer's message is about the contract, not his price
+  // ("Kessler wants 20 more by Thursday"), so no BUYER_WANTS, BUYER_BUDGET or
+  // STANDING. Suppliers leave none in M002; your own facility waits for ADR 0025.
+  MESSAGE: { FACILITY: [], SUPPLIER: [], BUYER: ["CONTRACT_OFFERS", "CONTRACT_PROGRESS"] }, // PLACEHOLDER
+  // Defined by ADR 0025 (reports). Nothing until then.
   REPORT: { FACILITY: [], SUPPLIER: [], BUYER: [] },
 });
 
