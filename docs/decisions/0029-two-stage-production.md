@@ -83,7 +83,7 @@ DISTILL: 480, // PLACEHOLDER: a distillation run at 1×, 8 h (the human's 6–12
 
 - `fermentTicks` is a whole number in `[4 × TICKS_PER_DAY, 5 × TICKS_PER_DAY]` (5 760–7 200), and `casesPerBarrel` a whole number ≥ 1. The fermentation range is the human's, so tuning can't leave it without a new decision.
 - `barrels` is a whole number ≥ 0.
-- **Every run is 6–12 hours, whoever operates it** (the human's range): `ceil(DISTILL × min(atZero, atHundred) / 1 000 000) ≥ 360` and `ceil(DISTILL × max(atZero, atHundred, TIRED_DURATION_PPM) / 1 000 000) ≤ 720`, with `COMPETENCE_DURATION_PPM`'s ends and the founder's tired factor (decision 6). At the placeholders: `ceil(480 × 0.8) = 384 ≥ 360` and `ceil(480 × 1.5) = 720 ≤ 720`. With today's factors that allows `DISTILL` from 450 to 480; widening it means narrowing the competence or tiredness factors, which is R1's call.
+- **Every run is 6–12 hours, whoever operates it** (the human's range): `ceil(DISTILL × min(atZero, atHundred, 1 000 000) / 1 000 000) ≥ 360` and `ceil(DISTILL × max(atZero, atHundred, TIRED_DURATION_PPM, 1 000 000) / 1 000 000) ≤ 720`. The factors are `COMPETENCE_DURATION_PPM`'s ends, the founder tired, and the founder rested at 1× (decision 6). So the check holds whatever R1 loads, including a competence end above 1×. At the placeholders: `ceil(480 × 0.8) = 384 ≥ 360` and `ceil(480 × 1.5) = 720 ≤ 720`. With today's factors that allows `DISTILL` from 450 to 480; widening it means narrowing the competence or tiredness factors, which is R1's call.
 - `MASH` ≥ 1, so setting a mash always takes time (decision 9's step 2 reads it).
 - **A Distiller's slowest run fits in a shift:** `ceil(DISTILL × max(atZero, atHundred) / 1 000 000)` ≤ the longest single interval of `ROLE_TERMS.DISTILLER.workingHours`. At the placeholders that's `ceil(480 × 1.4) = 672 ≤ 840`. Without it, a poor Distiller could never distill (decision 9). The range check above already keeps runs ≤ 720, so this binds only if the hours are cut below 12 hours.
 - `DISTILL_ORDER_DEFAULTS.batchSize` ≥ every recipe's `casesPerBarrel`, so the order form's defaults always mash at least one barrel (decision 9).
@@ -112,7 +112,11 @@ export interface WashState {
   readonly quantity: number;
   /** When the mash was set (the end of MASH). Fermentation starts here. */
   readonly mashedAt: Tick;
-  /** mashedAt + fermentTicks. Ready from this tick on, and it stays ready. */
+  /**
+   * Ready from this tick on, and it stays ready. mashedAt + fermentTicks for every mash set in play.
+   * The exception is an opening wash (decision 15): its mashedAt is 0 and the scenario sets its
+   * readyAt, which can be sooner, because the mash was set before the story starts.
+   */
   readonly readyAt: Tick;
   /** The input reservations, held by this barrel until a run takes them. */
   readonly reservationIds: readonly ReservationId[];
@@ -205,13 +209,13 @@ Both join `GameCommand` and `GAME_COMMAND_TYPES`. Neither is repeatable: `REPEAT
 | When | Transaction | Entries | Key (producer, decision 12) |
 |---|---|---|---|
 | A mash, by the founder | `PRODUCTION_START` | Dr `PRODUCTION_IN_PROGRESS` / Cr `CASH`, Σ prepaid; none at 0 | `idempotencyKey("PRODUCTION_START", "MASH", facilityId, t)` |
-| A mash, by an employee | `PRODUCTION_START` | As above | `idempotencyKey("PRODUCTION_START", "EMPLOYEE", "MASH", facilityId, t)` |
+| A mash, by an employee | `PRODUCTION_START` | As above | `idempotencyKey("PRODUCTION_START", "EMPLOYEE", "MASH", facilityId, characterId, t)` |
 | A run starts, founder | `PRODUCTION_START` | None | `idempotencyKey("PRODUCTION_START", "RUN", jobId)` |
 | A run starts, employee | `PRODUCTION_START` | None | `idempotencyKey("PRODUCTION_START", "EMPLOYEE", "RUN", jobId)` |
 | A run completes | `PRODUCTION` | O1b's: Dr `FINISHED_GOODS`; Cr `RAW_MATERIALS`; Cr `PRODUCTION_IN_PROGRESS` (exactly `conversionPrepaid`) | `PRODUCTION:<jobId>`, unchanged |
 | A run fails | `PRODUCTION_WRITE_OFF` | O1b's: Dr `LOSSES`; Cr `RAW_MATERIALS`; Cr `PRODUCTION_IN_PROGRESS` | `PRODUCTION_WRITE_OFF:<jobId>`, unchanged |
 
-Mash keys are unique: one founder timed command applies per tick at most (the busy gate), and an employee issues at most one command per tick (ADR 0025 decision 6). Cash flow is unchanged: `PRODUCTION_START`'s default is `WAGES` (ADR 0022 decision 7), and run starts have no entries.
+Mash keys are unique: one founder timed command applies per tick at most (the busy gate), and an employee issues at most one command per tick (ADR 0025 decision 6). The employee key carries `characterId`, so it stays unique if a station ever has two employees. Cash flow is unchanged: `PRODUCTION_START`'s default is `WAGES` (ADR 0022 decision 7), and run starts have no entries.
 
 **O1b's invariant, restated:** the `PRODUCTION_IN_PROGRESS` balance equals **Σ `conversionPrepaid` over running jobs plus Σ `conversionPrepaid` over washes**. With the flag off there are no washes, so it reads exactly as before. A run start moves the amount from washes to a job without touching the ledger, so the sum holds across it.
 
@@ -313,7 +317,7 @@ With the flag on, `maxStartableQuantity` is 0 and `blockedBy` is `TWO_STAGE_RECI
 **Restated** (amends ADR 0025 decision 6 and ADR 0028 decision 2). For an employee E with a `DISTILL` order (recipe R, product P, quality Q, `c = R.twoStage.casesPerBarrel`, `k = conversionCost(R, c)` per barrel) at station S, in the `employees` phase at tick t, only while `isAvailable(E, t)` (ADR 0028 decision 1):
 
 0. The spending period resets if `periodIndex` moved on (ADR 0025).
-1. **A run is going at S** (any job at S, E's or the founder's): do nothing. If it's E's, E is at the still for the run. That's the employee's counterpart of the founder's `busy`, read from E's own `currentJobId`.
+1. **A run is going at S** (any job at S, E's or the founder's): do nothing. If it's E's, E is at the still for the run. That's the employee's counterpart of the founder's `busy`, read from E's own `currentJobId`. If it's the founder's, E doesn't set a mash either, even into free barrels: one person works the still at a time, and the founder can set mashes after the run.
 2. **A mash is being set at S** (a wash at S with `mashedAt > t`): do nothing.
 3. **Set a mash**, if S has free barrels `f ≥ 1` and the unreserved quantity of P at quality Q at S is below `keepOnHand`:
    - `n = min(f, floor(batchSize / c), floor(storage room / c), min over R's inputs of floor(available / (perCase × c)))`, and if `k > 0`, also `min(n, floor(cash / k), floor((spendingCap − spent) / k))`. `n = 0` if S doesn't own R's equipment.
@@ -476,18 +480,18 @@ Every payload is the command's own fields, game-data, or values from the view th
 | Walt Hagen, 55 (×1.07) | 514 | 11:26 | 1 113 | 7 024 | 8 137 | 7.1 |
 | Distiller, competence 100 (×0.8) | 384 | 13:36 | 983 | 6 894 | 7 877 | 7.3 |
 
-A cycle is `MASH + fermentTicks + wait + run`, and the next mash follows the run's end, which is always on duty: a run that waited starts at 06:00 and ends by 17:12. The worst wait is wash ready one minute after the latest start, held until 06:00. For comparison, today's M002 stand-in (one worker on a crew-3 still) makes 10 cases in 4 320 ticks, about 3.3 a day.
+A cycle is `MASH + fermentTicks + wait + run`, and the next mash follows the run's end, which is always on duty: a run that waited starts at 06:00 and ends by 17:12. **These figures assume the founder hauls each run's cases away before the next mash.** With `keepOnHand` 20 the Distiller doesn't mash while 20 or more cases sit at the still, and with storage 50 a fourth barrel doesn't fit beside more than 10 cases. So output is also bounded by how often the founder collects, and R1's simulation shouldn't read the table as a floor. The worst wait is wash ready one minute after the latest start, held until 06:00. For comparison, today's M002 stand-in (one worker on a crew-3 still) makes 10 cases in 4 320 ticks, about 3.3 a day.
 
 **R1's two properties** (ADR 0025 decision 17, ADR 0028 decision 2):
 
 - **Possible** (present at Miller's while open, a candidate on the slate, cash ≥ the $25.00 signing cost): unchanged. Hiring isn't gated by production.
 - **Sustainable** (the Distiller's output covers their wage and the bill): the worst case, 6.8 cases a day, is about **$137 a day** against a wage of at most $6.00 plus $2.00 overhead (with `workerCount` 0, decision 7). Hours and the run fitting the shift cost at most 15% against the best case, nowhere near the wage.
 
-**The first sale, which is what R1 has to watch.** From the M002 start, with nothing in the barrels and $250: wake 06:00, walk to Miller's (3 h on foot), buy 40 corn and 20 sugar ($140, 1 h), walk back (3 h), mash 2 barrels ($80, 13:00–13:30), leaving $30. The wash is ready on day 6 at 01:30, distilled 06:00–14:00, and 20 cases sell for about $620 that evening. So **the first hire is reachable by day 7**, and no soft-lock appears: paying at the mash means distilling needs no cash (decision 5), and wages accrue to `WAGES_PAYABLE` while cash is short (ADR 0017 decision 9). **But the first five days have nothing to sell**: at 20 000 ms per game hour that's about half an hour of real time at 1×, even with rest's fast-forward at night. It breaks experience criterion 1 ("within the first ten minutes, feels they can't be everywhere at once").
+**The first sale, which is what R1 has to watch.** This is the worst case: today's scenario, with nothing in the barrels and $250. The human's opening (below) removes it. Starting from there: wake 06:00, walk to Miller's (3 h on foot), buy 40 corn and 20 sugar ($140, two 30-minute purchases), walk back (3 h), mash 2 barrels ($80, 13:00–13:30), leaving $30. The wash is ready on day 6 at 01:30, distilled 06:00–14:00, and 20 cases sell for about $620 that evening. So **the first hire is reachable by day 7**, and no soft-lock appears: paying at the mash means distilling needs no cash (decision 5), and wages accrue to `WAGES_PAYABLE` while cash is short (ADR 0017 decision 9). **But the first five days have nothing to sell**: at 20 000 ms per game hour that's about half an hour of real time at 1×, even with rest's fast-forward at night. With empty barrels that would break experience criterion 1 ("within the first ten minutes, feels they can't be everywhere at once"). With the opening washes, the first sale comes on day 1–2.
 
-**R1 decides the opening** (orchestrator decision, recorded here so R1 doesn't re-open it). **Options considered:** (a) shorten fermentation for the scenario (rejected: outside the human's 4–5 days); (b) start with finished cases on hand (it gives something to sell, but the still has nothing to do for days); **(c) start with washes already in the barrels (recommended):** for example two barrels ready at 06:00 on day 1 and two ready on day 3. The first day then has a run, a delivery and a supply trip, and the rhythm is already going. It needs `ScenarioFacility.washes: readonly { recipeId; barrels; readyAtTick }[]` (game-data's own type, ADR 0012), with `new-game.ts` creating the washes, their reservations of opening materials and their prepaid conversion in the opening balance (`OPENING_BALANCE` posts non-cash legs already). Opening washes were set before the story starts, so their `mashedAt` is tick 0 and their `readyAt` is the scenario's, which may be sooner than `fermentTicks`. That's R1's to build and tune, together with `workerCount: 0`, the starting cash, storage (4 barrels reserve 40 of the still's 50 cases of room, so with more than 10 cases on hand the fourth barrel doesn't fit; R1 should raise `baseStorage` or lower `keepOnHand`'s default of 20) and `DISTILL_ORDER_DEFAULTS.batchSize` (10 = one barrel a mash; 40 fills the barrels in one).
+**The human decided the opening** (#241, 2026-11-13): "the First Hire opens with mashes already fermenting at staggered stages, so the first wash is ready on day 1–2". The approved story tie-in: **"the family's still was already going when the founder took over Hollow Creek."** The options weighed were: (a) shorten fermentation for the scenario, which is outside the 4–5 days; (b) start with finished cases on hand, which gives something to sell but leaves the still idle for days; and (c) washes already in the barrels, which was chosen. **The exact stagger is R1's (PLACEHOLDER)**, within "the first wash ready on day 1–2". For example: two barrels ready on day 1 and two on day 3, so the first days have a run, a delivery and a supply trip. It needs `ScenarioFacility.washes: readonly { recipeId; barrels; readyAtTick }[]` (game-data's own type, ADR 0012), with `new-game.ts` creating the washes, their reservations of opening materials and their prepaid conversion in the opening balance (`OPENING_BALANCE` posts non-cash legs already). Opening washes were set before the story starts, so their `mashedAt` is tick 0 and their `readyAt` is the scenario's, which may be sooner than `fermentTicks`. This is the one exception to `readyAt = mashedAt + fermentTicks` (`WashState`'s doc says so). Scenario validation requires each opening `readyAt` to be in `[0, fermentTicks]`. R1 builds it and tunes it, together with `workerCount: 0`, the starting cash, storage (4 barrels reserve 40 of the still's 50 cases of room, so with more than 10 cases on hand the fourth barrel doesn't fit; R1 should raise `baseStorage` or lower `keepOnHand`'s default of 20) and `DISTILL_ORDER_DEFAULTS.batchSize` (10 = one barrel a mash; 40 fills the barrels in one).
 
-**Competence matters less now.** Fermentation dominates the cycle, so the best and worst Distillers differ by about 7% in output (7.3 vs 6.8 cases a day), against 50% when competence scaled the whole batch. That weakens "a good Distiller is worth a higher wage" (ADR 0025 Consequences). The lever is tuning, not story: T-LAB and PT2 judge whether a wage range of $3–$6 still reads as a choice, and a later record can give competence a yield or failure effect.
+**Competence matters less now.** Fermentation dominates the cycle, so the best and worst Distillers differ by about 7% in output on worst-case cycles (7.3 vs 6.8 cases a day) and about 4% on best-case ones (6 894 vs 7 182 ticks). When competence scaled the whole batch, the worst made about 43% less than the best (0.8 ÷ 1.4). That weakens "a good Distiller is worth a higher wage" (ADR 0025 Consequences). The lever is tuning, not story: T-LAB and PT2 judge whether a wage range of $3–$6 still reads as a choice, and a later record can give competence a yield or failure effect.
 
 ### 16. Contract changes (their own task: TS1)
 
@@ -555,7 +559,12 @@ Checked against the 14 `@locked` files (`grep -rl "@locked" packages/simulation/
 
 **Re-locked, by path and reason:**
 
-- **`view/issuer-view.locked.test.ts`**, in TS1: its `COVERAGE` is `Record<RejectionCode, Coverage>` (line 1504), so the two new codes break its typecheck. TS1 adds them, as EM1 added five (#236). In TS2 again: its founder-rules cases call `START_PRODUCTION` for gate order (lines 1185–1260; "no materials" and "a recipe the still can't run" become `TWO_STAGE_RECIPE`), so they move to `SET_MASH` and `START_DISTILLATION`. `COVERAGE` then gets real coverage for both new codes. The validator check over `GAME_COMMAND_TYPES` (line 1044) passes once TS1 registers both validators.
+- **`view/issuer-view.locked.test.ts`**, in TS1: its `COVERAGE` is `Record<RejectionCode, Coverage>` (line 1504), so the two new codes break its typecheck. TS1 adds them, as EM1 added five (#236). In TS2 again: its founder-rules cases call `START_PRODUCTION` for gate order (lines 1185–1260; "no materials" and "a recipe the still can't run" become `TWO_STAGE_RECIPE`), so they move to `SET_MASH` and `START_DISTILLATION`. `COVERAGE` then gets real coverage for both new codes. The validator check over `GAME_COMMAND_TYPES` (line 1044) passes once TS1 registers both validators. Three more places dispatch `START_PRODUCTION` with the flag on, expect it to apply, and get `TWO_STAGE_RECIPE` under TS2:
+  - **The `stockedHome` station** (line 914) starts a batch and waits for its cases. TS2 rebuilds it as mash, ferment, distill.
+  - **The `jobRunning` station** (line 996) needs "a batch still running once the founder is free". A founder's run is the founder's own busy (decision 6), so the founder alone can't build it. TS2 builds it through a test hook that puts in a run with no founder busy, as `non-leak` does below, or drops the station.
+  - **The `PRODUCTION_CAPACITY_EXCEEDED` case** (line 1469, "START_PRODUCTION while a batch runs"). A founder's `START_DISTILLATION` during their own run is `FOUNDER_BUSY` at gate 2, never this code. TS2 covers the code through `SET_MASH` with no free barrel (decision 14).
+
+  `probeCatalog` (line 729) only validates, so it needs only the new commands added.
 - **`walking-skeleton/path.locked.test.ts`**, in TS2: its batch step is a single-stage `START_PRODUCTION` with a `START_BATCH` busy (line 813), and its invariant check sums `conversionPrepaid` over jobs only (lines 253, 271). The path becomes: buy, set a mash, ferment, distill (`DISTILL` busy), deliver, sleep. The invariant counts washes (decision 5), and its hidden-world plan perturbs washes as well as jobs (line 523).
 - **`founder/no-trap.locked.test.ts`**, in TS2: its stocked setup applies `START_PRODUCTION` and waits for the batch (line 315), and its command generator offers it (line 580). Both move to `SET_MASH` and `START_DISTILLATION`, so the property exercises `DISTILL`, now the longest busy. `B`'s formula is unchanged and still read from `ACTIVITY_DURATIONS` (decision 10).
 - **`knowledge/non-leak.locked.test.ts`**, in TS2: it applies `START_PRODUCTION` (lines 305, 639, 939, 979) and checks a `PRODUCTION` posting from a single-stage job while the founder is away (line 997). These move to the two stages: the away-from-founder example becomes a run settling with nobody watching (through a test hook, until E1 makes a Distiller), and the hidden-world plan perturbs washes (line 510).
@@ -586,16 +595,20 @@ Decision 14. **New:** `TWO_STAGE_RECIPE { facilityId, recipeId }` and `NO_READY_
 - **The first hire's relief is concrete.** Without a Distiller, every cycle costs the founder about eight hours tied to the still, plus being there when the wash is ready. With one, the founder's production job is the supply run to Miller's.
 - **Paying at the mash keeps every mash sellable.** A founder who spends their last cash on a mash can always turn it into cases. The cash leaves at the mash, in person, as it did at the start of a batch.
 - **Workers have no production role in M002.** SK1d's stand-in goes, and the M002 wage bill drops by its $2.00 a day. Abstract labour gets a job again only if a later record gives it one.
-- **The opening needs barrels already full** (decision 15), or the first five days have nothing to sell. R1 builds it.
+- **The game opens with the still already going** (the human's decision, decision 15). Mashes are fermenting at staggered stages, so the first wash is ready on day 1–2 and the first days aren't spent waiting. R1 builds the opening washes and sets the stagger.
 - **Competence matters less to output** (decision 15). T-LAB and PT2 judge whether the wage range still reads as a choice.
 - **A single-stage `START_PRODUCTION` disappears from founder-rules play.** The four founder-rules locked files that used it are re-locked in TS1 and TS2, and M001's ten are untouched.
 
 ## Needs design (placeholders in this record)
 
-Story and visual direction (factory.md §8). The human decided the rhythm (#241). Still open, as PLACEHOLDER until the human decides:
+Story and visual direction (factory.md §8). The human decided the rhythm (#241).
+
+**Settled:** the opening state (#241, 2026-11-13). The First Hire opens with mashes already fermenting at staggered stages, and the first wash is ready on day 1–2. Story: "the family's still was already going when the founder took over Hollow Creek." Only the exact stagger is left, and it's R1's tuning (decision 15).
+
+Still open, as PLACEHOLDER until the human decides:
 
 - **Player-facing words** for the new actions and states: "set a mash", "distill", "wash", "fermenting", "ready", the barrel count, and the `DISTILL` busy line in the scene. Also the copy for `TWO_STAGE_RECIPE` (which the UI shouldn't reach) and `NO_READY_WASH`.
 - **Report wording on two stages:** `BATCH_STARTED` now means a mash set, and it has no approved line (#224 approved "batch" wording for completions, failures, holds and limits, which decision 9 maps).
 - **How the still scene shows barrels** (visual direction, TS3): fermenting and ready barrels, how stale a "ready" is, and the founder at the still for a run.
 
-Tuning (orchestrator, not human): `fermentTicks`, `casesPerBarrel`, `barrels`, `MASH`, `DISTILL` (450–480 while the competence and tiredness factors keep every run inside 6–12 hours, decision 2), the M002 opening washes, `workerCount`, storage and the order defaults, all for R1, PT2 and T-LAB inside the human's ranges.
+Tuning (orchestrator, not human): `fermentTicks`, `casesPerBarrel`, `barrels`, `MASH`, `DISTILL` (450–480 while the competence and tiredness factors keep every run inside 6–12 hours, decision 2), the stagger of the M002 opening washes, `workerCount`, storage and the order defaults, all for R1, PT2 and T-LAB inside the human's ranges.
