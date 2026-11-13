@@ -4,6 +4,8 @@ Status: accepted (decided by the orchestrator for M002 task D4, issue #171; impl
 
 Amends: ADR 0021 decisions 5, 7, 8 and 9 (the call view, held messages, older values, a `PlayerPlace` for a place with no occupant), ADR 0023 decisions 1, 2a and 4 (the founder's call, the `phones` phase, orders on a call while busy).
 
+Amended by ADR 0027 (#213, earned phone access and message-taking): decisions 1, 3, 4, 5, 6, 8, 9, 13, 14 and 15. `public` and `holdsMessages` are replaced by separate has-a-phone, may-use and takes-messages privileges; ADR 0027 decision 17 restates decision 15's contract list.
+
 ## Context
 
 GDD §20 (COMM-001): a telephone sits in one place. To call, you go to it. To be called, someone has to be there to answer. Phones are places; your own phone is a purchasable asset (locked decision #12) and a milestone in the run. Calling out costs a few cents, and the party may not answer, depending on their hours (seeded). A call reveals the fields that party gives by phone. A call in to an empty phone rings out and nothing is learned. Messages are held where they were taken and reach the founder on a visit or a call to that place. Party lines are flavour in M002.
@@ -654,11 +656,11 @@ Keyed one-shot draws (decision 7), never a shared stream. Their seeds come from 
 
 ## Needs design (placeholders in this record)
 
-These are story and visual direction (factory.md §8). They stay PLACEHOLDER until the human decides, and the orchestrator files or links `needs-design` issues for them (the milestone already lists "which places have public phones"):
+These are story and visual direction (factory.md §8). The human decided most of them on #203, and ADR 0027 (#213) records that decision:
 
-- **Which places have phones,** and which are public (`PHONES`). The table in decision 1 is a stand-in: the general store is Miller's Feed & Seed, there are public phones at the hotel lobby and the depot, Kessler has a private line, and the Crossroads has none.
-- **The hotel lobby phone's hours.** `LAKEVIEW` has one `PLACE_HOURS` entry, the back room's 20:00–02:00 (ADR 0023), so its lobby phone is only usable at night. Either that's the story, or the lobby needs its own hours (which would mean per-phone hours, a game-data change).
-- **Whether any place holds messages for the family before the founder owns a phone** (`holdsMessages`, all `false` for now).
-- **Names and copy:** call and message wording ("Tue 16:00 — Kessler wants 20 more by Thursday (via Ruth, at the office)"), the operator and party-line flavour, and the "no answer" line.
-- **The call scene and the pause-on-connect presentation.**
-- **Tuning (R1, T-LAB):** `PHONE_LINE.price`, `CALL_COST`, `CALL_ANSWER_PPM`, `CALL_IN_RULES` chances and windows, `MESSAGE_LIMIT`, and the three `ACTIVITY_DURATIONS` rows.
+- **Which places have phones, and who may use them:** settled by #203 and ADR 0027 decisions 1–2. Miller's has a business phone the founder earns the use of, Kessler's a private line, Lakeview a guest phone for a room stay, the depot a public phone for a fee; the Crossroads has none.
+- **The hotel lobby phone's hours:** settled. The lobby has its own hours (ADR 0027 decisions 1, 2 and 4, `LAKEVIEW_LOBBY_HOURS`).
+- **Whether any place holds messages for the family before the founder owns a phone:** settled. Miller's, once earned (ADR 0027 decisions 3 and 6). `holdsMessages` is replaced.
+- **Names and copy:** the operator's lines, the unanswered line, Miller's message line and the message template are approved (ADR 0027 decision 10's copy table). Still open: the {message} wording for each `CallInReason` (ADR 0027 *Needs design*).
+- **The call scene and the pause-on-connect presentation:** direction approved in #203 §4, and the pause lives in the worker's speed control (ADR 0027 decision 10). The visual design is still open.
+- **Tuning (R1, T-LAB):** `PHONE_LINE.price`, `CALL_COST`, `CALL_ANSWER_PPM`, `CALL_IN_RULES` chances and windows, `MESSAGE_LIMIT`, and the three `ACTIVITY_DURATIONS` rows, plus ADR 0027's numbers.
