@@ -2,14 +2,15 @@
 // gateway that does what GatewayClient does (persistence + the simulation),
 // without a worker.
 
-import { SAVE_SCHEMA_VERSION, type SaveLoadError } from "@eov/contracts";
-import { GAME_DATA_VERSION } from "@eov/game-data";
+import { SAVE_SCHEMA_VERSION, tick, type SaveLoadError } from "@eov/contracts";
+import { FIRST_SHIPMENT_SCENARIO, GAME_DATA_VERSION, MIN_REST_TICKS, THE_FIRST_HIRE_SCENARIO } from "@eov/game-data";
 import { createSaveFile, MemoryStorageAdapter, readSave, serializeSaveFile, writeSave, type StorageAdapter } from "@eov/persistence";
 import { loadGame, newGame, type KernelSimulation } from "@eov/simulation";
 import { describe, expect, it } from "vitest";
 import { LOAD_ERROR_COPY, SAVES_COPY } from "../../../src/app/saves/copy.ts";
 import { continueTarget, SaveLibrary, type SaveGateway } from "../../../src/app/saves/save-library.ts";
 import { describeLoadError, describeLoadFailure, formatSavedAt, saveLabel } from "../../../src/app/saves/saves-view.ts";
+import { playableScenario } from "../../../src/workers/scenarios.ts";
 
 /** GatewayClient.save / .load, with the simulation in-process. */
 class FakeGateway implements SaveGateway {
@@ -32,7 +33,8 @@ class FakeGateway implements SaveGateway {
     const loaded = await readSave(this.storage, slot);
     if (!loaded.ok) return { ok: false as const, error: loaded.error };
     if (this.failStart) throw new Error(this.failStart);
-    this.sim = loadGame(loaded.file.save);
+    // In the save's own scenario, as the worker resumes it (SK2a).
+    this.sim = loadGame(loaded.file.save, { scenario: playableScenario(loaded.file.save.scenarioId) ?? FIRST_SHIPMENT_SCENARIO });
     return { ok: true as const };
   }
 }
@@ -185,6 +187,32 @@ describe("SaveLibrary", () => {
 
     expect(gateway.loads).toBe(0);
     expect(gateway.sim.stateHash()).toBe(before);
+  });
+
+  it("lists and loads a First Hire save, which resumes with founder rules on (SK2a)", async () => {
+    const { library, gateway, storage } = setup();
+    gateway.sim = newGame({ scenario: THE_FIRST_HIRE_SCENARIO });
+    gateway.sim.advance(500);
+    const hash = gateway.sim.stateHash();
+    await library.saveNew("Founder");
+    gateway.sim = newGame();
+
+    // A save for a scenario no build plays is still listed as one that won't load.
+    const file = createSaveFile(newGame().serialize(), { slot: "slot-2", label: "Elsewhere", savedAt: "2026-11-08T11:00:00.000Z", appVersion: "test" });
+    const otherScenario = { ...file.save, scenarioId: "another", state: { ...file.save.state, scenarioId: "another" } };
+    await storage.write("slot-2", serializeSaveFile(createSaveFile(otherScenario as typeof file.save, file.meta)));
+
+    expect((await library.list()).map((s) => [s.slot, s.ok])).toEqual([
+      ["slot-1", true],
+      ["slot-2", false],
+    ]);
+    expect(await library.load("slot-1")).toEqual({ ok: true, slot: "slot-1", label: "Founder", otherGameData: null });
+    expect(gateway.sim.stateHash()).toBe(hash);
+    expect(gateway.sim.serialize().scenarioId).toBe(THE_FIRST_HIRE_SCENARIO.id);
+    // Founder rules on: REST puts the founder to sleep (under world rules it's a no-op).
+    gateway.sim.dispatch({ command: { type: "WAKE" } });
+    gateway.sim.dispatch({ command: { type: "REST", untilTick: tick(gateway.sim.state.tick + 1 + MIN_REST_TICKS) } });
+    expect(gateway.sim.state.founder.whereabouts.kind).toBe("RESTING");
   });
 
   it("reports a save the worker couldn't resume", async () => {

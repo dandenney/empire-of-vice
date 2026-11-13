@@ -1,8 +1,9 @@
 // The top bar's game menu (T06a, #135), replacing the S0 New game / Save /
 // Reload buttons:
-//   - New game;
-//   - while a game runs, Save: overwrites the slot this game was last saved
-//     to or loaded from, keeping that slot's name (#145); with no such slot,
+//   - New game (The First Shipment; the First Hire is started from the
+//     no-game dock, founder/new-game-choice.tsx);
+//   - while a game runs (under either rules), Save: overwrites the slot this
+//     game was last saved to or loaded from, keeping that slot's name (#145); with no such slot,
 //     a new one named after the in-game date and time;
 //   - while none does (a fresh page), Continue in its place: loads the newest
 //     save;
@@ -37,7 +38,9 @@ export function GameMenu({
   readonly say: (message: string) => void;
 }) {
   const startNewGame = useStartNewGame();
-  const { snapshot } = useGatewayView();
+  const { snapshot, playerSnapshot } = useGatewayView();
+  /** Either rules' clock: the world snapshot's (M001) or the player snapshot's (founder rules). */
+  const clock = snapshot?.clock ?? playerSnapshot?.clock ?? null;
   const [saves, setSaves] = useState<readonly SaveSummary[]>([]);
   const [currentSlot, setCurrentSlot] = useCurrentSlot();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -61,7 +64,7 @@ export function GameMenu({
     }
   };
 
-  const defaultLabel = snapshot ? SAVES_COPY.defaultLabel(formatGameDate(snapshot.clock.date)) : null;
+  const defaultLabel = clock ? SAVES_COPY.defaultLabel(formatGameDate(clock.date)) : null;
 
   const save = (write: () => Promise<SavedTo>) =>
     run(async () => {

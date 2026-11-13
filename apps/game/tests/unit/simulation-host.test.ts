@@ -71,7 +71,7 @@ describe("SimulationHost", () => {
     const { env, send } = setup();
     const messages = send({ type: "NEW_GAME" });
     expect(snapshots(messages)).toHaveLength(1);
-    expect(snapshots(messages)[0]!.scheduler).toEqual({ speed: 0, autoPaused: false });
+    expect(snapshots(messages)[0]!.scheduler).toEqual({ speed: 0, autoPaused: false, fastForward: false });
     expect(env.timers.size).toBe(0);
     env.elapse(60_000);
     expect(env.take()).toEqual([]);
@@ -140,12 +140,12 @@ describe("SimulationHost", () => {
     env.elapse(1_000);
     const hidden = send({ type: "SET_VISIBILITY", visible: false });
     const tick = lastTick(hidden);
-    expect(snapshots(hidden)[0]!.scheduler).toEqual({ speed: 0, autoPaused: true });
+    expect(snapshots(hidden)[0]!.scheduler).toEqual({ speed: 0, autoPaused: true, fastForward: false });
 
     expect(send({ type: "SET_SPEED", speed: 1 }).at(-1)).toMatchObject({ type: "ERROR" });
     env.elapse(60_000);
     const visible = send({ type: "SET_VISIBILITY", visible: true });
-    expect(snapshots(visible)[0]!.scheduler).toEqual({ speed: 0, autoPaused: true });
+    expect(snapshots(visible)[0]!.scheduler).toEqual({ speed: 0, autoPaused: true, fastForward: false });
     expect(lastTick(visible)).toBe(tick);
     env.elapse(5_000);
     expect(env.take()).toEqual([]);
@@ -228,7 +228,7 @@ describe("SimulationHost", () => {
     // Time owed but not yet stepped must not leak into the new game either.
     env.ms += 1_000;
     const fresh = send({ type: "NEW_GAME" });
-    expect(snapshots(fresh)[0]!.scheduler).toEqual({ speed: 0, autoPaused: false });
+    expect(snapshots(fresh)[0]!.scheduler).toEqual({ speed: 0, autoPaused: false, fastForward: false });
     expect(lastTick(fresh)).toBe(0);
     expect(env.timers.size).toBe(0);
     env.elapse(10_000);
@@ -282,7 +282,7 @@ describe("SimulationHost", () => {
     const at = messages.findIndex((m) => m.type === "EVENTS" && m.events.some((e) => e.type === eventType));
     const after = snapshots(messages.slice(at));
     expect(after).toHaveLength(1);
-    expect(after[0]!.scheduler).toEqual({ speed: 0, autoPaused: false });
+    expect(after[0]!.scheduler).toEqual({ speed: 0, autoPaused: false, fastForward: false });
     expect(after[0]!.snapshot.outcome.status).toBe(outcome);
     expect(env.timers.size).toBe(0);
     const ended = lastTick(messages);

@@ -7,4 +7,5 @@ export const WORKER_COPY = {
   tabHidden: "The tab is hidden: the game stays paused until it's visible",
   noGame: "No game is running: start a new game or load a save first",
   unexpectedResponse: (type: string) => `Unexpected worker response ${type}`,
+  unknownScenario: (id: string) => `This version doesn't play the scenario ${id}`,
 } as const;

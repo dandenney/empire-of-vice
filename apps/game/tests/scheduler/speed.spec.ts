@@ -46,7 +46,7 @@ async function expectTickHolds(page: Page, ms: number): Promise<number> {
 
 test("a new game starts paused and holds its tick", async ({ page }) => {
   await newGame(page);
-  expect(await scheduler(page)).toEqual({ speed: 0, autoPaused: false });
+  expect(await scheduler(page)).toEqual({ speed: 0, autoPaused: false, fastForward: false });
   await expect(page.getByTestId("speed-pause")).toHaveAttribute("aria-pressed", "true");
   expect(await expectTickHolds(page, 1_500)).toBe(0);
 });
@@ -72,7 +72,7 @@ test("pause holds the tick", async ({ page }) => {
   await expect.poll(() => tick(page)).toBeGreaterThan(20);
   await page.getByTestId("speed-pause").click();
   await expect(page.getByTestId("speed-status")).toHaveAttribute("data-speed", "0");
-  expect(await scheduler(page)).toEqual({ speed: 0, autoPaused: false });
+  expect(await scheduler(page)).toEqual({ speed: 0, autoPaused: false, fastForward: false });
   await expectTickHolds(page, 2_000);
 });
 
@@ -83,14 +83,14 @@ test("a hidden tab auto-pauses, stays paused when visible again, and says so", a
 
   await setTabVisibility(page, "hidden");
   await expect(page.getByTestId("auto-paused")).toBeVisible();
-  expect(await scheduler(page)).toEqual({ speed: 0, autoPaused: true });
+  expect(await scheduler(page)).toEqual({ speed: 0, autoPaused: true, fastForward: false });
   const hiddenAt = await expectTickHolds(page, 1_500);
 
   // Visible again: still paused, and the shell still says it auto-paused.
   await setTabVisibility(page, "visible");
   await expect(page.getByTestId("auto-paused")).toBeVisible();
   expect(await expectTickHolds(page, 1_500)).toBe(hiddenAt);
-  expect(await scheduler(page)).toEqual({ speed: 0, autoPaused: true });
+  expect(await scheduler(page)).toEqual({ speed: 0, autoPaused: true, fastForward: false });
 
   // The player resumes; no catch-up for the hidden time.
   await page.getByTestId("speed-1x").click();
@@ -109,6 +109,6 @@ test("__eov.advance pauses, then advances exactly", async ({ page }) => {
   });
   await page.evaluate(() => window.__eov!.advance(500));
   expect(await tick(page)).toBe(before + 500);
-  expect(await scheduler(page)).toEqual({ speed: 0, autoPaused: false });
+  expect(await scheduler(page)).toEqual({ speed: 0, autoPaused: false, fastForward: false });
   await expectTickHolds(page, 1_000);
 });

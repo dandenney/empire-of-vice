@@ -9,6 +9,7 @@
 // starting a new game must clear it, or the next Save would overwrite the
 // previous game's save. `useStartNewGame` is that one way.
 
+import type { ScenarioId } from "@eov/contracts";
 import { createContext, useCallback, useContext, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useStore } from "zustand";
 import type { GatewayClient, GatewayView } from "./gateway-client.ts";
@@ -22,15 +23,15 @@ interface AppServices {
 interface AppSession extends AppServices {
   readonly currentSlot: string | null;
   readonly setCurrentSlot: (slot: string | null) => void;
-  readonly startNewGame: () => Promise<void>;
+  readonly startNewGame: (scenarioId?: ScenarioId) => Promise<void>;
 }
 
 const AppContext = createContext<AppSession | null>(null);
 
 export function AppProvider({ gateway, ui, children }: AppServices & { readonly children: ReactNode }) {
   const [currentSlot, setCurrentSlot] = useState<string | null>(null);
-  const startNewGame = useCallback(async () => {
-    await gateway.newGame();
+  const startNewGame = useCallback(async (scenarioId?: ScenarioId) => {
+    await gateway.newGame(scenarioId);
     setCurrentSlot(null);
   }, [gateway]);
   const session = useMemo(() => ({ gateway, ui, currentSlot, setCurrentSlot, startNewGame }), [gateway, ui, currentSlot, startNewGame]);
@@ -63,7 +64,10 @@ export function useCurrentSlot(): readonly [string | null, (slot: string | null)
   return [currentSlot, setCurrentSlot];
 }
 
-/** Starts a new game and clears the current slot. Every New game / Start again goes through this. */
-export function useStartNewGame(): () => Promise<void> {
+/**
+ * Starts a new game (in `scenarioId`, default The First Shipment) and clears
+ * the current slot. Every New game / Start again goes through this.
+ */
+export function useStartNewGame(): (scenarioId?: ScenarioId) => Promise<void> {
   return useServices().startNewGame;
 }
