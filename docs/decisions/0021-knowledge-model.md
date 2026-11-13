@@ -2,6 +2,8 @@
 
 Status: accepted (decided by the orchestrator for M002 task D1, issue #168; implemented by the contract task it names and SK1)
 
+Amended by ADR 0029 (#241, two-stage production), under founder rules: decisions 4 (the `FACILITY_OPERATIONS` value gains `washes`) and 6 (producer rows for the mash and the run).
+
 ## Context
 
 GDD §17 (INFO-001): information is local, timestamped, and comes from being there or being told. M001's `GameSnapshot` (ADR 0007) is a projection of the whole world, and the UI renders all of it, which is exactly the "modern CEO with an internet connection" problem from the first playtest. GDD §19 (ORD-001) makes knowledge one of four separate gates (knowledge, authority, communication, presence), and the M002 milestone requires a **non-leak property**: two worlds that differ only in state the founder hasn't observed give byte-identical player snapshots, across every surface (offered actions, disabled states, validation errors, outcomes, activity messages, route indicators).
