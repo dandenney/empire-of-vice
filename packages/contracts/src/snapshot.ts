@@ -133,6 +133,8 @@ export interface BalanceSheet {
     readonly rawMaterials: Money;
     readonly finishedGoods: Money;
     readonly goodsInTransit: Money;
+    /** Conversion cost prepaid for running production jobs (ADR 0022 decision 7). */
+    readonly productionInProgress: Money;
     readonly receivables: Money;
     readonly equipment: Money;
     readonly vehicles: Money;

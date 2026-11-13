@@ -7,12 +7,17 @@
 //   throughput) → STORAGE_CAPACITY_EXCEEDED → INSUFFICIENT_MATERIALS →
 //   INSUFFICIENT_FUNDS. The overflow bound and the duration are crew-aware
 //   (T02c2, ADR 0017 decision 1). On success it reserves the inputs and schedules the job
-//   (`completesAt` lives on the job, ADR 0008). It moves no money, so its
-//   RESERVATION transaction has no entries (ADR 0010).
+//   (`completesAt` lives on the job, ADR 0008), in one `PRODUCTION_START:<jobId>`
+//   transaction that also pays the conversion cost (ADR 0022 decision 7):
+//   Dr PRODUCTION_IN_PROGRESS / Cr CASH, no entries when that cost is 0. The job
+//   records what it paid in `conversionPrepaid`.
 // - The production phase settles due jobs in ID order. A recipe with a
 //   failureChance above 0 draws once from `rng.production`; at 0 nothing is
 //   drawn. Either way the reserved inputs are consumed at weighted-average cost
-//   and the conversion cost is charged (cash first, then WAGES_PAYABLE):
+//   and the conversion cost is capitalized or written off. A prepaid job credits
+//   PRODUCTION_IN_PROGRESS with exactly `conversionPrepaid` and moves no cash; a
+//   job migrated from a pre-M002 save (`conversionPrepaid: null`) pays the
+//   recipe's current conversion cost then, cash first, then WAGES_PAYABLE:
 //   - completed: capitalized into finished goods (PRODUCTION; no profit, FIN-001),
 //     reservations reported CONSUMED, then PRODUCTION_COMPLETED;
 //   - failed: written off to LOSSES (PRODUCTION_WRITE_OFF), reservations reported
@@ -33,7 +38,13 @@ import {
   type TransactionCoordinator,
 } from "@eov/contracts";
 import type { GameData, RecipeDefinition } from "@eov/game-data";
-import { productionEntries, productionWriteOffEntries } from "../economy/ledger/postings.ts";
+import {
+  prepaidProductionEntries,
+  prepaidProductionWriteOffEntries,
+  productionEntries,
+  productionStartEntries,
+  productionWriteOffEntries,
+} from "../economy/ledger/postings.ts";
 import { cashBalance } from "../economy/ledger/ledger.ts";
 import { addProduct, addReservation, availableMaterial, consumeReservations } from "../inventory/pools.ts";
 import { allocateId, formatId } from "../kernel/ids.ts";
@@ -107,8 +118,8 @@ export function startProductionHandler(data: GameData, coordinator: TransactionC
       const { facilityId, recipeId, quantity } = command;
       const jobId = formatId("ProductionJob", state.counters.nextId.ProductionJob);
       const tx = coordinator.begin(state, {
-        kind: "RESERVATION",
-        idempotencyKey: idempotencyKey("RESERVATION", jobId),
+        kind: "PRODUCTION_START",
+        idempotencyKey: idempotencyKey("PRODUCTION_START", jobId),
         tick: ctx.tick,
         causedBy: ctx.envelope.id,
       });
@@ -123,7 +134,9 @@ export function startProductionHandler(data: GameData, coordinator: TransactionC
         const firstReservation = tx.state.counters.nextId.Reservation;
         const reservationIds: readonly ReservationId[] = recipe.inputsPerCase.map((_, i) => formatId("Reservation", firstReservation + i));
         const completesAt = addTicks(ctx.tick, facilityJobDuration(tx.state, data, facilityId, recipe, quantity));
-        const job: ProductionJobState = { id: jobId, facilityId, recipeId, quantity, startedAt: ctx.tick, completesAt, reservationIds };
+        // ADR 0022 decision 7: the conversion cost is paid now. startRejection checked cash covers it.
+        const conversionPrepaid = conversionCost(recipe, quantity);
+        const job: ProductionJobState = { id: jobId, facilityId, recipeId, quantity, startedAt: ctx.tick, completesAt, reservationIds, conversionPrepaid };
         tx.update((s) => {
           let next = allocateId(s, "ProductionJob").state;
           recipe.inputsPerCase.forEach((input, i) => {
@@ -137,6 +150,7 @@ export function startProductionHandler(data: GameData, coordinator: TransactionC
           });
           return { ...next, productionJobs: [...next.productionJobs, job].sort(compareById) };
         });
+        tx.post(productionStartEntries(conversionPrepaid));
         tx.emit({ type: "PRODUCTION_STARTED", jobId, facilityId, recipeId, quantity, completesAt });
       }
 
@@ -170,17 +184,23 @@ function settleJob(state: GameState, job: ProductionJobState, data: GameData, co
   const reason = failed ? "PRODUCTION_FAILED" : "CONSUMED";
   for (const reservationId of job.reservationIds) tx.emit({ type: "RESERVATION_RELEASED", reservationId, reason });
 
-  // Conversion cost: paid in cash where possible, accrued otherwise (cash never goes negative).
-  const costs = { materials, conversion: conversionCost(recipe, job.quantity), cashAvailable: cashBalance(tx.state) };
-  const total = addMoney(costs.materials, costs.conversion);
+  // Conversion cost (ADR 0022 decision 7): a prepaid job credits exactly what it paid at the start
+  // and moves no cash. A migrated job (null) pays the recipe's cost now, in cash where possible and
+  // accrued otherwise (cash never goes negative).
+  const prepaid = job.conversionPrepaid;
+  const migrated = prepaid === null ? { materials, conversion: conversionCost(recipe, job.quantity), cashAvailable: cashBalance(tx.state) } : null;
+  const total = addMoney(materials, migrated ? migrated.conversion : (prepaid ?? ZERO_MONEY));
+  const settlement = migrated
+    ? (failed ? productionWriteOffEntries : productionEntries)(migrated)
+    : (failed ? prepaidProductionWriteOffEntries : prepaidProductionEntries)({ materials, prepaid: prepaid ?? ZERO_MONEY });
   tx.update((s) => ({ ...s, productionJobs: s.productionJobs.filter((j) => j.id !== job.id) }));
 
   if (failed) {
-    tx.post(productionWriteOffEntries(costs));
+    tx.post(settlement);
     tx.emit({ type: "PRODUCTION_FAILED", jobId: job.id, facilityId: job.facilityId, reason: "DISRUPTION", writtenOff: total, transactionId: tx.transactionId });
   } else {
     tx.update((s) => addProduct(s, job.facilityId, recipe.productId, recipe.quality, job.quantity, total));
-    tx.post(productionEntries(costs));
+    tx.post(settlement);
     tx.emit({
       type: "PRODUCTION_COMPLETED",
       jobId: job.id,

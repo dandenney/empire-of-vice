@@ -6,7 +6,11 @@ import { newGame, type KernelSimulation } from "@eov/simulation";
 
 export const meta: SaveMeta = { slot: "slot-1", label: "Day 1", savedAt: "2026-11-04T18:30:00.000Z", appVersion: "0.0.0-test" };
 
-/** Materials bought, a case made, and the truck on its way to the roadhouse; a purchase queued for later. */
+/**
+ * Materials bought, a case made, the truck on its way to the roadhouse, a second case
+ * in production (its conversion cost prepaid, ADR 0022 decision 7); a purchase queued
+ * for later.
+ */
 export function gameInProgress(): KernelSimulation {
   const sim = newGame();
   sim.dispatch({ command: { type: "PURCHASE_MATERIALS", supplierId: MILLERS_FEED, materialId: CORN, quantity: 2, facilityId: DISTILLERY_MAIN } });
@@ -30,6 +34,11 @@ export function gameInProgress(): KernelSimulation {
     },
   });
   if (result.status !== "applied") throw new Error(`dispatch: ${JSON.stringify(result)}`);
+  // A second case, still running at save time, so the save holds a prepaid job.
+  sim.dispatch({ command: { type: "PURCHASE_MATERIALS", supplierId: MILLERS_FEED, materialId: CORN, quantity: 2, facilityId: DISTILLERY_MAIN } });
+  sim.dispatch({ command: { type: "PURCHASE_MATERIALS", supplierId: MILLERS_FEED, materialId: SUGAR, quantity: 1, facilityId: DISTILLERY_MAIN } });
+  const started = sim.dispatch({ command: { type: "START_PRODUCTION", facilityId: DISTILLERY_MAIN, recipeId: BASIC_MOONSHINE_RECIPE, quantity: 1 } });
+  if (started.status !== "applied") throw new Error(`produce: ${JSON.stringify(started)}`);
   // Queued for the next morning, so the save holds a pending command too.
   sim.dispatch({
     command: { type: "PURCHASE_MATERIALS", supplierId: MILLERS_FEED, materialId: CORN, quantity: 2, facilityId: DISTILLERY_MAIN },

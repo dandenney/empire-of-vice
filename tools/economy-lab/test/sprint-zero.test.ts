@@ -70,8 +70,13 @@ describe("sprint-zero runner", () => {
   // state gains `heldDeals` (empty again once the deal settles), the `Deal` counter, `tripCount` on
   // the truck (1), `driver` on the delivery, `issuer` on every envelope, and a sale's purpose names
   // its deal. Removing the AGREE_DEAL step and those fields from the final state gives
-  // c0347e40711dd8bc again, so nothing else moved: the money is the same).
+  // c0347e40711dd8bc again, so nothing else moved: the money is the same);
+  // fnv1a64:4c4ec75b6f6f3256 (O1b, issue #197, ADR 0022 decision 7: the $4.00 conversion cost is
+  // paid when the job starts. The start transaction is now PRODUCTION_START:job-1 with
+  // Dr PRODUCTION_IN_PROGRESS / Cr CASH $4.00 instead of the entry-less RESERVATION:job-1, and the
+  // completion credits PRODUCTION_IN_PROGRESS instead of CASH. Rewriting those two transactions
+  // back gives 59a882e0fd44576d again, so nothing else moved: same IDs, ticks, events and final cash).
   it("has a pinned replay hash", async () => {
-    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:59a882e0fd44576d"`);
+    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:4c4ec75b6f6f3256"`);
   });
 });

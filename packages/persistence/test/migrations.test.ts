@@ -6,6 +6,7 @@ import { EMPTY_KNOWLEDGE, SAVE_SCHEMA_VERSION, saveGameSchema, type SaveMigratio
 import { loadGame } from "@eov/simulation";
 import { describe, expect, it } from "vitest";
 import { migrateSave, SAVE_MIGRATIONS } from "../src/index.ts";
+import { gameInProgress } from "./game.ts";
 
 const renameCash: SaveMigration = {
   fromVersion: 1,
@@ -249,6 +250,80 @@ describe("v3 → v4: held deals, driver, tripCount and the issuer (O1a, ADR 0022
     expect(result.save["schemaVersion"]).toBe(SAVE_SCHEMA_VERSION);
     expect(saveGameSchema.safeParse(result.save).success).toBe(true);
     expect((result.save["state"] as { heldDeals: unknown[] }).heldDeals).toMatchObject([{ id: "deal-1", status: "DISPATCHED", unitPrice: 1400 }]);
+  });
+});
+
+describe("v4 → v5: conversionPrepaid on production jobs (O1b, ADR 0022 decision 7)", () => {
+  type Obj = Record<string, unknown>;
+  type Txn = Obj & { kind: string; idempotencyKey: string; entries: Obj[] };
+  type RawSave = Obj & { state: Obj & { productionJobs: Obj[]; ledger: { transactions: Txn[] } } };
+  const v4 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v4.json", import.meta.url)), "utf8")) as { save: RawSave };
+  const migrate = (save: Readonly<Record<string, unknown>>) => migrateSave(save, 4, SAVE_MIGRATIONS, 5);
+
+  /**
+   * A v4 save with a job still running: the current in-progress game written as v4 wrote it.
+   * Its start was the entry-less `RESERVATION:<jobId>`, and no cash was paid for it.
+   */
+  const v4WithRunningJob = (): RawSave => {
+    const save = gameInProgress().serialize() as unknown as RawSave;
+    expect(save.state.productionJobs).toHaveLength(1);
+    const running = `PRODUCTION_START:${String(save.state.productionJobs[0]!["id"])}`;
+    const transactions = save.state.ledger.transactions.map((t) =>
+      t.idempotencyKey === running ? { ...t, kind: "RESERVATION", idempotencyKey: running.replace(/^PRODUCTION_START:/, "RESERVATION:"), entries: [] } : t,
+    );
+    return {
+      ...save,
+      schemaVersion: 4,
+      state: { ...save.state, productionJobs: save.state.productionJobs.map((j) => omit(j, "conversionPrepaid")), ledger: { transactions } },
+    };
+  };
+
+  it("adds conversionPrepaid: null to every running job, and changes nothing else", () => {
+    const old = v4WithRunningJob();
+    const result = migrate(old);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.save["schemaVersion"]).toBe(5);
+    const state = result.save["state"] as RawSave["state"];
+    expect(state.productionJobs).toEqual(old.state.productionJobs.map((j) => ({ ...j, conversionPrepaid: null })));
+    expect(omit(state, "productionJobs")).toEqual(omit(old.state, "productionJobs"));
+  });
+
+  it("leaves a save with no running jobs unchanged", () => {
+    const result = migrate(v4.save);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.save["state"]).toEqual(v4.save.state);
+  });
+
+  it("fails cleanly on a job that already has conversionPrepaid", () => {
+    const old = v4WithRunningJob();
+    const bad = { ...old, state: { ...old.state, productionJobs: old.state.productionJobs.map((j) => ({ ...j, conversionPrepaid: 0 })) } };
+    const result = migrate(bad);
+    expect(result).toMatchObject({ ok: false, error: { code: "MIGRATION_FAILED", fromVersion: 4, toVersion: 5 } });
+    if (!result.ok && result.error.code === "MIGRATION_FAILED") expect(result.error.message).toMatch(/already has conversionPrepaid/);
+  });
+
+  it("loads, and the migrated job pays its conversion cost from cash at settlement, with nothing in PRODUCTION_IN_PROGRESS", () => {
+    const result = migrate(v4WithRunningJob());
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    const sim = loadGame(saveGameSchema.parse(result.save));
+    const job = sim.state.productionJobs[0]!;
+    expect(job.conversionPrepaid).toBeNull();
+    sim.advance(job.completesAt - sim.state.tick);
+    expect(sim.state.productionJobs).toEqual([]);
+    const settled = sim.state.ledger.transactions.find((t) => t.idempotencyKey === `PRODUCTION:${job.id}`)!;
+    expect(settled.entries).toContainEqual(expect.objectContaining({ account: "CASH", side: "CREDIT" }));
+    expect(settled.entries.some((e) => e.account === "PRODUCTION_IN_PROGRESS")).toBe(false);
+    const inProgress = (state: typeof sim.state) =>
+      state.ledger.transactions.flatMap((t) => t.entries).reduce((n, e) => (e.account !== "PRODUCTION_IN_PROGRESS" ? n : e.side === "DEBIT" ? n + e.amount : n - e.amount), 0);
+    expect(inProgress(sim.state)).toBe(0);
+  });
+
+  it("chains from v1", () => {
+    const v1 = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/save-v1.json", import.meta.url)), "utf8")) as { save: Record<string, unknown> };
+    const result = migrateSave(v1.save, 1);
+    if (!result.ok) throw new Error(JSON.stringify(result.error));
+    expect(result.save["schemaVersion"]).toBe(SAVE_SCHEMA_VERSION);
+    expect(saveGameSchema.safeParse(result.save).success).toBe(true);
   });
 });
 

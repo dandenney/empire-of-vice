@@ -58,12 +58,19 @@ describe("Sprint Zero: one case of moonshine", () => {
     expect(balanceSheet(sim.state).netWorth).toBe(openingNetWorth);
     expect(typesOf(sim.takeEvents())).toEqual(["MATERIALS_PURCHASED", "MATERIALS_PURCHASED"]);
 
-    // 3. Produce one case. Starting reserves inputs and moves no money.
+    // 3. Produce one case. Starting reserves inputs and prepays the conversion cost
+    // (ADR 0022 decision 7): cash becomes PRODUCTION_IN_PROGRESS; net worth unchanged.
     const ledgerBeforeStart = balances(sim.state);
     expectApplied(sim.dispatch({ command: produce(1) }));
     expectBalanced(sim.state);
-    expect(balances(sim.state)).toEqual(ledgerBeforeStart);
+    expect(balances(sim.state)).toEqual({
+      ...ledgerBeforeStart,
+      CASH: ledgerBeforeStart.CASH - conversion,
+      PRODUCTION_IN_PROGRESS: ledgerBeforeStart.PRODUCTION_IN_PROGRESS + conversion,
+    });
+    expect(balanceSheet(sim.state).netWorth).toBe(openingNetWorth);
     const job = sim.state.productionJobs[0]!;
+    expect(job.conversionPrepaid).toBe(conversion);
     expect(job.completesAt).toBe(addTicks(job.startedAt, recipe.ticksPerCase));
     expect(sim.state.reservations).toHaveLength(recipe.inputsPerCase.length);
     expect(typesOf(sim.takeEvents())).toEqual(["PRODUCTION_STARTED"]);
@@ -136,7 +143,7 @@ describe("Sprint Zero: one case of moonshine", () => {
       "OPENING_BALANCE",
       "MATERIAL_PURCHASE",
       "MATERIAL_PURCHASE",
-      "RESERVATION",
+      "PRODUCTION_START", // ADR 0022 decision 7: prepays the conversion cost
       "PRODUCTION",
       "DAILY_SETTLEMENT", // DEAL_AGREED: no entries
       "DISPATCH",

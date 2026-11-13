@@ -175,6 +175,7 @@ const startFinance = (() => {
       rawMaterials: ZERO_MONEY,
       finishedGoods: ZERO_MONEY,
       goodsInTransit: ZERO_MONEY,
+      productionInProgress: ZERO_MONEY,
       receivables: ZERO_MONEY,
       equipment: opening.copperStill,
       vehicles: opening.truck,
@@ -330,6 +331,8 @@ export const startOfGameSnapshot: GameSnapshot = {
 // Story so far: 30 basic cases produced at $12.00 each ($7.00 materials + $5.00 labor,
 // capitalized). 8 delivered for contract installment 1 at $13.30, 6 sold to the
 // Crossroads at $14.00, 8 on the truck now, 8 in stock reserved for installment 2.
+// The running 10-case job paid its $50.00 labor when it started today (ADR 0022
+// decision 7), so it sits in PRODUCTION_IN_PROGRESS.
 
 const CASE_COST = cents(1_200);
 const NOW = 5_160;
@@ -339,6 +342,8 @@ const DAY2 = 2_880;
 const midFinance = (() => {
   const finishedGoods = multiplyMoney(CASE_COST, 8);
   const goodsInTransit = multiplyMoney(CASE_COST, 8);
+  // job-3's labor, prepaid at its start (ADR 0022 decision 7).
+  const productionInProgress = multiplyMoney(cents(500), 10);
   // 24 corn at $2.50 and 12 sugar at $2.00, reserved by the running job.
   const rawMaterials = addMoney(multiplyMoney(cents(250), 24), multiplyMoney(cents(200), 12));
 
@@ -353,7 +358,7 @@ const midFinance = (() => {
     cashFlow(opening.cash, {
       SALES: cents(19_040),
       MATERIALS: cents(-29_400),
-      WAGES: cents(-15_000),
+      WAGES: cents(-20_000),
       OVERHEAD: cents(-600),
       TRANSPORT: cents(-900),
     }),
@@ -368,7 +373,7 @@ const midFinance = (() => {
     DAY3,
     NOW,
     incomeStatement(ZERO_MONEY, ZERO_MONEY, { TRANSPORT: cents(300) }),
-    cashFlow(previousDay.cashFlow.closingCash, { TRANSPORT: cents(-300) }),
+    cashFlow(previousDay.cashFlow.closingCash, { WAGES: cents(-5_000), TRANSPORT: cents(-300) }),
   );
   const cash = toDate.cashFlow.closingCash;
   const sheet = balanceSheet(
@@ -377,6 +382,7 @@ const midFinance = (() => {
       rawMaterials,
       finishedGoods,
       goodsInTransit,
+      productionInProgress,
       receivables: ZERO_MONEY,
       equipment: opening.copperStill,
       vehicles: opening.truck,
