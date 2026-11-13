@@ -43,6 +43,7 @@ const deliver = (contractId: ContractId, quantity: number): GameCommand => ({
   cargo: [{ productId: MOONSHINE, quality: "basic", quantity }],
   purpose: { kind: "CONTRACT_INSTALLMENT", contractId },
   routeId: null,
+  driver: { kind: "FOUNDER" },
 });
 
 describe("contracts snapshot", () => {

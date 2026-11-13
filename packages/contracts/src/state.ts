@@ -18,6 +18,7 @@ import type {
   CharacterId,
   ContractId,
   ContractOfferId,
+  DealId,
   DeliveryId,
   DynamicIdKind,
   EquipmentId,
@@ -59,6 +60,12 @@ export interface GameState {
   readonly productionJobs: readonly ProductionJobState[];
   readonly vehicles: readonly VehicleState[];
   readonly deliveries: readonly DeliveryState[];
+  /**
+   * Deals the founder agreed that are still live: HELD or DISPATCHED, sorted
+   * with `compareIds` (ADR 0022 decision 6). A deal leaves when it reaches a
+   * terminal state, which its event reports.
+   */
+  readonly heldDeals: readonly HeldDealState[];
   readonly markets: readonly MarketState[];
   readonly suppliers: readonly SupplierState[];
   readonly buyers: readonly BuyerState[];
@@ -213,6 +220,12 @@ export interface VehicleState {
    * departs (ADR 0023 decision 2a).
    */
   readonly parkedAt: LocationId | null;
+  /**
+   * The vehicle's trip ordinal (ADR 0022 decision 8): dispatches so far,
+   * incremented at each dispatch before anything is drawn for the trip. 0 in a
+   * save migrated from before M002, so the first M002 trip is 1.
+   */
+  readonly tripCount: number;
   readonly trip: {
     readonly deliveryId: DeliveryId;
     readonly routeId: RouteId;
@@ -239,9 +252,42 @@ export interface DeliveryState {
   readonly cargo: readonly CargoLineState[];
   readonly purpose: DeliveryPurpose;
   readonly status: "OUTBOUND" | "DELIVERED" | "FAILED";
-  /** For SALE: the latest arrival tick before the deal falls through (rules in T02d/T03). */
+  /**
+   * For a SALE with a deal: the latest arrival tick before the deal falls through,
+   * `min(deal.expiresAt, scheduled arrival + dealGraceTicks)` (ADR 0019 decision 4,
+   * ADR 0022 decision 6). null for contract installments, transfers and sales on spec.
+   */
   readonly dealDeadline: Tick | null;
+  /** Who drives (ADR 0023 decision 5). null: a pre-M002 delivery, with no driver (decision 10). */
+  readonly driver: DriverRef | null;
 }
+
+/**
+ * A deal the founder agreed with a buyer (ADR 0022 decision 6). HELD until a
+ * dispatch uses it (DISPATCHED) or `expiresAt` passes (DEAL_EXPIRED). Once
+ * dispatched it's resolved only by its delivery: SETTLED on arrival in time,
+ * FELL_THROUGH if late, seized (CARGO_LOST) or turned back. Terminal deals leave
+ * `GameState.heldDeals`, so `status` there is only ever HELD or DISPATCHED.
+ */
+export interface HeldDealState {
+  readonly id: DealId;
+  readonly buyerId: BuyerId;
+  readonly productId: ProductId;
+  /** The cargo quality agreed; the buyer's commitment records the want it matched. */
+  readonly quality: QualityTier;
+  readonly quantity: number;
+  readonly unitPrice: Money;
+  readonly agreedAt: Tick;
+  /** `agreedAt + DEAL_HOLD_TICKS`. A dispatched deal never expires by time. */
+  readonly expiresAt: Tick;
+  /** false for a by-phone deal, which commits demand only (ADR 0024). */
+  readonly budgetCommitted: boolean;
+  readonly status: HeldDealStatus;
+  /** Set when a dispatch uses it. */
+  readonly deliveryId: DeliveryId | null;
+}
+
+export type HeldDealStatus = "HELD" | "DISPATCHED" | "SETTLED" | "EXPIRED" | "FELL_THROUGH";
 
 // ---------------------------------------------------------------------------
 // The founder (ADR 0023 decisions 1, 3, 4, 5, 7)
@@ -327,7 +373,7 @@ export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 
 /**
  * Who drives a delivery (ADR 0023 decision 5); the same shape as ADR 0022's
- * issuer. `DISPATCH_DELIVERY.driver` and `DeliveryState.driver` use it from O1a.
+ * issuer. `DISPATCH_DELIVERY.driver` and `DeliveryState.driver` use it.
  */
 export type DriverRef = { readonly kind: "FOUNDER" } | { readonly kind: "EMPLOYEE"; readonly characterId: CharacterId };
 
@@ -365,10 +411,16 @@ export interface BuyerState {
     readonly unitPrice: Money;
     readonly demandRemaining: number;
   }[];
-  /** Deals struck but not yet delivered (ADR 0005). Released if a deal falls through. */
+  /**
+   * Demand and budget committed to held deals (ADR 0022 decision 6), keyed by
+   * deal. Removed when the deal settles; released (under the daily caps) if it
+   * expires or falls through.
+   */
   readonly commitments: readonly {
-    readonly deliveryId: DeliveryId;
+    readonly dealId: DealId;
     readonly productId: ProductId;
+    /** The `minimumQuality` of the want the deal matched, whose demand it holds. */
+    readonly quality: QualityTier;
     readonly quantity: number;
     readonly amount: Money;
   }[];

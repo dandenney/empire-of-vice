@@ -130,7 +130,11 @@ test("buys, repeats a purchase, and sells on a Risky route from the panel, which
 
   const sent = await snapshot(page);
   const dispatched = sent.recentEvents.filter((e) => e.type === "DELIVERY_DISPATCHED").at(-1)!;
-  expect(dispatched).toMatchObject({ routeId: cutoff.id, purpose: { kind: "SALE", buyerId: ROADHOUSE, agreedUnitPrice: want.unitPrice }, cargo: [{ quality: "basic", quantity: 1 }] });
+  // One click agrees the deal at the price shown, then dispatches against it (ADR 0022 decision 6).
+  const agreed = sent.recentEvents.filter((e) => e.type === "DEAL_AGREED").at(-1)!;
+  expect(agreed).toMatchObject({ buyerId: ROADHOUSE, unitPrice: want.unitPrice, quality: "basic", quantity: 1 });
+  if (agreed.type !== "DEAL_AGREED") throw new Error("No DEAL_AGREED");
+  expect(dispatched).toMatchObject({ routeId: cutoff.id, purpose: { kind: "SALE", buyerId: ROADHOUSE, dealId: agreed.dealId }, cargo: [{ quality: "basic", quantity: 1 }] });
   expect(sent.vehicles[0]!.trip).not.toBeNull();
 
   // The panel follows: the truck is out, so the sale can't go, and the sale can be repeated.
@@ -164,17 +168,26 @@ test("the sale form offers no quality below the want's minimum, and its defaults
   const sale = page.getByTestId(`sale-${KESSLER}`);
   const quality = sale.getByTestId(`sale-${KESSLER}-quality`);
 
-  // The standard want: no basic option, only "standard: none in stock". Dispatching shows the typed reason and changes nothing.
+  // The standard want: no basic option, only "standard: none in stock". Dispatching shows the typed
+  // reason and sends no truck. Kessler's agreed the deal before the dispatch was checked (ADR 0022
+  // decision 6), so he holds it, and a second try on the same terms dispatches against it rather
+  // than agreeing again.
   await sale.getByTestId(`sale-${KESSLER}-want`).selectOption(`${standardWant.productId}:${standardWant.minimumQuality}`);
   await expect(quality.locator("option")).toHaveText([MARKET_COPY.qualityNoStock(formatQuality("standard"))]);
   await expect(quality).toHaveValue("standard");
   await expect(sale.getByTestId(`sale-${KESSLER}-price`)).toHaveText(formatMoney(standardWant.unitPrice));
   await sale.getByTestId(`sale-${KESSLER}-quantity`).fill("1");
-  const before = await stateHash(page);
   await sale.getByTestId(`sale-${KESSLER}-dispatch`).click();
   const result = sale.getByTestId(`sale-${KESSLER}-result`);
   await expect(result).toContainText("Rejected:");
+  await expect(result).toContainText("INSUFFICIENT_STOCK");
   await expect(result).not.toContainText("QUOTE_CHANGED");
+  const held = await snapshot(page);
+  expect(held.vehicles[0]!.trip).toBeNull();
+  expect(held.recentEvents.filter((e) => e.type === "DEAL_AGREED")).toHaveLength(1);
+  const before = await stateHash(page);
+  await sale.getByTestId(`sale-${KESSLER}-dispatch`).click();
+  await expect(result).toContainText("INSUFFICIENT_STOCK");
   expect(await stateHash(page)).toBe(before);
 
   // Back to the basic want: the default quality is its own, and the sale goes at its quote.
@@ -183,7 +196,10 @@ test("the sale form offers no quality below the want's minimum, and its defaults
   await sale.getByTestId(`sale-${KESSLER}-dispatch`).click();
   await expect(result).toHaveText("Done.");
   const dispatched = (await snapshot(page)).recentEvents.filter((e) => e.type === "DELIVERY_DISPATCHED").at(-1)!;
-  expect(dispatched).toMatchObject({ purpose: { kind: "SALE", buyerId: KESSLER, agreedUnitPrice: basicWant.unitPrice }, cargo: [{ quality: "basic", quantity: 1 }] });
+  const agreed = (await snapshot(page)).recentEvents.filter((e) => e.type === "DEAL_AGREED").at(-1)!;
+  expect(agreed).toMatchObject({ buyerId: KESSLER, unitPrice: basicWant.unitPrice, quality: "basic" });
+  if (agreed.type !== "DEAL_AGREED") throw new Error("No DEAL_AGREED");
+  expect(dispatched).toMatchObject({ purpose: { kind: "SALE", buyerId: KESSLER, dealId: agreed.dealId }, cargo: [{ quality: "basic", quantity: 1 }] });
 });
 
 test("a closed route is shown closed, with its reopening, and can't be picked", async ({ page }) => {

@@ -14,13 +14,19 @@ export function gameInProgress(): KernelSimulation {
   sim.dispatch({ command: { type: "START_PRODUCTION", facilityId: DISTILLERY_MAIN, recipeId: BASIC_MOONSHINE_RECIPE, quantity: 1 } });
   sim.advance(200);
   const price = sim.state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!.wants[0]!.unitPrice;
+  // ADR 0022 decision 6: the deal at the quote, then the dispatch against it.
+  const agreed = sim.dispatch({
+    command: { type: "AGREE_DEAL", buyerId: CROSSROADS_ROADHOUSE, productId: MOONSHINE, quality: "basic", quantity: 1, agreedUnitPrice: price },
+  });
+  if (agreed.status !== "applied") throw new Error(`agree: ${JSON.stringify(agreed)}`);
   const result = sim.dispatch({
     command: {
       type: "DISPATCH_DELIVERY",
       vehicleId: MODEL_TT_TRUCK,
       cargo: [{ productId: MOONSHINE, quality: "basic", quantity: 1 }],
-      purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: price },
+      purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: sim.state.heldDeals.at(-1)!.id },
       routeId: null,
+      driver: { kind: "FOUNDER" },
     },
   });
   if (result.status !== "applied") throw new Error(`dispatch: ${JSON.stringify(result)}`);

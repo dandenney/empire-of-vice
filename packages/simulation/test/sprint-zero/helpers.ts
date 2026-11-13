@@ -1,6 +1,6 @@
 // Shared helpers for the Sprint Zero tests.
 
-import { tick, type GameCommand, type GameState, type Money } from "@eov/contracts";
+import { tick, type CommandResult, type DealId, type GameCommand, type GameState, type Money } from "@eov/contracts";
 import {
   BASIC_MOONSHINE_RECIPE,
   CORN,
@@ -40,14 +40,38 @@ export function produce(quantity: number): GameCommand {
   return { type: "START_PRODUCTION", facilityId: DISTILLERY_MAIN, recipeId: BASIC_MOONSHINE_RECIPE, quantity };
 }
 
-export function sell(quantity: number, agreedUnitPrice: Money): GameCommand {
+/** AGREE_DEAL with the roadhouse for basic moonshine (ADR 0022 decision 6). */
+export function agree(quantity: number, agreedUnitPrice: Money): GameCommand {
+  return { type: "AGREE_DEAL", buyerId: CROSSROADS_ROADHOUSE, productId: MOONSHINE, quality: "basic", quantity, agreedUnitPrice };
+}
+
+/** The truck's dispatch of basic moonshine to the roadhouse against a held deal. */
+export function dealSale(quantity: number, dealId: DealId): GameCommand {
   return {
     type: "DISPATCH_DELIVERY",
     vehicleId: MODEL_TT_TRUCK,
     cargo: [{ productId: MOONSHINE, quality: "basic", quantity }],
-    purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice },
+    purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId },
     routeId: null,
+    driver: { kind: "FOUNDER" },
   };
+}
+
+/** The newest held deal (IDs sort with compareIds, so the last is the latest minted). */
+export function lastDealId(state: GameState): DealId {
+  const deal = state.heldDeals.at(-1);
+  if (!deal) throw new Error("No held deal");
+  return deal.id;
+}
+
+/**
+ * M001's sale, as ADR 0022 decision 6 splits it: AGREE_DEAL at the price, then
+ * the deal dispatch. The agreement's result if it wasn't applied, else the dispatch's.
+ */
+export function sell(sim: KernelSimulation, quantity: number, agreedUnitPrice: Money): CommandResult {
+  const agreed = sim.dispatch({ command: agree(quantity, agreedUnitPrice) });
+  if (agreed.status !== "applied") return agreed;
+  return sim.dispatch({ command: dealSale(quantity, lastDealId(sim.state)) });
 }
 
 /** The roadhouse's current quote for basic moonshine. */

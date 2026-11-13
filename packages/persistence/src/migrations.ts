@@ -60,7 +60,7 @@ function isObject(value: unknown): value is Readonly<Record<string, unknown>> {
  *   is on the road (`parkedAt: null`).
  * M001 saves load into the M001 scenario (`founderRules: false`), so the founder
  * just sits at Hollow Creek and the game plays exactly as before.
- * (`DeliveryState.driver` and `DISPATCH_DELIVERY.driver` are O1a's step.)
+ * (`DeliveryState.driver` and `DISPATCH_DELIVERY.driver` are v3 → v4's.)
  */
 export const migrateV2ToV3: SaveMigration = {
   fromVersion: 2,
@@ -96,8 +96,213 @@ export const migrateV2ToV3: SaveMigration = {
   },
 };
 
+/**
+ * Quality tiers in rank order, frozen for v3 → v4 (ADR 0016's ranking as of
+ * M001), so a later tier list can't change what a v3 save becomes.
+ */
+const V3_QUALITY_RANK: Readonly<Record<string, number>> = { basic: 0, standard: 1, premium: 2 };
+
+function rankOf(quality: unknown, where: string): number {
+  const rank = typeof quality === "string" ? V3_QUALITY_RANK[quality] : undefined;
+  if (rank === undefined) throw new Error(`${where} has no known quality: ${JSON.stringify(quality)}`);
+  return rank;
+}
+
+/**
+ * A frozen copy of ADR 0016's want matching over the save's own `buyer.wants`:
+ * the want for the product with the highest minimum quality at or below the
+ * cargo's. Its `minimumQuality`, or null when no want matches.
+ */
+function matchedWantQuality(wants: readonly unknown[], productId: unknown, quality: unknown, where: string): string | null {
+  const cargoRank = rankOf(quality, where);
+  let best: string | null = null;
+  let bestRank = -1;
+  for (const [i, want] of wants.entries()) {
+    if (!isObject(want)) throw new Error(`${where}.wants[${i}] is not an object`);
+    if (want["productId"] !== productId) continue;
+    const rank = rankOf(want["minimumQuality"], `${where}.wants[${i}]`);
+    if (rank <= cargoRank && rank > bestRank) {
+      best = want["minimumQuality"] as string;
+      bestRank = rank;
+    }
+  }
+  return best;
+}
+
+const asArray = (value: unknown, where: string): readonly unknown[] => {
+  if (!Array.isArray(value)) throw new Error(`${where} is not an array`);
+  return value;
+};
+
+const asObject = (value: unknown, where: string): Readonly<Record<string, unknown>> => {
+  if (!isObject(value)) throw new Error(`${where} is not an object`);
+  return value;
+};
+
+/** A v3 SALE purpose (`{ kind, buyerId, agreedUnitPrice }`) with its deal named instead (ADR 0022 decision 6). */
+function salePurpose(purpose: Readonly<Record<string, unknown>>, dealId: string | null): Record<string, unknown> {
+  if (!("agreedUnitPrice" in purpose)) throw new Error("a SALE purpose has no agreedUnitPrice");
+  return { kind: "SALE", buyerId: purpose["buyerId"], dealId };
+}
+
+/**
+ * Rewrites what v4 reshapes inside a subtree copied from the world (commands in
+ * activity items, trips in VEHICLE_WHEREABOUTS records, DELIVERY_DISPATCHED
+ * events): every SALE purpose next to a `deliveryId` names that delivery's
+ * migrated deal (else null), and every DISPATCH_DELIVERY or RELEASE_RESERVATION
+ * command gets v4's fields.
+ */
+function rewriteNested(node: unknown, dealOf: ReadonlyMap<string, string>, command: (c: Readonly<Record<string, unknown>>) => Record<string, unknown>): unknown {
+  if (Array.isArray(node)) return node.map((n) => rewriteNested(n, dealOf, command));
+  if (!isObject(node)) return node;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) out[key] = rewriteNested(value, dealOf, command);
+  if (node["type"] === "DISPATCH_DELIVERY" || node["type"] === "RELEASE_RESERVATION") return command(out);
+  const purpose = out["purpose"];
+  if (isObject(purpose) && purpose["kind"] === "SALE" && "agreedUnitPrice" in purpose) {
+    const deliveryId = node["deliveryId"];
+    out["purpose"] = salePurpose(purpose, typeof deliveryId === "string" ? (dealOf.get(deliveryId) ?? null) : null);
+  }
+  return out;
+}
+
+/**
+ * v3 → v4 (O1a, ADR 0022 Consequences "save.ts", and ADR 0023 decision 10's
+ * `driver`), from the save's own fields only (ADR 0009):
+ * - **In-flight sales:** each OUTBOUND M001 SALE delivery's buyer commitment
+ *   becomes a held deal (`deal-1`, `deal-2`, ... in delivery order), DISPATCHED
+ *   with that delivery, so the commitment isn't counted twice. Its unit price is
+ *   the purpose's `agreedUnitPrice`; quantity and quality come from the cargo;
+ *   `agreedAt` is the outbound trip's `departedAt`; `expiresAt` is the
+ *   delivery's `dealDeadline`, which still governs arrival; budget committed.
+ *   The commitment is re-keyed to the deal and records the want quality it
+ *   matched (a frozen `matchWant` over the save's own `buyer.wants`). With no
+ *   matching want it records the cargo's quality, which no want has, so a later
+ *   release gives back budget but no demand, as `releaseDeal` did.
+ * - **Every other SALE purpose** (finished deliveries, commands, events) gets
+ *   `dealId: null`. A queued M001 sale therefore goes on spec when it applies;
+ *   a migrated `commandLog` is for debugging only.
+ * - **Deliveries and DISPATCH_DELIVERY commands** get `driver: null` (pre-M002, no driver).
+ * - **RELEASE_RESERVATION commands** name the facility of the reservation if it's
+ *   still active, else the save's first facility (the M001 save has one).
+ * - **Command envelopes** get `issuer: { kind: "FOUNDER" }`.
+ * - **Vehicles** get `tripCount: 0`, and `heldDeals` holds the migrated deals,
+ *   with the `Deal` counter after them.
+ */
+export const migrateV3ToV4: SaveMigration = {
+  fromVersion: 3,
+  toVersion: 4,
+  migrate: (save) => {
+    const state = asObject(save["state"], "save.state");
+    if ("heldDeals" in state) throw new Error("save.state already has heldDeals");
+    const deliveries = asArray(state["deliveries"], "save.state.deliveries").map((d, i) => asObject(d, `save.state.deliveries[${i}]`));
+    const buyers = asArray(state["buyers"], "save.state.buyers").map((b, i) => asObject(b, `save.state.buyers[${i}]`));
+    const vehicles = asArray(state["vehicles"], "save.state.vehicles").map((v, i) => asObject(v, `save.state.vehicles[${i}]`));
+    const facilities = asArray(state["facilities"], "save.state.facilities").map((f, i) => asObject(f, `save.state.facilities[${i}]`));
+    const reservations = asArray(state["reservations"], "save.state.reservations").map((r, i) => asObject(r, `save.state.reservations[${i}]`));
+    const counters = asObject(state["counters"], "save.state.counters");
+    const nextId = asObject(counters["nextId"], "save.state.counters.nextId");
+
+    // In-flight sales become DISPATCHED deals, in delivery order.
+    const dealOf = new Map<string, string>();
+    const heldDeals: Record<string, unknown>[] = [];
+    const commitmentFor = new Map<string, { readonly dealId: string; readonly quality: string }>();
+    deliveries.forEach((delivery, i) => {
+      const where = `save.state.deliveries[${i}]`;
+      const purpose = asObject(delivery["purpose"], `${where}.purpose`);
+      if (purpose["kind"] !== "SALE" || delivery["status"] !== "OUTBOUND") return;
+      const deliveryId = delivery["id"] as string;
+      const buyerIndex = buyers.findIndex((b) => b["id"] === purpose["buyerId"]);
+      if (buyerIndex < 0) throw new Error(`${where} sells to unknown buyer ${JSON.stringify(purpose["buyerId"])}`);
+      const buyer = buyers[buyerIndex]!;
+      const commitments = asArray(buyer["commitments"], `save.state.buyers[${buyerIndex}].commitments`).map((c) => asObject(c, "a commitment"));
+      const commitment = commitments.find((c) => c["deliveryId"] === deliveryId);
+      if (!commitment) throw new Error(`${where} is an in-flight sale with no commitment`);
+      const cargo = asArray(delivery["cargo"], `${where}.cargo`).map((c) => asObject(c, `${where}.cargo line`));
+      const line = cargo.find((c) => c["productId"] === commitment["productId"]);
+      if (!line) throw new Error(`${where} carries no ${JSON.stringify(commitment["productId"])}`);
+      const trip = vehicles.map((v) => v["trip"]).find((t) => isObject(t) && t["deliveryId"] === deliveryId && t["leg"] === "OUTBOUND");
+      if (!isObject(trip)) throw new Error(`${where} is an in-flight sale with no outbound trip`);
+      if (typeof delivery["dealDeadline"] !== "number") throw new Error(`${where} is an in-flight sale with no dealDeadline`);
+      const dealId = `deal-${heldDeals.length + 1}`;
+      dealOf.set(deliveryId, dealId);
+      const wantQuality = matchedWantQuality(asArray(buyer["wants"], `save.state.buyers[${buyerIndex}].wants`), line["productId"], line["quality"], `save.state.buyers[${buyerIndex}]`);
+      commitmentFor.set(deliveryId, { dealId, quality: wantQuality ?? (line["quality"] as string) });
+      heldDeals.push({
+        id: dealId,
+        buyerId: purpose["buyerId"],
+        productId: line["productId"],
+        quality: line["quality"],
+        quantity: line["quantity"],
+        unitPrice: purpose["agreedUnitPrice"],
+        agreedAt: trip["departedAt"],
+        expiresAt: delivery["dealDeadline"],
+        budgetCommitted: true,
+        status: "DISPATCHED",
+        deliveryId,
+      });
+    });
+
+    const command = (c: Readonly<Record<string, unknown>>): Record<string, unknown> => {
+      if (c["type"] === "RELEASE_RESERVATION") {
+        if ("facilityId" in c) return { ...c };
+        const active = reservations.find((r) => r["id"] === c["reservationId"]);
+        const facilityId = active?.["facilityId"] ?? facilities[0]?.["id"];
+        if (typeof facilityId !== "string") throw new Error("a RELEASE_RESERVATION has no facility to name");
+        return { type: c["type"], facilityId, reservationId: c["reservationId"] };
+      }
+      const purpose = asObject(c["purpose"], "a DISPATCH_DELIVERY's purpose");
+      return {
+        ...c,
+        purpose: purpose["kind"] === "SALE" && "agreedUnitPrice" in purpose ? salePurpose(purpose, null) : purpose,
+        driver: "driver" in c ? c["driver"] : null,
+      };
+    };
+    const envelopes = (key: "queuedCommands" | "commandLog") =>
+      asArray(state[key], `save.state.${key}`).map((e, i) => {
+        const envelope = asObject(e, `save.state.${key}[${i}]`);
+        if ("issuer" in envelope) throw new Error(`save.state.${key}[${i}] already has an issuer`);
+        const { id, scheduledTick, sequence, command: c } = envelope;
+        return { id, scheduledTick, sequence, issuer: { kind: "FOUNDER" }, command: rewriteNested(c, dealOf, command) };
+      });
+
+    return {
+      ...save,
+      state: {
+        ...state,
+        counters: { ...counters, nextId: { ...nextId, Deal: heldDeals.length + 1 } },
+        vehicles: vehicles.map((vehicle, i) => {
+          if ("tripCount" in vehicle) throw new Error(`save.state.vehicles[${i}] already has tripCount`);
+          const { id, parkedAt, ...rest } = vehicle;
+          return { id, parkedAt, tripCount: 0, ...rest };
+        }),
+        deliveries: deliveries.map((delivery, i) => {
+          if ("driver" in delivery) throw new Error(`save.state.deliveries[${i}] already has driver`);
+          const purpose = asObject(delivery["purpose"], `save.state.deliveries[${i}].purpose`);
+          const migrated = purpose["kind"] === "SALE" ? salePurpose(purpose, dealOf.get(delivery["id"] as string) ?? null) : purpose;
+          return { ...delivery, purpose: migrated, driver: null };
+        }),
+        heldDeals,
+        buyers: buyers.map((buyer, i) => ({
+          ...buyer,
+          commitments: asArray(buyer["commitments"], `save.state.buyers[${i}].commitments`).map((c, k) => {
+            const old = asObject(c, `save.state.buyers[${i}].commitments[${k}]`);
+            const deal = commitmentFor.get(old["deliveryId"] as string);
+            if (!deal) throw new Error(`save.state.buyers[${i}].commitments[${k}] belongs to no in-flight sale`);
+            return { dealId: deal.dealId, productId: old["productId"], quality: deal.quality, quantity: old["quantity"], amount: old["amount"] };
+          }),
+        })),
+        queuedCommands: envelopes("queuedCommands"),
+        commandLog: envelopes("commandLog"),
+        eventJournal: rewriteNested(state["eventJournal"], dealOf, command),
+        knowledge: rewriteNested(state["knowledge"], dealOf, command),
+      },
+    };
+  },
+};
+
 /** Every migration, oldest first. Add one per SAVE_SCHEMA_VERSION bump. */
-export const SAVE_MIGRATIONS: readonly SaveMigration[] = [migrateV1ToV2, migrateV2ToV3];
+export const SAVE_MIGRATIONS: readonly SaveMigration[] = [migrateV1ToV2, migrateV2ToV3, migrateV3ToV4];
 
 export type MigrationResult =
   | { readonly ok: true; readonly save: Record<string, unknown> }

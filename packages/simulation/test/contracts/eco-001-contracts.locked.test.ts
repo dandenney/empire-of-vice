@@ -497,17 +497,24 @@ function deliver(
     cargo: [cargo],
     purpose: { kind: "CONTRACT_INSTALLMENT", contractId },
     routeId: options.routeId ?? null,
+    driver: { kind: "FOUNDER" },
   };
 }
 
-function spotSale(state: GameState, buyerId: BuyerId, quantity: number, quality: QualityTier = "basic"): GameCommand {
-  const want = state.buyers.find((b) => b.id === buyerId)!.wants.find((w) => w.productId === MOONSHINE && w.minimumQuality === quality)!;
+/**
+ * A spot sale at the buyer's quote (ADR 0022 decision 6): agrees the deal now (it must
+ * apply), and returns the deal dispatch of the same cargo for the caller to run.
+ */
+function spotSale(g: Game, buyerId: BuyerId, quantity: number, quality: QualityTier = "basic"): GameCommand {
+  const want = g.sim.state.buyers.find((b) => b.id === buyerId)!.wants.find((w) => w.productId === MOONSHINE && w.minimumQuality === quality)!;
+  expectApplied(run(g, { type: "AGREE_DEAL", buyerId, productId: MOONSHINE, quality, quantity, agreedUnitPrice: want.unitPrice }));
   return {
     type: "DISPATCH_DELIVERY",
     vehicleId: MODEL_TT_TRUCK,
     cargo: [{ productId: MOONSHINE, quality, quantity }],
-    purpose: { kind: "SALE", buyerId, agreedUnitPrice: want.unitPrice },
+    purpose: { kind: "SALE", buyerId, dealId: g.sim.state.heldDeals.at(-1)!.id },
     routeId: null,
+    driver: { kind: "FOUNDER" },
   };
 }
 
@@ -1154,7 +1161,7 @@ describe("ECO-001 contracts: dispatching an installment", () => {
     const { g } = acceptedKessler(8);
     expect(unreserved(g.sim.state, "basic")).toBe(0);
     for (const buyerId of [CROSSROADS_ROADHOUSE, KESSLERS_BACK_ROOM]) {
-      expect(expectRejected(g, spotSale(g.sim.state, buyerId, 1), "INSUFFICIENT_STOCK")).toMatchObject({ requested: 1, available: 0 });
+      expect(expectRejected(g, spotSale(g, buyerId, 1), "INSUFFICIENT_STOCK")).toMatchObject({ requested: 1, available: 0 });
     }
   });
 
@@ -1710,12 +1717,18 @@ describe("ECO-001 contracts: Sprint Zero", () => {
     const quote = sim.state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!.wants[0]!.unitPrice;
     expectApplied(
       sim.dispatch({
+        command: { type: "AGREE_DEAL", buyerId: CROSSROADS_ROADHOUSE, productId: recipe.productId, quality: recipe.quality, quantity: 1, agreedUnitPrice: quote },
+      }),
+    );
+    expectApplied(
+      sim.dispatch({
         command: {
           type: "DISPATCH_DELIVERY",
           vehicleId: MODEL_TT_TRUCK,
           cargo: [{ productId: recipe.productId, quality: recipe.quality, quantity: 1 }],
-          purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: quote },
+          purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: sim.state.heldDeals.at(-1)!.id },
           routeId: null,
+          driver: { kind: "FOUNDER" },
         },
       }),
     );

@@ -151,13 +151,20 @@ test("a truck on the road moves along its route as ticks advance", async ({ page
   const marker = page.locator(`[data-testid=map] [data-shape=vehicle][data-id="${truckId}"]`);
   const parked = await truck();
 
+  // ADR 0022 decision 6: agree the deal at today's quote, then dispatch the truck against it.
+  await dispatch(page, {
+    command: { type: "AGREE_DEAL", buyerId: buyer.id, productId: pool.productId, quality: pool.quality, quantity: 1, agreedUnitPrice: buyer.wants[0]!.unitPrice },
+  });
+  const agreed = (await snapshot(page)).recentEvents.filter((e) => e.type === "DEAL_AGREED").at(-1)!;
+  if (agreed.type !== "DEAL_AGREED") throw new Error("No DEAL_AGREED");
   await dispatch(page, {
     command: {
       type: "DISPATCH_DELIVERY",
       vehicleId: truckId,
       cargo: [{ productId: pool.productId, quality: pool.quality, quantity: 1 }],
-      purpose: { kind: "SALE", buyerId: buyer.id, agreedUnitPrice: buyer.wants[0]!.unitPrice },
+      purpose: { kind: "SALE", buyerId: buyer.id, dealId: agreed.dealId },
       routeId: null,
+      driver: { kind: "FOUNDER" },
     },
   });
   const trip = (await snapshot(page)).vehicles[0]!.trip!;

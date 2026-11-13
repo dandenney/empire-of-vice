@@ -14,7 +14,8 @@
 // simulation-created IDs are command handles only; the UI never shows them.
 
 import type { WorldPoint } from "./geometry.ts";
-import type { BuyerId, ContractId, LocationId, RouteId, SupplierId } from "./ids.ts";
+import type { QualityTier } from "./goods.ts";
+import type { BuyerId, ContractId, DealId, DeliveryId, LocationId, ProductId, RouteId, SupplierId } from "./ids.ts";
 import type { ActivityItem, CatchUp, Known, KnowledgeValueOf } from "./knowledge.ts";
 import type { LedgerEntry, TransactionKind } from "./ledger.ts";
 import type { Money } from "./money.ts";
@@ -53,6 +54,8 @@ export interface PlayerSnapshot {
   readonly standing: Known<KnowledgeValueOf<"STANDING">>;
   /** Contracts the founder agreed, sorted by ID. Offers come through `places`. */
   readonly contracts: readonly PlayerContract[];
+  /** Deals the founder agreed, as known, until the founder learns how each ended. Sorted by ID. */
+  readonly deals: readonly PlayerDeal[];
   readonly finance: PlayerFinance;
   /** `knowledge.activity`: what the founder saw or was told, newest last. Replaces `recentEvents`. */
   readonly activity: readonly ActivityItem[];
@@ -166,6 +169,43 @@ export interface PlayerContract extends ContractTerms {
   readonly progress: Known<
     Omit<KnowledgeValueOf<"CONTRACT_PROGRESS">, "installments"> & { readonly installments: readonly InstallmentSnapshot[] }
   >;
+}
+
+/**
+ * A deal the founder agreed (ADR 0022 decision 6), as the founder knows it. The
+ * terms are an agreement, so always known. The list is the founder's, not
+ * `GameState.heldDeals`, which drops a deal the moment it ends in the world:
+ *
+ * - A deal is listed from its DEAL_AGREED until the founder learns how it ended.
+ * - HELD: agreed, not yet sent. Its expiry is known by time alone, so at
+ *   `expiresAt` it leaves the list at once (DEAL_EXPIRED is an activity item).
+ * - DISPATCHED: sent with a delivery (`deliveryId`). It stays DISPATCHED here,
+ *   even after the world has settled it, until the outcome reaches the founder
+ *   through that delivery's channels (ADR 0021 decisions 6 and 7): riding along
+ *   (`ON_DELIVERY.atStop`), the SALE cash posting on arrival, the VEHICLE_RETURN
+ *   posting when cargo comes home, or the pending news at the delivery's origin
+ *   (a fall-through, a seizure (CARGO_LOST), a closed road). Then it leaves the
+ *   list, and the outcome is in `activity`.
+ *
+ * So the builder keeps, per deal, the terms from the founder's own AGREE_DEAL and
+ * whether its outcome has been learned. It never reads a dispatched deal's
+ * world status.
+ */
+export interface PlayerDeal {
+  /** Command handle only (for DISPATCH_DELIVERY's `dealId`); never shown. */
+  readonly id: DealId;
+  readonly buyerId: BuyerId;
+  readonly productId: ProductId;
+  readonly quality: QualityTier;
+  readonly quantity: number;
+  readonly unitPrice: Money;
+  readonly agreedAt: Tick;
+  readonly expiresAt: Tick;
+  readonly budgetCommitted: boolean;
+  /** As known: HELD, or DISPATCHED until the outcome is learned. */
+  readonly status: "HELD" | "DISPATCHED";
+  /** The delivery carrying it out, once DISPATCHED. */
+  readonly deliveryId: DeliveryId | null;
 }
 
 // ---------------------------------------------------------------------------

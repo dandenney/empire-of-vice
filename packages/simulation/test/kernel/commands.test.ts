@@ -16,7 +16,7 @@ describe("immediate commands", () => {
     expect(result).toEqual({ status: "applied", commandId: "cmd-3", tick: 601, eventIds: ["evt-2"] });
     expect(sim.state.tick).toBe(600); // no tick advanced
     expect(distilleryWorkers(sim.state)).toBe(7);
-    expect(sim.state.commandLog.at(-1)).toEqual({ id: "cmd-3", scheduledTick: 601, sequence: 3, command: setWorkforce(ids.distillery, 7) });
+    expect(sim.state.commandLog.at(-1)).toEqual({ id: "cmd-3", scheduledTick: 601, sequence: 3, issuer: { kind: "FOUNDER" }, command: setWorkforce(ids.distillery, 7) });
     expect(sim.takeEvents()).toEqual([
       { id: "evt-2", tick: 601, causedBy: "cmd-3", type: "WORKFORCE_CHANGED", facilityId: ids.distillery, from: 3, to: 7 },
     ]);
@@ -186,7 +186,7 @@ describe("scheduled commands", () => {
     ]);
     // It was accepted at dispatch, so it's in the log (T01b), as the original envelope, after cmd-4.
     expect(sim.state.commandLog.map((e) => e.id)).toEqual(["cmd-1", "cmd-4", "cmd-3"]);
-    expect(sim.state.commandLog.at(-1)).toEqual({ id: "cmd-3", scheduledTick: 800, sequence: 3, command: buyCorn(150) });
+    expect(sim.state.commandLog.at(-1)).toEqual({ id: "cmd-3", scheduledTick: 800, sequence: 3, issuer: { kind: "FOUNDER" }, command: buyCorn(150) });
     expect(sim.state.queuedCommands.map((e) => e.id)).not.toContain("cmd-3");
     const cornStock = sim.state.suppliers.flatMap((s) => s.stock).find((st) => st.materialId === ids.corn)!;
     expect(cornStock.available).toBe(60); // only cmd-4's purchase happened
@@ -364,7 +364,7 @@ describe("replay (ADR 0004)", () => {
 
   it("moves the counters past replayed identities so new dispatches can't collide", () => {
     const sim = fakeSimulation();
-    const foreign: CommandEnvelope = { id: "cmd-40" as never, scheduledTick: tick(5_000), sequence: 40, command: buyCorn(1) };
+    const foreign: CommandEnvelope = { id: "cmd-40" as never, scheduledTick: tick(5_000), sequence: 40, issuer: { kind: "FOUNDER" }, command: buyCorn(1) };
     expect(sim.replay(foreign)).toEqual({ status: "queued", commandId: "cmd-40", scheduledTick: 5_000 });
     expect(sim.dispatch({ command: buyCorn(1) })).toMatchObject({ commandId: "cmd-41" });
     expect(sim.state.commandLog.at(-1)!.sequence).toBe(41);

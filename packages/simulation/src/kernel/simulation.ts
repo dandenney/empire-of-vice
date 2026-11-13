@@ -110,6 +110,8 @@ export class KernelSimulation implements Simulation {
       id: identity.id,
       scheduledTick: target as Tick,
       sequence: identity.sequence,
+      // Player commands are the founder's (ADR 0022 decision 5); employees issue theirs from ADR 0025's policy step.
+      issuer: { kind: "FOUNDER" } as const,
       command: request.command,
     };
     // "dispatch" mode never returns `duplicate` or `rejected-on-apply`.

@@ -11,7 +11,7 @@
 // fixtures'. Quantities aren't clamped: a request the simulation rejects shows
 // its typed reason.
 
-import type { ContractOfferSnapshot, ContractSnapshot, GameSnapshot, ReservationId } from "@eov/contracts";
+import type { ContractOfferSnapshot, ContractSnapshot, FacilityId, GameSnapshot, ReservationId } from "@eov/contracts";
 import { COMMON_COPY } from "../../components/copy.ts";
 import { describeReason, formatQuality } from "../../components/format.ts";
 import { useCommand } from "../../components/use-command.ts";
@@ -151,10 +151,33 @@ function InstallmentsTable({ contract, testId }: { readonly contract: ContractSn
   );
 }
 
-function ReleaseButton({ contract, reservationId, n, count }: { readonly contract: ContractSnapshot; readonly reservationId: ReservationId; readonly n: number; readonly count: number }) {
+/**
+ * The facility a contract's cases are held at, for RELEASE_RESERVATION's
+ * `facilityId` (ADR 0022 decision 3): the owned facility holding the contract's
+ * product reserved. M001 owns one facility; the M002 UI releases at the
+ * founder's place.
+ */
+function heldAt(snapshot: GameSnapshot, contract: ContractSnapshot): FacilityId {
+  const holding = snapshot.facilities.find((f) => f.products.some((p) => p.productId === contract.productId && p.reservedQuantity > 0));
+  return (holding ?? snapshot.facilities[0]!).id;
+}
+
+function ReleaseButton({
+  contract,
+  facilityId,
+  reservationId,
+  n,
+  count,
+}: {
+  readonly contract: ContractSnapshot;
+  readonly facilityId: FacilityId;
+  readonly reservationId: ReservationId;
+  readonly n: number;
+  readonly count: number;
+}) {
   const command = useCommand(`release-reservation:${reservationId}`);
   const testId = `release-${reservationId}`;
-  const release = () => command.send({ command: { type: "RELEASE_RESERVATION", reservationId } });
+  const release = () => command.send({ command: { type: "RELEASE_RESERVATION", facilityId, reservationId } });
   return (
     <div className="contract-action">
       <button type="button" className="button" onClick={release} disabled={command.pending} aria-label={C.releaseLabel(contract.buyerName, n)} data-testid={testId}>
@@ -190,7 +213,7 @@ function ContractCard({ contract, snapshot }: { readonly contract: ContractSnaps
           <>
             <p className="contract-note">{C.releaseNote}</p>
             {contract.reservationIds.map((id, i) => (
-              <ReleaseButton key={id} contract={contract} reservationId={id} n={i + 1} count={contract.reservationIds.length} />
+              <ReleaseButton key={id} contract={contract} facilityId={heldAt(snapshot, contract)} reservationId={id} n={i + 1} count={contract.reservationIds.length} />
             ))}
           </>
         )}

@@ -148,7 +148,7 @@ export function createInitialState(
     .map((id) => {
       const vehicle = find(data.vehicles, id, "vehicle");
       const parkedAt = find(data.facilities, vehicle.homeFacilityId, "facility").locationId;
-      return { id: vehicle.id, parkedAt, trip: null };
+      return { id: vehicle.id, parkedAt, tripCount: 0, trip: null };
     })
     .sort(byId);
   const markets = initialMarkets(data);
@@ -176,6 +176,7 @@ export function createInitialState(
     productionJobs: [],
     vehicles,
     deliveries: [],
+    heldDeals: [],
     markets,
     suppliers: initialSuppliers(data, scenario),
     buyers: initialBuyers(data, scenario, markets),

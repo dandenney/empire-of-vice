@@ -89,6 +89,7 @@ function transfer(quantity: number, destinationFacilityId: FacilityId = RIVERSID
     cargo: [{ productId: MOONSHINE, quality: "basic", quantity }],
     purpose: { kind: "TRANSFER", destinationFacilityId },
     routeId,
+    driver: { kind: "FOUNDER" },
   };
 }
 

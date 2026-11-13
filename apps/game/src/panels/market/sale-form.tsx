@@ -1,8 +1,9 @@
 // A spot sale to one buyer (ADR 0005): which want to fill, the cases' quality
-// and count, the truck, and the route (the shared route picker, #77). It sends
-// DISPATCH_DELIVERY with purpose SALE and the `agreedUnitPrice` the panel shows
-// for the chosen want, so a price that moved before the command applied comes
-// back as QUOTE_CHANGED with both prices, never as a silent re-price.
+// and count, the truck, and the route (the shared route picker, #77). One click
+// agrees the deal at the `agreedUnitPrice` the panel shows for the chosen want,
+// then dispatches the truck against it (ADR 0022 decision 6, `useSale`), so a
+// price that moved before the agreement applied comes back as QUOTE_CHANGED with
+// both prices, never as a silent re-price.
 //
 // What's picked here (want, quality, truck, route, quantity) is form input, not
 // game state. Every option and enabled state comes from the snapshot. The
@@ -12,18 +13,18 @@
 import { formatMoney, type BuyerSnapshot, type GameSnapshot, type QualityTier, type RouteId, type VehicleId } from "@eov/contracts";
 import { useState } from "react";
 import { formatQuality } from "../../components/format.ts";
-import { useCommand } from "../../components/use-command.ts";
 import { MoneyFigure } from "../../ui/ledger.tsx";
 import { chosenRoute, commandRouteId, routeOptions } from "../../ui/route-picker/route-options.ts";
 import { RoutePicker } from "../../ui/route-picker/route-picker.tsx";
 import { MARKET_COPY as C } from "./copy.ts";
 import { CommandResult } from "./command-result.tsx";
 import { saleQualities } from "./market-view.ts";
+import { useSale } from "./use-sale.ts";
 
 const wantKey = (w: { readonly productId: string; readonly minimumQuality: QualityTier }) => `${w.productId}:${w.minimumQuality}`;
 
 export function SaleForm({ buyer, snapshot }: { readonly buyer: BuyerSnapshot; readonly snapshot: GameSnapshot }) {
-  const command = useCommand(`sale:${buyer.id}`);
+  const command = useSale(`sale:${buyer.id}`);
   const [wantPick, setWantPick] = useState<string | null>(null);
   const [qualityPick, setQualityPick] = useState<QualityTier | null>(null);
   const [vehiclePick, setVehiclePick] = useState<VehicleId | null>(null);
@@ -43,14 +44,14 @@ export function SaleForm({ buyer, snapshot }: { readonly buyer: BuyerSnapshot; r
   const canSend = !command.pending && buyer.willDeal && vehicle !== null && vehicle.trip === null && route !== null;
   const send = () => {
     if (!vehicle || !route) return;
-    void command.send({
-      command: {
-        type: "DISPATCH_DELIVERY",
-        vehicleId: vehicle.id,
-        cargo: [{ productId: want.productId, quality, quantity: Number(quantity) }],
-        purpose: { kind: "SALE", buyerId: buyer.id, agreedUnitPrice: want.unitPrice },
-        routeId: commandRouteId(route),
-      },
+    void command.sell({
+      vehicleId: vehicle.id,
+      buyerId: buyer.id,
+      productId: want.productId,
+      quality,
+      quantity: Number(quantity),
+      agreedUnitPrice: want.unitPrice,
+      routeId: commandRouteId(route),
     });
   };
 

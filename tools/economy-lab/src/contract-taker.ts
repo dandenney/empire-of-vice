@@ -51,6 +51,7 @@ import {
   periodCosts,
   planRun,
   recipeOf,
+  sendSpotSale,
   type Gateway,
   type RunPlan,
   type SaleCap,
@@ -284,6 +285,7 @@ export class ContractTakerStrategy implements Strategy {
           cargo: [{ productId: c.productId, quality, quantity: n }],
           purpose: { kind: "CONTRACT_INSTALLMENT", contractId: c.id },
           routeId: null,
+          driver: { kind: "FOUNDER" },
         });
         const result = sim.dispatch({ command: dispatch(quantity) });
         if (result.status !== "rejected") return true;
@@ -370,13 +372,11 @@ export class ContractTakerStrategy implements Strategy {
     const quantity = best.quantity;
     const cap: SaleCap =
       quantity === best.stock ? "STOCK" : quantity === capacity ? "TRUCK" : best.acceptable < best.demand ? "BUDGET" : "DEMAND";
-    const sent = this.#send(sim, {
-      type: "DISPATCH_DELIVERY",
-      vehicleId: this.#vehicleId,
-      cargo: [{ productId: best.productId, quality: best.quality, quantity }],
-      purpose: { kind: "SALE", buyerId: best.buyerId, agreedUnitPrice: best.unitPrice },
-      routeId: null,
-    });
+    const sent = sendSpotSale(
+      sim,
+      { vehicleId: this.#vehicleId, buyerId: best.buyerId, productId: best.productId, quality: best.quality, quantity, unitPrice: best.unitPrice, routeId: null },
+      (command) => this.#send(sim, command),
+    );
     if (sent !== null) this.log.saleCaps[cap]++;
   }
 }

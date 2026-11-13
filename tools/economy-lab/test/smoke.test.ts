@@ -113,15 +113,19 @@ describe("greedy spot strategy", () => {
     sim.advance(sim.state.productionJobs[0]!.completesAt - sim.state.tick);
     const s = sim.snapshot();
     bot.act(gateway);
-    const sale = sent.at(-1)!;
-    expect(sale.type).toBe("DISPATCH_DELIVERY");
-    if (sale.type !== "DISPATCH_DELIVERY" || sale.purpose.kind !== "SALE") throw new Error("expected a sale");
+    // ADR 0022 decision 6: the deal at the quote, then the dispatch against it.
+    const [agreement, sale] = sent.slice(-2);
+    if (agreement?.type !== "AGREE_DEAL") throw new Error("expected an agreement");
+    expect(sale!.type).toBe("DISPATCH_DELIVERY");
+    if (sale!.type !== "DISPATCH_DELIVERY" || sale!.purpose.kind !== "SALE") throw new Error("expected a sale");
     const quotes = s.market.buyers
       .filter((b) => b.willDeal)
       .flatMap((b) => b.wants.filter((w) => w.minimumQuality === "basic").map((w) => ({ id: b.id, price: w.unitPrice })));
     const best = quotes.reduce((a, b) => (b.price > a.price ? b : a));
     expect(sale.purpose.buyerId).toBe(best.id);
-    expect(sale.purpose.agreedUnitPrice).toBe(best.price);
+    expect(agreement).toMatchObject({ buyerId: best.id, agreedUnitPrice: best.price, quantity: sale.cargo[0]!.quantity });
+    expect(sale.purpose.dealId).toBe(sim.state.heldDeals.at(-1)!.id);
+    expect(sale.driver).toEqual({ kind: "FOUNDER" });
   });
 });
 

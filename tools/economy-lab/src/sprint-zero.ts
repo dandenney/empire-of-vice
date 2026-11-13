@@ -68,13 +68,16 @@ export async function runSprintZero(): Promise<SprintZeroReport> {
   advanceTo(sim, sim.state.productionJobs[0]!.completesAt);
   record("Produce one case");
 
+  // ADR 0022 decision 6: agree the deal at the quote, then dispatch the truck against it.
   const quote = sim.state.buyers.find((b) => b.id === CROSSROADS_ROADHOUSE)!.wants[0]!.unitPrice;
+  apply(sim, { type: "AGREE_DEAL", buyerId: CROSSROADS_ROADHOUSE, productId: recipe.productId, quality: recipe.quality, quantity: 1, agreedUnitPrice: quote });
   apply(sim, {
     type: "DISPATCH_DELIVERY",
     vehicleId: MODEL_TT_TRUCK,
     cargo: [{ productId: recipe.productId, quality: recipe.quality, quantity: 1 }],
-    purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, agreedUnitPrice: quote },
+    purpose: { kind: "SALE", buyerId: CROSSROADS_ROADHOUSE, dealId: sim.state.heldDeals.at(-1)!.id },
     routeId: null,
+    driver: { kind: "FOUNDER" },
   });
   record("Dispatch truck");
 

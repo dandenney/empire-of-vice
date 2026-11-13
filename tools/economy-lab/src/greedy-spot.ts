@@ -12,7 +12,9 @@
 // 2. Produce. If the distillery is idle, buy the missing ingredients for one
 //    day's run (capped by storage, supplier stock, and cash), then start it.
 // 3. Sell. If the truck is home with cases in stock, send as many as the
-//    best-paying buyer will take today (highest quote first) at the current quote.
+//    best-paying buyer will take today (highest quote first) at the current quote:
+//    AGREE_DEAL at that quote, then the dispatch against the deal (ADR 0022
+//    decision 6; the lab plays with founder rules off, so it's M001's sale).
 
 import type {
   BuyerId,
@@ -24,8 +26,11 @@ import type {
   GameSnapshot,
   MaterialId,
   Money,
+  ProductId,
+  QualityTier,
   RecipeId,
   RejectionCode,
+  RouteId,
   SupplierId,
   VehicleId,
 } from "@eov/contracts";
@@ -77,6 +82,41 @@ export function newStrategyLog(): StrategyLog {
 export interface Gateway {
   dispatch(request: { readonly command: GameCommand }): CommandResult;
   snapshot(): GameSnapshot;
+}
+
+/** A spot sale a bot sends: one cargo line to a buyer at the quote it saw. */
+export interface SpotSale {
+  readonly vehicleId: VehicleId;
+  readonly buyerId: BuyerId;
+  readonly productId: ProductId;
+  readonly quality: QualityTier;
+  readonly quantity: number;
+  readonly unitPrice: Money;
+  readonly routeId: RouteId | null;
+}
+
+/**
+ * M001's spot sale as ADR 0022 decision 6 splits it, for the lab's M001 mode
+ * (founder rules off): AGREE_DEAL at the quote the bot saw, then DISPATCH_DELIVERY
+ * against that deal, at the same tick. The buyer's checks now run on the
+ * agreement and the dispatch's on the dispatch, so the economics are M001's.
+ * `send` dispatches one command and counts a rejection. The new deal is the
+ * latest DEAL_AGREED in the snapshot. Returns the dispatch's tick, or null if
+ * either step was rejected.
+ */
+export function sendSpotSale(sim: Gateway, sale: SpotSale, send: (command: GameCommand) => number | null): number | null {
+  const { vehicleId, buyerId, productId, quality, quantity, unitPrice, routeId } = sale;
+  if (send({ type: "AGREE_DEAL", buyerId, productId, quality, quantity, agreedUnitPrice: unitPrice }) === null) return null;
+  const agreed = [...sim.snapshot().recentEvents].reverse().find((e) => e.type === "DEAL_AGREED");
+  if (agreed?.type !== "DEAL_AGREED") throw new Error("AGREE_DEAL applied without a DEAL_AGREED event");
+  return send({
+    type: "DISPATCH_DELIVERY",
+    vehicleId,
+    cargo: [{ productId, quality, quantity }],
+    purpose: { kind: "SALE", buyerId, dealId: agreed.dealId },
+    routeId,
+    driver: { kind: "FOUNDER" },
+  });
 }
 
 /** A headless player the smoke runner can drive. */
@@ -301,13 +341,11 @@ export class GreedySpotStrategy implements Strategy {
     // The binding limit. Stock and the truck first: a buyer limit only counts when it bit.
     const cap: SaleCap =
       quantity === stock ? "STOCK" : quantity === vehicle.capacity ? "TRUCK" : best.acceptable < best.demand ? "BUDGET" : "DEMAND";
-    const sent = this.#send(sim, {
-      type: "DISPATCH_DELIVERY",
-      vehicleId: vehicle.id,
-      cargo: [{ productId, quality, quantity }],
-      purpose: { kind: "SALE", buyerId: best.buyerId, agreedUnitPrice: best.unitPrice },
-      routeId: null,
-    });
+    const sent = sendSpotSale(
+      sim,
+      { vehicleId: vehicle.id, buyerId: best.buyerId, productId, quality, quantity, unitPrice: best.unitPrice, routeId: null },
+      (command) => this.#send(sim, command),
+    );
     if (sent !== null) this.log.saleCaps[cap]++;
   }
 }

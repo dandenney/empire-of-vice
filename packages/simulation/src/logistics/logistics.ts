@@ -1,10 +1,21 @@
 // Logistics (T03, ADR 0019): dispatch, route disruption, deal deadlines, the
 // truck's return, and route closures.
 //
-// - DISPATCH_DELIVERY with purpose SALE strikes the deal at dispatch (ADR 0005):
-//   the buyer's demand and budget are committed, unreserved cargo leaves
-//   finished goods at its pool cost, and that cost moves to goods in transit.
-//   The deal deadline is the arrival plus the route's `dealGraceTicks`.
+// - DISPATCH_DELIVERY with purpose SALE carries out a held deal (ADR 0022
+//   decision 6): the deal must be HELD (else DEAL_UNAVAILABLE) and match the
+//   buyer and cargo (else CARGO_DOES_NOT_MATCH_DEAL). The deal becomes
+//   DISPATCHED; its commitment (made by AGREE_DEAL) rides with it. Unreserved
+//   cargo leaves finished goods at its pool cost, and that cost moves to goods in
+//   transit. The deal deadline is M001's arrival plus the route's
+//   `dealGraceTicks`, capped at the deal's `expiresAt`.
+// - A REPEAT_OPERATION of a sale (founder rules off) re-agrees at the buyer's
+//   current quote inside the dispatch's own transaction (`dispatchRequotedSale`),
+//   with M001's check order: the buyer's checks after the stock check.
+// - A sale on spec (`dealId: null`) is SK1c's (#200). Until then it's rejected
+//   as a shape this ruleset doesn't take (INVALID_QUANTITY on `purpose.dealId`).
+// - Every dispatch records its driver and counts the vehicle's trip
+//   (`tripCount`, ADR 0022 decision 8). With founder rules off a FOUNDER driver
+//   doesn't put the founder aboard (ADR 0023 decision 9).
 // - DISPATCH_DELIVERY with purpose CONTRACT_INSTALLMENT (T02e, ADR 0018
 //   decisions 5–6) draws the contract's reservations first (`takeForContract`)
 //   and commits nothing on the buyer. Contract deliveries have no deal deadline.
@@ -15,9 +26,12 @@
 //   commits its own keyed transaction, which also stages the RNG advance. Safe
 //   routes draw nothing.
 // - A sale arriving after its deal deadline falls through (decision 4). A
-//   seizure or a fall-through turns the truck home in the same transaction.
+//   seizure or a fall-through turns the truck home in the same transaction, and
+//   the deal ends FELL_THROUGH: its commitment is released and it leaves
+//   `heldDeals` (ADR 0022 decision 6).
 // - An outbound arrival is otherwise paid cash on delivery: revenue and cost of
-//   goods sold are recognized now (FIN-001), and the truck drives home.
+//   goods sold are recognized now (FIN-001), the deal ends SETTLED, and the
+//   truck drives home.
 // - The VEHICLE_RETURN transaction pays or accrues the trip's transport cost
 //   and unloads a failed delivery's cargo into the home pool, unreserved.
 // - ROUTE_CLOSURE / ROUTE_REOPENING world events close and reopen routes
@@ -43,10 +57,13 @@ import {
   type CargoLine,
   type ContractId,
   type CargoLineState,
+  type DealId,
+  type DeliveryPurpose,
   type DeliveryState,
   type DispatchDeliveryCommand,
   type FacilityId,
   type GameState,
+  type HeldDealState,
   type LocationId,
   type RejectionReason,
   type RngState,
@@ -60,12 +77,23 @@ import type { GameData, RouteDefinition } from "@eov/game-data";
 import { contractForCargo, contractLoadRejection, creditCases, withCredit } from "../contracts/rules.ts";
 import { cashBalance } from "../economy/ledger/ledger.ts";
 import { cargoLossEntries, dispatchEntries, payOrAccrueEntries, returnFromTransitEntries, saleEntries } from "../economy/ledger/postings.ts";
-import { commitDeal, findCommitment, quoteDeal, releaseDeal, settleDeal, type Deal } from "../economy/market/market.ts";
+import {
+  agreeDeal,
+  currentQuote,
+  dispatchDeal,
+  endDeal,
+  findCommitment,
+  heldDeal,
+  quoteDeal,
+  releaseDeal,
+  settleDeal,
+  type Deal,
+} from "../economy/market/market.ts";
 import { scheduleWorldEvent } from "../events/world-events.ts";
 import { addProduct, allocateRemovalCost, availableProduct, takeForContract, takeProduct } from "../inventory/pools.ts";
 import { storageAvailable } from "../production/capacity.ts";
 import { allocateId, formatId } from "../kernel/ids.ts";
-import type { SystemRegistry, TickContext } from "../kernel/registry.ts";
+import type { CommandContext, CommandOutcome, SystemRegistry, TickContext } from "../kernel/registry.ts";
 import { nextInt } from "../rng/xoshiro128.ts";
 
 /** The draw bound for route disruption: parts per million (ADR 0019 decision 3). */
@@ -82,12 +110,20 @@ function routeDefinition(data: GameData, routeId: RouteId): RouteDefinition {
   return route;
 }
 
+/**
+ * A sale's dispatch: the HELD deal it carries out (ADR 0022 decision 6), or, for
+ * a repeated sale with founder rules off, the quote it re-agrees at in the
+ * dispatch's own transaction.
+ */
 interface DispatchPlan {
   readonly route: RouteDefinition;
-  readonly deal: Deal;
+  readonly sale: { readonly kind: "HELD"; readonly deal: HeldDealState } | { readonly kind: "REQUOTE"; readonly quote: Deal };
   readonly line: CargoLine;
   readonly homeId: FacilityId;
 }
+
+/** How a sale dispatch finds its deal: the one it names, or a new one at today's quote (a repeat, founder rules off). */
+type SaleTerms = "NAMED_DEAL" | "REQUOTE";
 
 /** A contract installment's dispatch (ADR 0018 decision 5): no deal, cargo drawn for the contract. */
 interface ContractDispatchPlan {
@@ -107,6 +143,18 @@ interface TransferDispatchPlan {
 
 function withVehicle(state: GameState, vehicleId: VehicleState["id"], trip: VehicleState["trip"]): GameState {
   return { ...state, vehicles: state.vehicles.map((v) => (v.id === vehicleId ? { ...v, trip } : v)) };
+}
+
+/** A dispatch sets the truck's outbound trip and counts it (`tripCount`, ADR 0022 decision 8). */
+function departing(state: GameState, vehicleId: VehicleState["id"], trip: NonNullable<VehicleState["trip"]>): GameState {
+  return { ...state, vehicles: state.vehicles.map((v) => (v.id === vehicleId ? { ...v, tripCount: v.tripCount + 1, trip } : v)) };
+}
+
+/** The deal a sale delivery carries out. Every dispatched sale has one until SK1c's on-spec path. */
+function dealIdOf(delivery: DeliveryState): DealId {
+  if (delivery.purpose.kind !== "SALE") throw new RangeError(`Delivery ${delivery.id} isn't a sale`);
+  if (delivery.purpose.dealId === null) throw new RangeError(`Sale ${delivery.id} on spec: SK1c (#200) resolves those`);
+  return delivery.purpose.dealId;
 }
 
 function withDelivery(state: GameState, deliveryId: DeliveryState["id"], status: DeliveryState["status"]): GameState {
@@ -129,7 +177,7 @@ function cargoCost(cargo: readonly CargoLineState[]) {
   return cargo.reduce((sum, line) => addMoney(sum, line.cost), ZERO_MONEY);
 }
 
-/** An outbound SALE arrives: cash on delivery, revenue and COGS recognized, truck heads home. */
+/** An outbound SALE arrives: cash on delivery at the deal's price, revenue and COGS recognized, the deal SETTLED, truck heads home. */
 function arriveForSale(
   state: GameState,
   vehicle: VehicleState,
@@ -150,13 +198,14 @@ function arriveForSale(
   });
   if (tx.status === "duplicate") return state;
 
-  const commitment = findCommitment(tx.state, buyerId, delivery.id);
+  const dealId = dealIdOf(delivery);
+  const commitment = findCommitment(tx.state, buyerId, dealId);
   if (!commitment) throw new RangeError(`Delivery ${delivery.id} has no deal with ${buyerId}`);
   const revenue = commitment.amount;
   const cogs = cargoCost(delivery.cargo);
   const cases = delivery.cargo.reduce((n, line) => n + line.quantity, 0);
 
-  tx.update((s) => settleDeal(s, buyerId, delivery.id));
+  tx.update((s) => endDeal(settleDeal(s, buyerId, dealId), dealId));
   tx.update((s) => withDelivery(s, delivery.id, "DELIVERED"));
   tx.update((s) =>
     withVehicle(s, vehicle.id, {
@@ -474,9 +523,10 @@ function seizeCargo(
     transactionId: tx.transactionId,
   });
   if (delivery.purpose.kind === "SALE") {
+    // A seizure is one of the ways a dispatched deal falls through (ADR 0022 decision 6).
     const { buyerId } = delivery.purpose;
-    // releaseDeal reads the delivery's cargo, so it runs before the cargo is emptied.
-    tx.update((s) => releaseDeal(s, data, buyerId, delivery.id));
+    const dealId = dealIdOf(delivery);
+    tx.update((s) => endDeal(releaseDeal(s, data, buyerId, dealId), dealId));
     tx.emit({ type: "DEAL_FELL_THROUGH", deliveryId: delivery.id, buyerId, reason: "CARGO_LOST" });
   }
   tx.update((s) => withCargo(withDelivery(s, delivery.id, "FAILED"), delivery.id, []));
@@ -507,7 +557,8 @@ function fallThrough(
     causedBy: null,
   });
   if (tx.status === "duplicate") return state;
-  tx.update((s) => releaseDeal(s, data, buyerId, delivery.id));
+  const dealId = dealIdOf(delivery);
+  tx.update((s) => endDeal(releaseDeal(s, data, buyerId, dealId), dealId));
   tx.update((s) => withDelivery(s, delivery.id, "FAILED"));
   tx.update((s) => withVehicle(s, vehicle.id, homewardTrip(delivery, route, ctx)));
   tx.emit({ type: "DEAL_FELL_THROUGH", deliveryId: delivery.id, buyerId, reason: "TOO_LATE" });
@@ -617,11 +668,39 @@ function planTransferDispatch(
   return { route, line, homeId, destinationFacilityId: destinationId };
 }
 
-/** Validates a dispatch against current state (business rules). Returns what to stage, or why not. */
+/**
+ * A sale's deal checks (ADR 0022 decision 6), right after the buyer resolves:
+ * a sale on spec isn't taken yet (SK1c); the named deal must be HELD (gate 1,
+ * resolving the ID: DEAL_UNAVAILABLE), for this buyer and exactly this cargo
+ * (CARGO_DOES_NOT_MATCH_DEAL). A repeated sale (REQUOTE) names no deal yet.
+ */
+function saleDealCheck(
+  state: GameState,
+  purpose: Extract<DeliveryPurpose, { kind: "SALE" }>,
+  line: CargoLine,
+  terms: SaleTerms,
+): HeldDealState | null | RejectionReason {
+  if (terms === "REQUOTE") return null;
+  if (purpose.dealId === null) return { code: "INVALID_QUANTITY", field: "purpose.dealId", value: 0 };
+  const deal = heldDeal(state, purpose.dealId);
+  if (!deal) return { code: "DEAL_UNAVAILABLE", dealId: purpose.dealId };
+  const matches =
+    deal.buyerId === purpose.buyerId && deal.productId === line.productId && deal.quality === line.quality && deal.quantity === line.quantity;
+  return matches ? deal : { code: "CARGO_DOES_NOT_MATCH_DEAL", dealId: deal.id };
+}
+
+/**
+ * Validates a dispatch against current state (business rules). Returns what to
+ * stage, or why not. M001's order: the vehicle, the cargo's shape, the truck's
+ * capacity, then by purpose. A sale: the buyer, its deal, the route, the stock;
+ * a repeated sale's re-agreement at today's quote comes last, where ADR 0005's
+ * quote check was.
+ */
 function planDispatch(
   state: GameState,
   command: DispatchDeliveryCommand,
   data: GameData,
+  terms: SaleTerms,
 ): DispatchPlan | ContractDispatchPlan | TransferDispatchPlan | RejectionReason {
   const { vehicleId, cargo, purpose } = command;
   const vehicle = state.vehicles.find((v) => v.id === vehicleId);
@@ -639,8 +718,11 @@ function planDispatch(
   }
   if (purpose.kind === "CONTRACT_INSTALLMENT") return planContractDispatch(state, command, data, purpose.contractId, home.id, home.locationId);
   if (purpose.kind === "TRANSFER") return planTransferDispatch(state, command, data, purpose.destinationFacilityId, home.id, home.locationId);
+  const line: CargoLine = { productId: first.productId, quality: first.quality, quantity: first.quantity };
   const buyer = data.buyers.find((b) => b.id === purpose.buyerId);
   if (!buyer) return { code: "UNKNOWN_ENTITY", kind: "Buyer", id: purpose.buyerId };
+  const deal = saleDealCheck(state, purpose, line, terms);
+  if (deal !== null && "code" in deal) return deal;
   if (command.routeId !== null && !data.routes.some((r) => r.id === command.routeId)) {
     return { code: "UNKNOWN_ENTITY", kind: "Route", id: command.routeId };
   }
@@ -648,112 +730,119 @@ function planDispatch(
   if (!route) return { code: "NO_ROUTE", vehicleId };
   const closure = state.routes.find((r) => r.id === route.id)?.closure ?? null;
   if (closure) return { code: "ROUTE_CLOSED", routeId: route.id, reopensAt: closure.reopensAt };
-  const line: CargoLine = { productId: first.productId, quality: first.quality, quantity: first.quantity };
   const available = availableProduct(state, home.id, line.productId, line.quality);
   if (available < line.quantity) {
     return { code: "INSUFFICIENT_STOCK", productId: line.productId, quality: line.quality, requested: line.quantity, available };
   }
-  const deal = quoteDeal(state, data, purpose.buyerId, purpose.agreedUnitPrice, line);
-  if ("code" in deal) return deal;
-  return { route, deal, line, homeId: home.id };
+  if (deal !== null) return { route, sale: { kind: "HELD", deal }, line, homeId: home.id };
+  // A repeat re-agrees at today's quote, so QUOTE_CHANGED can't arise; the buyer's other checks can.
+  const quote = quoteDeal(state, data, purpose.buyerId, currentQuote(state, purpose.buyerId, line) ?? ZERO_MONEY, line);
+  if ("code" in quote) return quote;
+  return { route, sale: { kind: "REQUOTE", quote }, line, homeId: home.id };
+}
+
+/**
+ * DISPATCH_DELIVERY's apply, in one DISPATCH transaction keyed by the new
+ * delivery. `terms`: "NAMED_DEAL" for the command as sent; "REQUOTE" for a
+ * repeated sale with founder rules off, whose new deal (DEAL_AGREED) is agreed in
+ * this same transaction.
+ */
+function applyDispatch(
+  state: GameState,
+  command: DispatchDeliveryCommand,
+  ctx: CommandContext,
+  data: GameData,
+  coordinator: TransactionCoordinator,
+  terms: SaleTerms,
+): CommandOutcome {
+  const { vehicleId, driver } = command;
+  const deliveryId = formatId("Delivery", state.counters.nextId.Delivery);
+  const tx = coordinator.begin(state, {
+    kind: "DISPATCH",
+    idempotencyKey: idempotencyKey("DISPATCH", deliveryId),
+    tick: ctx.tick,
+    causedBy: ctx.envelope.id,
+  });
+  if (tx.status === "duplicate") return { status: "applied", state };
+
+  const plan = planDispatch(tx.state, command, data, terms);
+  if ("code" in plan) {
+    tx.reject(plan);
+  } else {
+    const { route, line, homeId } = plan;
+    const arrivesAt = addTicks(ctx.tick, route.durationTicks);
+    // A contract installment draws the contract's reservations first (ADR 0018 decision 5);
+    // a sale or a transfer takes unreserved stock only (ADR 0013).
+    const taken =
+      "contractId" in plan
+        ? takeForContract(tx.state, homeId, plan.contractId, line.productId, line.quality, line.quantity)
+        : { ...takeProduct(tx.state, homeId, line.productId, line.quality, line.quantity), consumed: [] };
+    tx.update(() => taken.state);
+    let purpose: DeliveryPurpose = command.purpose;
+    // Contract installments and transfers have no deal deadline (ADR 0019 decision 4).
+    let dealDeadline: DeliveryState["dealDeadline"] = null;
+    if ("sale" in plan) {
+      let deal: HeldDealState;
+      if (plan.sale.kind === "HELD") {
+        deal = plan.sale.deal;
+      } else {
+        const agreed = agreeDeal(tx.state, data, { buyerId: plan.sale.quote.buyerId, line, agreedUnitPrice: plan.sale.quote.unitPrice }, ctx.tick);
+        if ("code" in agreed) throw new RangeError(`Re-agreeing a repeated sale at today's quote was rejected: ${agreed.code}`);
+        tx.update(() => agreed.state);
+        tx.emit(agreed.event);
+        deal = agreed.deal;
+        purpose = { kind: "SALE", buyerId: deal.buyerId, dealId: deal.id };
+      }
+      const dealId = deal.id;
+      tx.update((x) => dispatchDeal(x, dealId, deliveryId));
+      // M001's deadline, capped by the deal's hold (ADR 0022 decision 6).
+      const grace = addTicks(arrivesAt, route.dealGraceTicks);
+      dealDeadline = grace < deal.expiresAt ? grace : deal.expiresAt;
+    }
+    const delivery: DeliveryState = {
+      id: deliveryId,
+      vehicleId,
+      fromFacilityId: homeId,
+      routeId: route.id,
+      cargo: [{ ...line, cost: taken.cost }],
+      purpose,
+      status: "OUTBOUND",
+      dealDeadline,
+      driver,
+    };
+    tx.update((x) => {
+      const minted = allocateId(x, "Delivery").state;
+      return { ...minted, deliveries: [...minted.deliveries, delivery].sort(compareById) };
+    });
+    tx.update((x) => departing(x, vehicleId, { deliveryId, routeId: route.id, leg: "OUTBOUND", departedAt: ctx.tick, arrivesAt, delayed: false }));
+    tx.post(dispatchEntries(taken.cost));
+    tx.emit({ type: "DELIVERY_DISPATCHED", deliveryId, vehicleId, routeId: route.id, cargo: [line], purpose, arrivesAt });
+    for (const reservationId of taken.consumed) tx.emit({ type: "RESERVATION_RELEASED", reservationId, reason: "CONSUMED" });
+  }
+
+  const result = tx.commit();
+  return result.status === "committed" ? { status: "applied", state: result.state } : { status: "rejected", reason: result.reason };
+}
+
+/**
+ * A repeated SALE with founder rules off (ADR 0020 decision 11 as amended by ADR
+ * 0022 decision 6; issue #192): the source's cargo, buyer, route and driver,
+ * re-agreed at the buyer's current quote in the dispatch's own transaction. The
+ * source's deal is never reused: a deal is single-use.
+ */
+export function dispatchRequotedSale(
+  state: GameState,
+  command: DispatchDeliveryCommand,
+  ctx: CommandContext,
+  data: GameData,
+  coordinator: TransactionCoordinator,
+): CommandOutcome {
+  return applyDispatch(state, command, ctx, data, coordinator, "REQUOTE");
 }
 
 export function registerLogistics(registry: SystemRegistry, data: GameData, coordinator: TransactionCoordinator): void {
   registry.onCommand("DISPATCH_DELIVERY", {
-    apply: (state, command, ctx) => {
-      const { vehicleId, purpose } = command;
-      const deliveryId = formatId("Delivery", state.counters.nextId.Delivery);
-      const tx = coordinator.begin(state, {
-        kind: "DISPATCH",
-        idempotencyKey: idempotencyKey("DISPATCH", deliveryId),
-        tick: ctx.tick,
-        causedBy: ctx.envelope.id,
-      });
-      if (tx.status === "duplicate") return { status: "applied", state };
-
-      const plan = planDispatch(tx.state, command, data);
-      if ("code" in plan) {
-        tx.reject(plan);
-      } else if ("contractId" in plan) {
-        // A contract installment (ADR 0018 decision 5): the contract's reservations first, no buyer commitment.
-        const { route, contractId, line, homeId } = plan;
-        const taken = takeForContract(tx.state, homeId, contractId, line.productId, line.quality, line.quantity);
-        const arrivesAt = addTicks(ctx.tick, route.durationTicks);
-        const delivery: DeliveryState = {
-          id: deliveryId,
-          vehicleId,
-          fromFacilityId: homeId,
-          routeId: route.id,
-          cargo: [{ ...line, cost: taken.cost }],
-          purpose,
-          status: "OUTBOUND",
-          // Contract deliveries have no deal deadline (ADR 0019 decision 4).
-          dealDeadline: null,
-        };
-        tx.update(() => {
-          const minted = allocateId(taken.state, "Delivery").state;
-          return { ...minted, deliveries: [...minted.deliveries, delivery].sort(compareById) };
-        });
-        tx.update((s) =>
-          withVehicle(s, vehicleId, { deliveryId, routeId: route.id, leg: "OUTBOUND", departedAt: ctx.tick, arrivesAt, delayed: false }),
-        );
-        tx.post(dispatchEntries(taken.cost));
-        tx.emit({ type: "DELIVERY_DISPATCHED", deliveryId, vehicleId, routeId: route.id, cargo: [line], purpose, arrivesAt });
-        for (const reservationId of taken.consumed) tx.emit({ type: "RESERVATION_RELEASED", reservationId, reason: "CONSUMED" });
-      } else if ("destinationFacilityId" in plan) {
-        // A transfer (T03b, #76): unreserved stock only (ADR 0013), at book value, no deal and no deadline.
-        const { route, line, homeId } = plan;
-        const taken = takeProduct(tx.state, homeId, line.productId, line.quality, line.quantity);
-        const arrivesAt = addTicks(ctx.tick, route.durationTicks);
-        const delivery: DeliveryState = {
-          id: deliveryId,
-          vehicleId,
-          fromFacilityId: homeId,
-          routeId: route.id,
-          cargo: [{ ...line, cost: taken.cost }],
-          purpose,
-          status: "OUTBOUND",
-          dealDeadline: null,
-        };
-        tx.update(() => {
-          const minted = allocateId(taken.state, "Delivery").state;
-          return { ...minted, deliveries: [...minted.deliveries, delivery].sort(compareById) };
-        });
-        tx.update((s) =>
-          withVehicle(s, vehicleId, { deliveryId, routeId: route.id, leg: "OUTBOUND", departedAt: ctx.tick, arrivesAt, delayed: false }),
-        );
-        tx.post(dispatchEntries(taken.cost));
-        tx.emit({ type: "DELIVERY_DISPATCHED", deliveryId, vehicleId, routeId: route.id, cargo: [line], purpose, arrivesAt });
-      } else {
-        // A spot sale: unreserved stock only (ADR 0013), the deal struck now (ADR 0005).
-        const { route, deal, line, homeId } = plan;
-        const taken = takeProduct(tx.state, homeId, line.productId, line.quality, line.quantity);
-        const arrivesAt = addTicks(ctx.tick, route.durationTicks);
-        const delivery: DeliveryState = {
-          id: deliveryId,
-          vehicleId,
-          fromFacilityId: homeId,
-          routeId: route.id,
-          cargo: [{ ...line, cost: taken.cost }],
-          purpose,
-          status: "OUTBOUND",
-          dealDeadline: addTicks(arrivesAt, route.dealGraceTicks),
-        };
-        tx.update(() => {
-          const minted = allocateId(taken.state, "Delivery").state;
-          return { ...minted, deliveries: [...minted.deliveries, delivery].sort(compareById) };
-        });
-        tx.update((s) =>
-          withVehicle(s, vehicleId, { deliveryId, routeId: route.id, leg: "OUTBOUND", departedAt: ctx.tick, arrivesAt, delayed: false }),
-        );
-        tx.update((s) => commitDeal(s, deal, deliveryId, line));
-        tx.post(dispatchEntries(taken.cost));
-        tx.emit({ type: "DELIVERY_DISPATCHED", deliveryId, vehicleId, routeId: route.id, cargo: [line], purpose, arrivesAt });
-      }
-
-      const result = tx.commit();
-      return result.status === "committed" ? { status: "applied", state: result.state } : { status: "rejected", reason: result.reason };
-    },
+    apply: (state, command, ctx) => applyDispatch(state, command, ctx, data, coordinator, "NAMED_DEAL"),
   });
 
   registry.onPhase("vehicles", "vehicle-arrivals", (state, ctx) => {

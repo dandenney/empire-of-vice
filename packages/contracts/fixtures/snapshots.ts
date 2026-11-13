@@ -430,7 +430,7 @@ const midDistillery: FacilitySnapshot = {
   ],
 };
 
-const saleToKessler = { kind: "SALE", buyerId: ids.speakeasy, agreedUnitPrice: cents(1_520) } as const;
+const saleToKessler = { kind: "SALE", buyerId: ids.speakeasy, dealId: asId("Deal", "deal-2") } as const;
 const truckCargo = [{ productId: ids.moonshine, quality: "basic", quantity: 8 }] as const;
 
 export const midGameSnapshot: GameSnapshot = {
