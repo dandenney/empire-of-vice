@@ -41,6 +41,7 @@ import type {
   SupplierSnapshot,
   VehicleTrip,
 } from "./snapshot.ts";
+import type { ArrangementPrivilege, CallAnswerer } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 // ---------------------------------------------------------------------------
@@ -271,10 +272,52 @@ export interface CatchUp {
   readonly droppedNews: number;
 }
 
+// ---------------------------------------------------------------------------
+// Calls in and held messages (ADR 0024 decisions 5 and 6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Why a party calls the family (ADR 0024 decision 5). A domain type, because held
+ * messages carry it; game-data's `CallInRule` imports it (ADR 0012). ADR 0025
+ * adds `"EMPLOYEE_REPORT"`.
+ */
+export type CallInReason = "NEW_CONTRACT_OFFER" | "INSTALLMENT_DUE";
+
+/** A message taken for the family and held where it was taken, until delivered (ADR 0024 decision 6). */
+export interface HeldMessage {
+  readonly takenAt: Tick;
+  readonly callerLocationId: LocationId;
+  /** null: the keeper of the place that took it (not a character). */
+  readonly takenBy: CharacterId | null;
+  readonly reason: CallInReason;
+  /**
+   * Copies, at `takenAt`, of the caller's subjects that
+   * KNOWLEDGE_VISIBILITY.MESSAGE[partyKind] grants, sorted like knowledge records.
+   */
+  readonly values: readonly { readonly subject: KnowledgeSubject; readonly value: KnowledgeValue }[];
+}
+
+/** Messages waiting at one place, oldest first, at most MESSAGE_LIMIT (game-data). Like PendingNews. */
+export interface PendingMessages {
+  readonly locationId: LocationId;
+  readonly items: readonly HeldMessage[];
+  readonly dropped: number;
+}
+
+/** A delivered message as the player sees it: what it said, not the values (those go into records). */
+export interface DeliveredMessage {
+  readonly takenAt: Tick;
+  readonly heldAtLocationId: LocationId;
+  readonly callerLocationId: LocationId;
+  readonly takenBy: CharacterId | null;
+  readonly reason: CallInReason;
+  readonly subjects: readonly KnowledgeSubject[];
+}
+
 /**
  * What the founder saw or was told (decision 8). Written only by the founder's
  * own commands and by channels, never filtered from the world event journal.
- * ADR 0024 and ADR 0025 add message and report items.
+ * ADR 0024 and ADR 0027 add the phone and message items; ADR 0025 adds reports.
  */
 export type ActivityItem =
   | {
@@ -302,6 +345,48 @@ export type ActivityItem =
       readonly cashChange: Money;
       readonly revealed: readonly KnowledgeSubject[];
       readonly news: readonly NewsItem[];
+    }
+  | {
+      /** The founder placed a call (ADR 0024 decision 3); `answeredBy` is null when nobody answered. */
+      readonly kind: "CALL_PLACED";
+      readonly tick: Tick;
+      readonly locationId: LocationId;
+      readonly answered: boolean;
+      readonly answeredBy: CallAnswerer["kind"] | null;
+    }
+  | {
+      /** The founder answered a call in (ADR 0024 decision 5). */
+      readonly kind: "CALL_RECEIVED";
+      readonly tick: Tick;
+      readonly callerLocationId: LocationId;
+      readonly phoneLocationId: LocationId;
+      readonly reason: CallInReason;
+    }
+  | {
+      /** One held message reached the founder (ADR 0024 decision 6). `tick` is when they learned it. */
+      readonly kind: "MESSAGE_DELIVERED";
+      readonly tick: Tick;
+      readonly message: DeliveredMessage;
+    }
+  | {
+      /** Messages dropped at a place past MESSAGE_LIMIT, reported with a delivery there. */
+      readonly kind: "MESSAGES_DROPPED";
+      readonly tick: Tick;
+      readonly locationId: LocationId;
+      readonly count: number;
+    }
+  | {
+      /** A line was installed at one of the family's facilities (ADR 0024 decision 2). */
+      readonly kind: "PHONE_INSTALLED";
+      readonly tick: Tick;
+      readonly facilityId: FacilityId;
+    }
+  | {
+      /** A dealing newly met one of a contact's milestones (ADR 0027 decision 3). */
+      readonly kind: "ARRANGEMENT_GRANTED";
+      readonly tick: Tick;
+      readonly locationId: LocationId;
+      readonly privilege: ArrangementPrivilege;
     };
 
 /**
@@ -315,12 +400,21 @@ export type ActivityItem =
  *   resolving overnight): their decision's fate is worth waking the screen for;
  * - CATCH_UP: an arrival summary, which only comes from arriving or waking, and
  *   waking already ends the fast-forward;
- * - CASH_POSTING: money moved while the founder was elsewhere.
+ * - CASH_POSTING: money moved while the founder was elsewhere;
+ * - CALL_RECEIVED, MESSAGE_DELIVERED: someone reached the family by phone
+ *   (ADR 0024 decision 15); the other phone and arrangement items are `log`
+ *   (ADR 0024's "info", ADR 0027 decision 17).
  */
 export const ACTIVITY_IMPORTANCE: Readonly<Record<ActivityItem["kind"], "notify" | "log">> = {
   COMMAND: "notify",
   CATCH_UP: "log",
   CASH_POSTING: "notify",
+  CALL_PLACED: "log",
+  CALL_RECEIVED: "notify",
+  MESSAGE_DELIVERED: "notify",
+  MESSAGES_DROPPED: "log",
+  PHONE_INSTALLED: "log",
+  ARRANGEMENT_GRANTED: "log",
 };
 
 // ---------------------------------------------------------------------------
@@ -339,6 +433,12 @@ export interface KnowledgeState {
   readonly activity: readonly ActivityItem[];
   /** The latest arrival summary; cleared when the founder departs. */
   readonly lastCatchUp: CatchUp | null;
+  /**
+   * Messages held for the family (ADR 0024 decision 6): one entry per place with
+   * messages waiting, sorted by `locationId` with `compareIds`. Hidden until
+   * delivered; the player snapshot never shows whether any are waiting.
+   */
+  readonly pendingMessages: readonly PendingMessages[];
 }
 
 export const EMPTY_KNOWLEDGE: KnowledgeState = {
@@ -347,6 +447,7 @@ export const EMPTY_KNOWLEDGE: KnowledgeState = {
   pendingBooks: [],
   activity: [],
   lastCatchUp: null,
+  pendingMessages: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -387,7 +488,9 @@ export interface TransactionProducerDefinition {
  * against the simulation's own `idempotencyKey(...)` call sites.
  *
  * M001 producers plus ADR 0022's deals (O1a). Later tasks add theirs (ADR 0022's
- * other outcomes, ADR 0024's messages, ADR 0025's employees).
+ * other outcomes, ADR 0025's employees). ADR 0024's three TELEPHONE families and
+ * ADR 0027's `LODGING:ROOM` land with their call sites in C1 (#179): the
+ * transaction kinds exist from PH1, but nothing posts them yet.
  */
 export const TRANSACTION_PRODUCERS = {
   // Game creation and founder commands (rule 1).

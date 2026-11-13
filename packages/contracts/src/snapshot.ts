@@ -273,6 +273,8 @@ export interface FacilitySnapshot {
   readonly recipes: readonly RecipeOption[];
   readonly products: readonly InventoryPoolSnapshot[];
   readonly materials: readonly MaterialStockSnapshot[];
+  /** The family's telephone line here, or null (ADR 0024 decision 2), for the debug view. */
+  readonly phoneLine: { readonly bookValue: Money } | null;
 }
 
 export interface EquipmentOption {

@@ -14,6 +14,7 @@ import { FACILITY_PRODUCTION, type FacilityProductionDefinition } from "./facili
 import { FACILITIES, LOCATIONS, type FacilityDefinition, type LocationDefinition } from "./map.ts";
 import { MARKETS, type MarketDefinition } from "./markets.ts";
 import { CHARACTERS, FAMILIES, WORKFORCE, type CharacterDefinition, type FamilyDefinition, type WorkforceDefinition } from "./personnel.ts";
+import { PHONE_DATA, type PhoneData } from "./phones.ts";
 import { MATERIALS, PRODUCTS, type MaterialDefinition, type ProductDefinition } from "./products.ts";
 import { PROGRESSION, type ProgressionDefinition } from "./progression.ts";
 import { RECIPES, type RecipeDefinition } from "./recipes.ts";
@@ -32,6 +33,7 @@ export * from "./map.ts";
 export * from "./markets.ts";
 export * from "./pacing.ts";
 export * from "./personnel.ts";
+export * from "./phones.ts";
 export * from "./presence.ts";
 export * from "./products.ts";
 export * from "./progression.ts";
@@ -41,8 +43,13 @@ export * from "./scenario.ts";
 export * from "./suppliers.ts";
 export * from "./vehicles.ts";
 
-/** Recorded in saves for diagnostics (ADR 0009). Bump when tuning changes. */
-export const GAME_DATA_VERSION = "0.7.0-t07h-setback-tuning";
+/**
+ * Recorded in saves for diagnostics (ADR 0009). Bump when tuning changes.
+ * 0.8.0 (PH1, #205): the phone, room and arrangement tables (ADR 0024, ADR 0027),
+ * the MESSAGE visibility rows, and the knowledge tables SK1b started reading
+ * (K1 review follow-up 5).
+ */
+export const GAME_DATA_VERSION = "0.8.0-ph1-phones";
 
 /** Every static definition, in one object the simulation's systems are built from. */
 export interface GameData {
@@ -64,6 +71,8 @@ export interface GameData {
   readonly contracts: ContractsDefinition;
   readonly progression: ProgressionDefinition;
   readonly families: readonly FamilyDefinition[];
+  /** Phones, calls, messages and arrangements (ADR 0024, ADR 0027 decision 17). Read only with founder rules on. */
+  readonly phones: PhoneData;
 }
 
 export const GAME_DATA: GameData = {
@@ -85,6 +94,7 @@ export const GAME_DATA: GameData = {
   contracts: CONTRACTS,
   progression: PROGRESSION,
   families: FAMILIES,
+  phones: PHONE_DATA,
 };
 
 /** The First Shipment scenario (GDD §4; ADR 0020 decisions 1, 2, 12). */

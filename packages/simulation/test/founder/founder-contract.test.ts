@@ -24,7 +24,7 @@ function domain(state: GameState): Omit<GameState, "commandLog" | "counters"> {
 describe("the founder at game creation (decisions 1, 7, 9)", () => {
   it("M001 (founder rules off): present at Hollow Creek, not busy, never changing", () => {
     const sim = newGame();
-    const expected = { whereabouts: { kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null }, awakeSince: 0 };
+    const expected = { whereabouts: { kind: "PRESENT", locationId: HOLLOW_CREEK, busy: null, call: null }, awakeSince: 0, room: null };
     expect(sim.state.founder).toEqual(expected);
     sim.advance(3 * 1_440);
     expect(sim.state.founder).toEqual(expected);
@@ -39,24 +39,30 @@ describe("the founder at game creation (decisions 1, 7, 9)", () => {
     expect(createInitialState(scenario, GAME_DATA).founder).toEqual({
       whereabouts: { kind: "RESTING", locationId: HOLLOW_CREEK, startedAt: 0, until: START_WAKE_TICK },
       awakeSince: 0,
+      room: null,
     });
   });
 
   it("starts the founder at the scenario's start location, which must exist", () => {
     const at = (founderStartLocationId: ScenarioDefinition["founderStartLocationId"]) =>
       createInitialState({ ...FIRST_SHIPMENT_SCENARIO, founderStartLocationId }, GAME_DATA);
-    expect(at(LAKEVIEW).founder.whereabouts).toEqual({ kind: "PRESENT", locationId: LAKEVIEW, busy: null });
+    expect(at(LAKEVIEW).founder.whereabouts).toEqual({ kind: "PRESENT", locationId: LAKEVIEW, busy: null, call: null });
     expect(() => at("nowhere" as never)).toThrow(ScenarioSetupError);
   });
 });
 
 describe("the founder phase (decision 2a)", () => {
-  it("runs after resolution and before deadlines", () => {
-    expect(PHASES).toEqual(["production", "vehicles", "resolution", "founder", "deadlines", "midnight"]);
+  it("runs after resolution, then the phones phase (ADR 0024 decision 8), then deadlines", () => {
+    expect(PHASES).toEqual(["production", "vehicles", "resolution", "founder", "phones", "deadlines", "midnight"]);
   });
 
   it("has no hooks with founder rules off (presence.test.ts covers them on)", () => {
     expect(createGameRegistry(GAME_DATA).hooks("founder")).toEqual([]);
+  });
+
+  it("has no phones hooks yet, flag on or off: C1 (#179) adds them (PH1 is the slot only)", () => {
+    expect(createGameRegistry(GAME_DATA).hooks("phones")).toEqual([]);
+    expect(createGameRegistry(GAME_DATA, undefined, undefined, { founderRules: true }).hooks("phones")).toEqual([]);
   });
 });
 

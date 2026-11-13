@@ -40,7 +40,7 @@ import type {
 import type { KnowledgeState } from "./knowledge.ts";
 import type { LedgerTransaction } from "./ledger.ts";
 import type { Money, Ratio } from "./money.ts";
-import type { GameOutcome } from "./snapshot.ts";
+import type { GameOutcome, LocationOccupant } from "./snapshot.ts";
 import type { Tick } from "./time.ts";
 
 export interface GameState {
@@ -103,6 +103,14 @@ export interface GameState {
    * and the lab) it never changes (ADR 0023 decision 9).
    */
   readonly founder: FounderState;
+
+  /**
+   * The family's dealings with each contact it has dealt with (ADR 0027 decision 3),
+   * one entry per contact, sorted by `locationId` with `compareIds`. Always known:
+   * built only from the founder's own applied commands. Stays empty with
+   * `founderRules: false` (decision 14).
+   */
+  readonly arrangements: readonly ArrangementState[];
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +165,11 @@ export interface FacilityState {
   readonly id: FacilityId;
   readonly equipment: readonly { readonly equipmentId: EquipmentId; readonly bookValue: Money }[];
   readonly workerCount: number;
+  /**
+   * The family's telephone line here, or null (ADR 0024 decision 2). One per
+   * facility. Not equipment: it takes no slot and can't be sold in M002.
+   */
+  readonly phoneLine: { readonly bookValue: Money } | null;
 }
 
 /**
@@ -312,6 +325,15 @@ export interface FounderState {
    * moved forward by partial rests (ADR 0023 decision 7). Drives tiredness.
    */
   readonly awakeSince: Tick;
+  /** The room the founder holds, or null (ADR 0027 decision 4). At most one. */
+  readonly room: RoomStay | null;
+}
+
+/** A paid room (ADR 0027 decision 4). Always known: the founder's own agreement. */
+export interface RoomStay {
+  readonly locationId: LocationId;
+  /** Checkout: the stay grants use of a GUEST phone while the tick is before this. */
+  readonly until: Tick;
 }
 
 /**
@@ -324,6 +346,11 @@ export type FounderWhereabouts =
       readonly locationId: LocationId;
       /** A timed activity (decision 4), busy through `until`, inclusive (decision 2a). */
       readonly busy: { readonly activity: ActivityKind; readonly until: Tick } | null;
+      /**
+       * The connected call the founder is on (ADR 0024 decision 4). Non-null exactly
+       * while `busy.activity` is PHONE_CALL; the call ends with the busy.
+       */
+      readonly call: ActiveCall | null;
     }
   | {
       readonly kind: "TRAVELLING";
@@ -376,8 +403,54 @@ export const ACTIVITY_KINDS = [
   "BUY_EQUIPMENT",
   "SELL_EQUIPMENT",
   "SET_WORKFORCE",
+  // ADR 0024 decisions 2 and 3: a connected call, an unanswered one, installing a line.
+  "PHONE_CALL",
+  "PHONE_NO_ANSWER",
+  "INSTALL_PHONE",
+  // ADR 0027 decision 4: renting a room at the desk.
+  "CHECK_IN",
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
+
+// ---------------------------------------------------------------------------
+// Telephones (ADR 0024 decisions 3 and 4)
+// ---------------------------------------------------------------------------
+
+/** A party that can be on the other end of a call: never one of the family's facilities. */
+export type CallParty = Exclude<LocationOccupant, { readonly kind: "FACILITY" }>;
+
+/** Who picked up a call (ADR 0024 decision 3, ADR 0027 decision 5). */
+export type CallAnswerer =
+  | { readonly kind: "PARTY"; readonly party: CallParty }
+  /** The call-out attendant hook's character at a family line (ADR 0026). */
+  | { readonly kind: "EMPLOYEE"; readonly characterId: CharacterId }
+  /** The keeper of a place with no party that takes messages for the family. */
+  | { readonly kind: "PROPRIETOR" };
+
+/** A connected call (ADR 0024 decision 4). Always known, like the rest of `founder`. */
+export interface ActiveCall {
+  /** The place called. */
+  readonly locationId: LocationId;
+  readonly answeredBy: CallAnswerer;
+  readonly connectedAt: Tick;
+}
+
+// ---------------------------------------------------------------------------
+// Arrangements (ADR 0027 decision 3)
+// ---------------------------------------------------------------------------
+
+/** A privilege a contact's arrangement can grant (ADR 0027). */
+export type ArrangementPrivilege = "PHONE_USE" | "TAKES_MESSAGES";
+export const ARRANGEMENT_PRIVILEGES = ["PHONE_USE", "TAKES_MESSAGES"] as const satisfies readonly ArrangementPrivilege[];
+
+/** The family's dealings with one contact. An agreement the founder made: always known. */
+export interface ArrangementState {
+  readonly locationId: LocationId;
+  /** Distinct game days with a qualifying dealing since the arrangement last began. At least 1. */
+  readonly dealingDays: number;
+  /** The tick of the latest qualifying dealing. */
+  readonly lastDealingAt: Tick;
+}
 
 /**
  * Who drives a delivery (ADR 0023 decision 5); the same shape as ADR 0022's

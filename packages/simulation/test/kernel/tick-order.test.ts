@@ -27,6 +27,8 @@ describe("tick order", () => {
         // Registered in reverse SIM-001 order: the kernel's order wins, not registration order.
         registry.onPhase("midnight", "rec-midnight", record("midnight"));
         registry.onPhase("deadlines", "rec-deadlines", record("deadlines"));
+        registry.onPhase("phones", "rec-phones", record("phones"));
+        registry.onPhase("founder", "rec-founder", record("founder"));
         registry.onPhase("resolution", "rec-resolution", record("resolution"));
         registry.onPhase("vehicles", "rec-vehicles", record("vehicles"));
         registry.onPhase("production", "rec-production-a", record("production-a"));
@@ -45,12 +47,16 @@ describe("tick order", () => {
       "1439:production-b",
       "1439:vehicles",
       "1439:resolution",
+      "1439:founder",
+      "1439:phones",
       "1439:deadlines",
       "1440:command",
       "1440:production-a",
       "1440:production-b",
       "1440:vehicles",
       "1440:resolution",
+      "1440:founder",
+      "1440:phones",
       "1440:deadlines",
       "1440:midnight",
     ]);

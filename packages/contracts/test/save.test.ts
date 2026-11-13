@@ -16,8 +16,8 @@ describe("save format", () => {
     expectTypeOf<IsPlainData<SaveFile>>().toEqualTypeOf<true>();
   });
 
-  it("is at schema version 5 (O1b: ProductionJobState.conversionPrepaid; ADR 0022 decision 7)", () => {
-    expect(SAVE_SCHEMA_VERSION).toBe(5);
+  it("is at schema version 6 (PH1: phones, rooms and arrangements; ADR 0024 decision 13, ADR 0027 decision 15)", () => {
+    expect(SAVE_SCHEMA_VERSION).toBe(6);
   });
 
   it("has a counter for every dynamic ID kind and an RNG state for every stream", () => {

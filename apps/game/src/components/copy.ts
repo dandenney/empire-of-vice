@@ -89,6 +89,8 @@ export const REJECTION_FIELD_COPY: Readonly<Record<RejectionField, string>> = {
   // ADR 0022 reasons (O1a, #192). PLACEHOLDER: raw field names, like the rest.
   dealId: "dealId",
   characterId: "characterId",
+  // ADR 0024 / 0027 phone reasons (PH1, #205). PLACEHOLDER: raw field names, like the rest.
+  rule: "rule",
 };
 
 /** The label for each quality tier. Placeholder: the raw tier. */
@@ -148,5 +150,12 @@ export const REJECTION_COPY: Readonly<Record<RejectionCode, string>> = {
   // needs phones and hires. PLACEHOLDER copy until the M002 UI tasks write it.
   DEAL_UNAVAILABLE: "That deal isn't on any more",
   CARGO_DOES_NOT_MATCH_DEAL: "The load doesn't match the deal",
+  // ADR 0024 / 0027 phone and room reasons (PH1, #205). None can happen in M001
+  // (founder rules off). PLACEHOLDER copy until C1's call and room scenes write it.
+  NO_PHONE_HERE: "There's no telephone here",
+  NO_PHONE_THERE: "There's no telephone there",
+  PHONE_ALREADY_INSTALLED: "There's already a line here",
+  PHONE_USE_NOT_GRANTED: "That telephone isn't yours to use",
+  NO_ROOMS_HERE: "No rooms to let here",
   NO_WAY_TO_REACH: "No way to reach them",
 };

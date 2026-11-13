@@ -8,7 +8,7 @@
 // Validated when this module loads, like the knowledge tables: a bad table throws
 // PresenceDataError before any game starts.
 
-import { ACTIVITY_KINDS, compareIds, TICKS_PER_DAY, TICKS_PER_HOUR, type ActivityKind, type LocationId } from "@eov/contracts";
+import { ACTIVITY_KINDS, cents, compareIds, TICKS_PER_DAY, TICKS_PER_HOUR, type ActivityKind, type LocationId, type Money } from "@eov/contracts";
 import { CROSSROADS, HOLLOW_CREEK, KESSLER_PHARMACY, LAKEVIEW, LOCATIONS, MILLERS_FEED_LOCATION, type LocationDefinition } from "./map.ts";
 
 export class PresenceDataError extends Error {
@@ -38,6 +38,10 @@ export const ACTIVITY_DURATIONS: Readonly<Record<ActivityKind, number>> = {
   BUY_EQUIPMENT: 60, // PLACEHOLDER: a deal plus installation
   SELL_EQUIPMENT: 60, // PLACEHOLDER: a deal plus removal
   SET_WORKFORCE: 30, // PLACEHOLDER: talking to the men
+  PHONE_CALL: 15, // PLACEHOLDER (ADR 0024 decision 3): a connected call
+  PHONE_NO_ANSWER: 5, // PLACEHOLDER (ADR 0024 decision 3): ringing out; less than a call, never none (ADR 0027 decision 10)
+  INSTALL_PHONE: 60, // PLACEHOLDER (ADR 0024 decision 2): arranging the line with the exchange
+  CHECK_IN: 15, // PLACEHOLDER (ADR 0027 decision 4): taking a room at the desk
 };
 
 // ---------------------------------------------------------------------------
@@ -71,6 +75,22 @@ const hours = (opensAtHour: number, closesAtHour: number): PlaceHoursInterval =>
 });
 
 /**
+ * What's wrong with a list of opening intervals, or null if nothing: at least
+ * one interval, each of whole minutes in 0..1439 whose ends differ. Shared by
+ * place hours, desk hours and phone hours (ADR 0027 decisions 1 and 4).
+ */
+export function hoursIntervalsProblem(intervals: readonly PlaceHoursInterval[]): string | null {
+  if (intervals.length === 0) return "no intervals";
+  for (const { opensAtMinute, closesAtMinute } of intervals) {
+    for (const minute of [opensAtMinute, closesAtMinute]) {
+      if (!Number.isSafeInteger(minute) || minute < 0 || minute >= TICKS_PER_DAY) return `${minute} isn't a minute of the day`;
+    }
+    if (opensAtMinute === closesAtMinute) return "an interval opens and closes at the same minute";
+  }
+  return null;
+}
+
+/**
  * Checks place hours: one entry per location at most, sorted by location ID,
  * for locations that exist; each with at least one interval of whole minutes in
  * 0..1439 whose ends differ. Returns the table unchanged.
@@ -87,14 +107,8 @@ export function validatePlaceHours(
       throw new PresenceDataError("PLACE_HOURS needs at most one entry per location, sorted by location ID");
     }
     if (entry.intervals.length === 0) throw new PresenceDataError(`PLACE_HOURS.${entry.locationId}: no intervals (leave the place out to keep it always open)`);
-    for (const { opensAtMinute, closesAtMinute } of entry.intervals) {
-      for (const minute of [opensAtMinute, closesAtMinute]) {
-        if (!Number.isSafeInteger(minute) || minute < 0 || minute >= TICKS_PER_DAY) {
-          throw new PresenceDataError(`PLACE_HOURS.${entry.locationId}: ${minute} isn't a minute of the day`);
-        }
-      }
-      if (opensAtMinute === closesAtMinute) throw new PresenceDataError(`PLACE_HOURS.${entry.locationId}: an interval opens and closes at the same minute`);
-    }
+    const problem = hoursIntervalsProblem(entry.intervals);
+    if (problem !== null) throw new PresenceDataError(`PLACE_HOURS.${entry.locationId}: ${problem}`);
   });
   return table;
 }
@@ -139,6 +153,34 @@ export const START_WAKE_TICK = 6 * TICKS_PER_HOUR;
 /** While the founder rests and the game runs, the scheduler runs at this × 1× (decision 9). PLACEHOLDER. */
 export const REST_SPEED_MULTIPLIER = 16;
 
+// ---------------------------------------------------------------------------
+// Rooms (ADR 0027 decision 4)
+// ---------------------------------------------------------------------------
+
+/** A place that rents rooms by the night. Renting one grants the use of its GUEST phone for the stay. */
+export interface RoomDefinition {
+  readonly locationId: LocationId;
+  /** Paid at check-in, for one night. */
+  readonly nightlyRate: Money;
+  /** When the desk takes guests: minute-of-day intervals, like PLACE_HOURS. */
+  readonly deskHours: readonly PlaceHoursInterval[];
+  /** Checkout, as a minute of the day. */
+  readonly checkoutMinute: number;
+  /** A stay runs to the first checkout at least this long after it starts. */
+  readonly minStayTicks: number;
+}
+
+/**
+ * The Lakeview lobby's hours: its desk and its guest phone (ADR 0027 decisions 2
+ * and 4), not the back room's 20:00–02:00. PLACEHOLDER: 07:00–23:00.
+ */
+export const LAKEVIEW_LOBBY_HOURS: readonly PlaceHoursInterval[] = [hours(7, 23)];
+
+/** Rooms for rent, one entry per place, sorted by location ID. PLACEHOLDER tuning: $2.00 a night, checkout 11:00, at least 8 hours. */
+export const ROOMS: readonly RoomDefinition[] = [
+  { locationId: LAKEVIEW, nightlyRate: cents(200), deskHours: LAKEVIEW_LOBBY_HOURS, checkoutMinute: 11 * 60, minStayTicks: 8 * TICKS_PER_HOUR },
+];
+
 /** Everything in this module, checked together by `validatePresence`. */
 export interface PresenceDefinition {
   readonly activityDurations: Readonly<Record<ActivityKind, number>>;
@@ -154,6 +196,8 @@ export interface PresenceDefinition {
   readonly wakeHour: number;
   readonly startWakeTick: number;
   readonly restSpeedMultiplier: number;
+  /** ROOMS (ADR 0027 decision 4). */
+  readonly rooms: readonly RoomDefinition[];
 }
 
 /**
@@ -167,7 +211,13 @@ export interface PresenceDefinition {
  *   one-click rest's margins leave a valid `untilTick` (REST_RANGE_MIN_SPAN_TICKS);
  * - full rests are positive; tiredness sets in after a positive time;
  * - WAKE_HOUR is an hour of the day, START_WAKE_TICK is within the first day;
- * - the rest fast-forward is a whole multiplier of at least 1.
+ * - the rest fast-forward is a whole multiplier of at least 1;
+ * - 0 < PHONE_NO_ANSWER < PHONE_CALL: an unanswered call takes less time than a
+ *   connected one, but never none (ADR 0027 decision 10);
+ * - rooms (ADR 0027 decision 17): known locations, one entry each, sorted by
+ *   location ID; non-empty, valid desk hours; checkout a minute of the day; a
+ *   minimum stay of at least 1 tick; a nightly rate of at least 1 cent, so a
+ *   rental always posts a non-empty CASH leg.
  */
 export function validatePresence(data: PresenceDefinition, locations: readonly LocationDefinition[] = LOCATIONS): PresenceDefinition {
   const wholeAtLeast = (name: string, value: number, min: number) => {
@@ -196,6 +246,26 @@ export function validatePresence(data: PresenceDefinition, locations: readonly L
   wholeAtLeast("START_WAKE_TICK", data.startWakeTick, 0);
   if (data.startWakeTick >= TICKS_PER_DAY) throw new PresenceDataError(`START_WAKE_TICK ${data.startWakeTick} isn't within the first day`);
   wholeAtLeast("REST_SPEED_MULTIPLIER", data.restSpeedMultiplier, 1);
+  wholeAtLeast("ACTIVITY_DURATIONS.PHONE_NO_ANSWER", data.activityDurations.PHONE_NO_ANSWER, 1);
+  if (data.activityDurations.PHONE_NO_ANSWER >= data.activityDurations.PHONE_CALL) {
+    throw new PresenceDataError(
+      `ACTIVITY_DURATIONS.PHONE_NO_ANSWER (${data.activityDurations.PHONE_NO_ANSWER}) must be less than PHONE_CALL (${data.activityDurations.PHONE_CALL})`,
+    );
+  }
+  data.rooms.forEach((room, i) => {
+    const where = `ROOMS.${room.locationId}`;
+    if (!known.has(room.locationId)) throw new PresenceDataError(`ROOMS: unknown location ${room.locationId}`);
+    const previous = data.rooms[i - 1];
+    if (previous && compareIds(previous.locationId, room.locationId) >= 0) {
+      throw new PresenceDataError("ROOMS needs at most one entry per location, sorted by location ID");
+    }
+    wholeAtLeast(`${where}.nightlyRate`, room.nightlyRate, 1);
+    const problem = hoursIntervalsProblem(room.deskHours);
+    if (problem !== null) throw new PresenceDataError(`${where}.deskHours: ${problem}`);
+    wholeAtLeast(`${where}.checkoutMinute`, room.checkoutMinute, 0);
+    if (room.checkoutMinute >= TICKS_PER_DAY) throw new PresenceDataError(`${where}.checkoutMinute ${room.checkoutMinute} isn't a minute of the day`);
+    wholeAtLeast(`${where}.minStayTicks`, room.minStayTicks, 1);
+  });
   return data;
 }
 
@@ -214,4 +284,5 @@ export const PRESENCE: PresenceDefinition = validatePresence({
   wakeHour: WAKE_HOUR,
   startWakeTick: START_WAKE_TICK,
   restSpeedMultiplier: REST_SPEED_MULTIPLIER,
+  rooms: ROOMS,
 });
