@@ -2,6 +2,8 @@
 
 Status: accepted (decided by the orchestrator while refreshing T03, issue #10; implemented in T03)
 
+Amended by: ADR 0022 decision 8 (per-trip randomness). Since SK1c-2 (#226, PR #230), decision 3's two draws come from `tripRng(seed, vehicleId, tripCount)`, not `rng.routes`; the master `routes` stream is never drawn for a trip, so the staging described in decision 3 no longer applies to trips.
+
 ## Context
 
 GDD §10 asks for one understandable strategic disruption in M001, such as a risky route, and GDD §4 action 8 has the player respond to it. T03's acceptance criteria ask for a seeded disruption (a delay or cargo loss) that gives the player a recoverable choice: the safer route costs more or takes longer. GDD §14.6 leaves route capacity, duration, transport cost, and disruption probability open. ADR 0005 says a deal falls through if the truck is too late or the cargo is seized.

@@ -464,6 +464,8 @@ Every input below is always-known state (founder whereabouts including `busy` an
 
 ### 4. Re-locks
 
+**Erratum (#231):** the claim below predates the founder-rules locked tests (`founder/no-trap`, `knowledge/non-leak`, `view/issuer-view`, `walking-skeleton/path`). EM1 (#210, PR #236) had to re-lock `view/issuer-view.locked.test.ts`, whose exhaustive `COVERAGE` lists every `RejectionCode`, for the new hiring codes. The original text follows.
+
 **None.** Checked against the ten `@locked` files under `packages/simulation/test`:
 
 - None mentions employees, hiring, `ROLE_TERMS`, `CANDIDATE_POOL`, report lines or working hours. A case-insensitive search of the locked files for `employee`, `hiring`, `ROLE_TERMS` and `workingHours` finds nothing; `candidate`, `report` and `role` appear only in other senses (a recovery-horizon variable in `prog-001-outcome`, finance reports and "reports `COMMAND_REJECTED`" in test names, and `CharacterDefinition.role` in `prod-001-labor`).
