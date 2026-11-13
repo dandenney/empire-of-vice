@@ -14,7 +14,9 @@
 // Placeholder shapes, per kind: brass square for the distillery, wide bottle-
 // green block for storage, green triangle for a supplier, brass-rimmed disc
 // for a buyer, a line per route (red while closed), a small box per truck (red
-// while delayed).
+// while delayed). Founder rules only (SK2b, #234; PLACEHOLDER art): a hollow
+// square for a place with nobody on it (the depot), and the founder's token, a
+// bright brass lozenge in a ring, drawn over everything.
 
 import { Application, Container, Graphics, Text } from "pixi.js";
 import type { LocationId } from "@eov/contracts";
@@ -32,11 +34,12 @@ export class PixiMap {
   private readonly roads = new Graphics();
   private readonly marks = new Graphics();
   private readonly trucks = new Graphics();
+  private readonly founder = new Graphics();
   private readonly labels = new Container();
   private readonly labelById = new Map<string, Text>();
 
   private constructor(private readonly app: Application) {
-    app.stage.addChild(this.ground, this.roads, this.marks, this.labels, this.trucks);
+    app.stage.addChild(this.ground, this.roads, this.marks, this.labels, this.trucks, this.founder);
   }
 
   /** Creates the renderer and puts its canvas in `host`. Rejects if the browser can't draw at all. */
@@ -71,6 +74,7 @@ export class PixiMap {
     this.roads.clear();
     this.marks.clear();
     this.trucks.clear();
+    this.founder.clear();
     const seen = new Set<string>();
 
     for (const { entity, screen, radius } of placed) {
@@ -88,6 +92,12 @@ export class PixiMap {
           .stroke({ width: 1.5, color: MAP_COLORS.outline });
         continue;
       }
+      if (entity.kind === "FOUNDER") {
+        const { x, y } = screen;
+        this.founder.circle(x, y, radius + 3).stroke({ width: 1.5, color: MAP_COLORS.brassBright });
+        this.founder.poly([x, y - radius, x + radius, y, x, y + radius, x - radius, y]).fill(MAP_COLORS.brassBright).stroke({ width: 1.5, color: MAP_COLORS.outline });
+        continue;
+      }
 
       const id = entity.locationId;
       if (id !== null && id === highlights.selected) {
@@ -100,6 +110,8 @@ export class PixiMap {
         this.marks.rect(x - 14, y - 9, 28, 18).fill(MAP_COLORS.bottleGreen).stroke({ width: 2, color: MAP_COLORS.brass });
       } else if (entity.kind === "FACILITY") {
         this.marks.rect(x - 11, y - 11, 22, 22).fill(MAP_COLORS.brass).stroke({ width: 2, color: MAP_COLORS.outline });
+      } else if (entity.kind === "PLACE") {
+        this.marks.rect(x - 9, y - 9, 18, 18).fill(MAP_COLORS.ground).stroke({ width: 2, color: MAP_COLORS.road });
       } else if (entity.kind === "SUPPLIER") {
         this.marks.poly([x, y - 12, x + 12, y + 9, x - 12, y + 9]).fill(MAP_COLORS.bottleGreenLight).stroke({ width: 2, color: MAP_COLORS.outline });
       } else {
