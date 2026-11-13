@@ -25,7 +25,7 @@ import {
   type TransactionCoordinator,
 } from "@eov/contracts";
 import type { GameData } from "@eov/game-data";
-import type { CommandHandler } from "../kernel/registry.ts";
+import { founderCommandId, type CommandHandler } from "../kernel/registry.ts";
 import { M001_RULES, type GameRules } from "../kernel/rules.ts";
 import { judgeOrder, type OrderValidator } from "../view/order.ts";
 import { presenceRejection } from "../view/presence.ts";
@@ -91,11 +91,12 @@ export function setWorkforceHandler(data: GameData, coordinator: TransactionCoor
       const to = command.workerCount + 0;
       if (to === from) return { status: "applied", state };
 
+      const commandId = founderCommandId(ctx);
       const tx = coordinator.begin(state, {
         kind: "DAILY_SETTLEMENT",
-        idempotencyKey: idempotencyKey("DAILY_SETTLEMENT", "WORKFORCE", ctx.envelope.id),
+        idempotencyKey: idempotencyKey("DAILY_SETTLEMENT", "WORKFORCE", commandId),
         tick: ctx.tick,
-        causedBy: ctx.envelope.id,
+        causedBy: ctx.envelope?.id ?? null,
       });
       if (tx.status === "duplicate") return { status: "applied", state };
       tx.update((s) => withWorkers(s, facilityId, to));

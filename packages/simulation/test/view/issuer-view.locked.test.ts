@@ -645,6 +645,13 @@ const NEVER_UNDER_FOUNDER_RULES: ReadonlySet<RejectionCode> = new Set<RejectionC
   "PHONE_ALREADY_INSTALLED",
   "PHONE_USE_NOT_GRANTED",
   "NO_ROOMS_HERE",
+  // EM1's codes (ADR 0025 decision 15, as restated by ADR 0028 decision 11): unreachable while EM1's
+  // handlers are no-ops. E1 (#180) pins them; OUTSIDE_AUTHORITY is only ever an employee command's.
+  "CANDIDATE_UNAVAILABLE",
+  "CANDIDATE_TERMS_CHANGED",
+  "STATION_UNSUITABLE",
+  "POSITION_FILLED",
+  "OUTSIDE_AUTHORITY",
 ]);
 
 const VALIDATORS = { on: orderValidators(GAME_DATA, RULES_ON), off: orderValidators(GAME_DATA, RULES_OFF) };
@@ -1544,6 +1551,16 @@ const COVERAGE: Readonly<Record<RejectionCode, Coverage>> = {
   PHONE_ALREADY_INSTALLED: { by: "never", why: "PH1's handlers are no-ops; C1 (#179) pins it" },
   PHONE_USE_NOT_GRANTED: { by: "never", why: "PH1's handlers are no-ops; C1 (#179) pins it" },
   NO_ROOMS_HERE: { by: "never", why: "PH1's handlers are no-ops; C1 (#179) pins it" },
+  // EM1's five codes (ADR 0025 decision 15, as restated by ADR 0028 decision 11). E1 (#180) pins them once
+  // HIRE_EMPLOYEE, SET_STANDING_ORDER and DISMISS_EMPLOYEE stop being no-ops.
+  CANDIDATE_UNAVAILABLE: { by: "never", why: "EM1's handlers are no-ops; E1 (#180) pins it" },
+  CANDIDATE_TERMS_CHANGED: { by: "never", why: "EM1's handlers are no-ops; E1 (#180) pins it" },
+  STATION_UNSUITABLE: { by: "never", why: "EM1's handlers are no-ops; E1 (#180) pins it" },
+  POSITION_FILLED: { by: "never", why: "EM1's handlers are no-ops; E1 (#180) pins it" },
+  OUTSIDE_AUTHORITY: {
+    by: "never",
+    why: "an employee command's gate-4 reason (ADR 0025 decision 5), never a founder command's immediate result; E1 (#180) issues employee commands",
+  },
 };
 
 describe("decision 9: per RejectionCode, the verdict reads only the founder's view", () => {

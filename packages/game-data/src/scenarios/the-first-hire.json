@@ -18,5 +18,6 @@
   "scheduledEvents": [],
   "realMsPerGameHourAt1x": 20000,
   "founderRules": true,
-  "founderStartLocationId": "hollow-creek"
+  "founderStartLocationId": "hollow-creek",
+  "firstCandidates": ["walt-hagen"]
 }

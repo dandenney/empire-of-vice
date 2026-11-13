@@ -61,7 +61,7 @@ import {
 } from "@eov/game-data";
 import { scheduleWorldEvent } from "../../events/world-events.ts";
 import { allocateId, formatId } from "../../kernel/ids.ts";
-import type { CommandOfType, SystemRegistry, TickContext } from "../../kernel/registry.ts";
+import { founderCommandId, type CommandOfType, type SystemRegistry, type TickContext } from "../../kernel/registry.ts";
 import { addMaterial } from "../../inventory/pools.ts";
 import { nextIntBetween } from "../../rng/xoshiro128.ts";
 import { materialPurchaseEntries } from "../ledger/postings.ts";
@@ -706,7 +706,7 @@ export function registerMarket(registry: SystemRegistry, data: GameData, coordin
         kind: "DAILY_SETTLEMENT",
         idempotencyKey: idempotencyKey("DAILY_SETTLEMENT", "DEAL_AGREED", dealId),
         tick: ctx.tick,
-        causedBy: ctx.envelope.id,
+        causedBy: ctx.envelope?.id ?? null,
       });
       if (tx.status === "duplicate") return { status: "applied", state };
       const { buyerId, productId, quality, quantity, agreedUnitPrice } = command;
@@ -763,11 +763,12 @@ export function registerMarket(registry: SystemRegistry, data: GameData, coordin
     apply: (state, command, ctx) => {
       const rejection = judgeOrder(validatePurchase, state, data, rules, command, ctx.tick);
       if (rejection) return { status: "rejected", reason: rejection };
+      const commandId = founderCommandId(ctx);
       const tx = coordinator.begin(state, {
         kind: "MATERIAL_PURCHASE",
-        idempotencyKey: idempotencyKey("MATERIAL_PURCHASE", ctx.envelope.id),
+        idempotencyKey: idempotencyKey("MATERIAL_PURCHASE", commandId),
         tick: ctx.tick,
-        causedBy: ctx.envelope.id,
+        causedBy: ctx.envelope?.id ?? null,
       });
       if (tx.status === "duplicate") return { status: "applied", state };
 

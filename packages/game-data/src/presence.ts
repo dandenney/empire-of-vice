@@ -42,6 +42,8 @@ export const ACTIVITY_DURATIONS: Readonly<Record<ActivityKind, number>> = {
   PHONE_NO_ANSWER: 5, // PLACEHOLDER (ADR 0024 decision 3): ringing out; less than a call, never none (ADR 0027 decision 10)
   INSTALL_PHONE: 60, // PLACEHOLDER (ADR 0024 decision 2): arranging the line with the exchange
   CHECK_IN: 15, // PLACEHOLDER (ADR 0027 decision 4): taking a room at the desk
+  HIRE: 60, // PLACEHOLDER (ADR 0025 decision 4): a talk and a handshake
+  BRIEF_EMPLOYEE: 15, // PLACEHOLDER (ADR 0025 decision 5): giving an employee their orders in person
 };
 
 // ---------------------------------------------------------------------------

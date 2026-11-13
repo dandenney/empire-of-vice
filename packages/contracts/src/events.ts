@@ -10,9 +10,9 @@
 // like midnight settlement or a route closing). Any event that moved money
 // carries the TransactionId of its balanced ledger transaction.
 
-import type { DeliveryPurpose, GameCommandType, RejectionReason } from "./commands.ts";
+import type { DeliveryPurpose, GameCommand, GameCommandType, RejectionReason } from "./commands.ts";
 import type { CargoLine, QualityTier } from "./goods.ts";
-import type { CallInReason, CatchUp } from "./knowledge.ts";
+import type { CallInReason, CatchUp, ReportVia } from "./knowledge.ts";
 import type {
   BuyerId,
   CharacterId,
@@ -31,6 +31,7 @@ import type {
   RecipeId,
   ReservationId,
   RouteId,
+  StandingOrderId,
   SupplierId,
   TierId,
   TransactionId,
@@ -38,7 +39,7 @@ import type {
   VehicleId,
 } from "./ids.ts";
 import type { Money } from "./money.ts";
-import type { ArrangementPrivilege, CallAnswerer, Transport } from "./state.ts";
+import type { ArrangementPrivilege, CallAnswerer, EmployeeRole, StandingOrderTerms, Transport } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 /** Fields every event has. */
@@ -565,6 +566,67 @@ export type ArrangementGrantedEvent = GameEventOf<
 >;
 
 // ---------------------------------------------------------------------------
+// Employees (ADR 0025). None fires with `founderRules: false`. All are `log` and
+// none is news; the founder learns of employees' work only through channels
+// (ADR 0028 decision 8).
+// ---------------------------------------------------------------------------
+
+/** The founder hired a candidate (ADR 0025 decision 4). `signingCost` was paid in cash in `transactionId`. */
+export type EmployeeHiredEvent = GameEventOf<
+  "EMPLOYEE_HIRED",
+  {
+    readonly characterId: CharacterId;
+    readonly role: EmployeeRole;
+    readonly stationId: FacilityId;
+    readonly dailyWage: Money;
+    readonly signingCost: Money;
+    readonly startsAt: Tick;
+    readonly transactionId: TransactionId;
+  }
+>;
+
+/**
+ * An employee's standing order was given, changed or cancelled (ADR 0025 decision
+ * 5): `standingOrderId` and `terms` are null when cancelled. A hire's first order
+ * rides the hire's transaction.
+ */
+export type StandingOrderSetEvent = GameEventOf<
+  "STANDING_ORDER_SET",
+  {
+    readonly characterId: CharacterId;
+    readonly standingOrderId: StandingOrderId | null;
+    readonly terms: StandingOrderTerms | null;
+    readonly transactionId: TransactionId;
+  }
+>;
+
+/** The founder let an employee go (ADR 0025 decision 4). */
+export type EmployeeDismissedEvent = GameEventOf<"EMPLOYEE_DISMISSED", { readonly characterId: CharacterId; readonly transactionId: TransactionId }>;
+
+/**
+ * An employee issued a command under their standing order (ADR 0025 decision 6),
+ * for the lab and the debug view. It's the employee command's identity, so
+ * `causedBy` is null: employee commands have no envelope.
+ */
+export type EmployeeActedEvent = GameEventOf<
+  "EMPLOYEE_ACTED",
+  {
+    readonly characterId: CharacterId;
+    readonly standingOrderId: StandingOrderId;
+    readonly command: GameCommand;
+    readonly status: "APPLIED" | "REJECTED";
+    /** Set when rejected. */
+    readonly reason: RejectionReason | null;
+  }
+>;
+
+/** An employee's report reached the founder (ADR 0025 decision 7). Not emitted for a report taken as a message. */
+export type ReportDeliveredEvent = GameEventOf<
+  "REPORT_DELIVERED",
+  { readonly characterId: CharacterId; readonly via: ReportVia; readonly lineCount: number; readonly dropped: number }
+>;
+
+// ---------------------------------------------------------------------------
 // The union
 // ---------------------------------------------------------------------------
 
@@ -618,7 +680,12 @@ export type GameEvent =
   | MessagesDeliveredEvent
   | PhoneInstalledEvent
   | RoomRentedEvent
-  | ArrangementGrantedEvent;
+  | ArrangementGrantedEvent
+  | EmployeeHiredEvent
+  | StandingOrderSetEvent
+  | EmployeeDismissedEvent
+  | EmployeeActedEvent
+  | ReportDeliveredEvent;
 
 export type GameEventType = GameEvent["type"];
 
@@ -693,6 +760,14 @@ export const EVENT_IMPORTANCE: Readonly<Record<GameEventType, "notify" | "log">>
   PHONE_INSTALLED: "log",
   ROOM_RENTED: "log",
   ARRANGEMENT_GRANTED: "log",
+  // Employees (ADR 0025, ADR 0028 decision 8). The founder learns of them through
+  // the player snapshot and its channels (activity, reports), never as world-event
+  // toasts. None of them may join `LoggedToastEventType`.
+  EMPLOYEE_HIRED: "log",
+  STANDING_ORDER_SET: "log",
+  EMPLOYEE_DISMISSED: "log",
+  EMPLOYEE_ACTED: "log",
+  REPORT_DELIVERED: "log",
 };
 
 export const GAME_EVENT_TYPES = Object.keys(EVENT_IMPORTANCE) as readonly GameEventType[];
@@ -764,6 +839,13 @@ export const EVENT_CONCERNS_PLACE = {
   PHONE_INSTALLED: null,
   ROOM_RENTED: null,
   ARRANGEMENT_GRANTED: null,
+  // Employees (ADR 0025 decision 16): agreements, and the work a report or a
+  // visit tells of. Never news.
+  EMPLOYEE_HIRED: null,
+  STANDING_ORDER_SET: null,
+  EMPLOYEE_DISMISSED: null,
+  EMPLOYEE_ACTED: null,
+  REPORT_DELIVERED: null,
 } as const satisfies Readonly<Record<GameEventType, "FACILITY" | "DELIVERY_ORIGIN" | null>>;
 
 /** Event types that become news at the place they concern. */

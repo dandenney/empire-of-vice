@@ -75,8 +75,8 @@ describe("shapes (ADR 0027 decision 17)", () => {
     expectTypeOf<(typeof ARRANGEMENT_PRIVILEGES)[number]>().toEqualTypeOf<ArrangementPrivilege>();
   });
 
-  it("has ADR 0024's call-in reasons (ADR 0025 adds EMPLOYEE_REPORT later)", () => {
-    expectTypeOf<CallInReason>().toEqualTypeOf<"NEW_CONTRACT_OFFER" | "INSTALLMENT_DUE">();
+  it("has ADR 0024's call-in reasons, and ADR 0025's EMPLOYEE_REPORT (EM1)", () => {
+    expectTypeOf<CallInReason>().toEqualTypeOf<"NEW_CONTRACT_OFFER" | "INSTALLMENT_DUE" | "EMPLOYEE_REPORT">();
   });
 
   it("has a fourth place variant for a location with no occupant", () => {
@@ -132,6 +132,7 @@ describe("state and saves (ADR 0024 decision 13, ADR 0027 decision 15)", () => {
       takenBy: ids.foreman,
       reason: "INSTALLMENT_DUE",
       values: [{ subject: { kind: "CONTRACT_OFFERS", buyerId: ids.speakeasy }, value: { kind: "CONTRACT_OFFERS", buyerId: ids.speakeasy, offers: [] } }],
+      report: null,
     };
     const state = (m: unknown) => ({ ...day0Save.state, knowledge: { ...day0Save.state.knowledge, pendingMessages: [{ locationId: ids.locDistillery, items: [m], dropped: 2 }] } });
     expect(gameStateSchema.safeParse(roundTrip(state(message))).success).toBe(true);
@@ -149,7 +150,11 @@ describe("PLACE_CALL, INSTALL_PHONE and RENT_ROOM", () => {
   ];
 
   it("are commands, after AGREE_DEAL, and not repeatable", () => {
-    expect(GAME_COMMAND_TYPES.slice(GAME_COMMAND_TYPES.indexOf("AGREE_DEAL") + 1)).toEqual(["PLACE_CALL", "INSTALL_PHONE", "RENT_ROOM"]);
+    expect(GAME_COMMAND_TYPES.slice(GAME_COMMAND_TYPES.indexOf("AGREE_DEAL") + 1, GAME_COMMAND_TYPES.indexOf("RENT_ROOM") + 1)).toEqual([
+      "PLACE_CALL",
+      "INSTALL_PHONE",
+      "RENT_ROOM",
+    ]);
     expectTypeOf<Extract<RepeatableCommand, { type: "PLACE_CALL" | "INSTALL_PHONE" | "RENT_ROOM" }>>().toBeNever();
   });
 
@@ -245,6 +250,7 @@ describe("activity items (ADR 0024 decision 15, ADR 0027 decision 17)", () => {
     takenBy: null,
     reason: "NEW_CONTRACT_OFFER",
     subjects: [{ kind: "CONTRACT_OFFERS", buyerId: ids.speakeasy }],
+    report: null,
   };
   const items: ActivityItem[] = [
     { kind: "CALL_PLACED", tick: tick(900), locationId: ids.locSpeakeasy, answered: true, answeredBy: "PARTY" },

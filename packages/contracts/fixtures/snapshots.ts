@@ -249,6 +249,7 @@ export const startOfGameSnapshot: GameSnapshot = {
   ],
   productionJobs: [],
   vehicles: [{ id: ids.truck, name: "Model TT truck", capacity: 12, homeLocationId: ids.locDistillery, trip: null }],
+  employees: [],
   market: {
     dayIndex: 0,
     products: [
@@ -489,6 +490,7 @@ export const midGameSnapshot: GameSnapshot = {
       },
     },
   ],
+  employees: [],
   market: {
     ...startOfGameSnapshot.market,
     dayIndex: 3,

@@ -101,7 +101,13 @@ export type TransactionKind =
    */
   | "TELEPHONE"
   /** A room rented for a stay (ADR 0027 decision 4): Dr OVERHEAD_EXPENSE / Cr CASH. Its cash-flow kind default is OVERHEAD. */
-  | "LODGING";
+  | "LODGING"
+  /**
+   * Employees (ADR 0025 decision 4): a hire's signing cost (Dr WAGES_EXPENSE /
+   * Cr CASH, none at cost 0), and the entry-less records of standing orders,
+   * dismissals and reports. Its cash-flow kind default is WAGES.
+   */
+  | "PERSONNEL";
 
 /**
  * One committed coordinator transaction (ADR 0010). The ledger log doubles as the

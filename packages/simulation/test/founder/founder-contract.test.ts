@@ -53,7 +53,7 @@ describe("the founder at game creation (decisions 1, 7, 9)", () => {
 
 describe("the founder phase (decision 2a)", () => {
   it("runs after resolution, then the phones phase (ADR 0024 decision 8), then deadlines", () => {
-    expect(PHASES).toEqual(["production", "vehicles", "resolution", "founder", "phones", "deadlines", "midnight"]);
+    expect(PHASES).toEqual(["production", "employees", "vehicles", "resolution", "founder", "phones", "deadlines", "midnight"]);
   });
 
   it("has no hooks with founder rules off (presence.test.ts covers them on)", () => {

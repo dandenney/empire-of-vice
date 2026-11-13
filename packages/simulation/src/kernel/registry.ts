@@ -19,6 +19,8 @@
 import type {
   ClockSnapshot,
   CommandEnvelope,
+  CommandId,
+  CommandIssuer,
   GameCommand,
   GameCommandType,
   GameSnapshot,
@@ -33,7 +35,10 @@ import type { WorldEventKind, WorldEventOfKind } from "../events/world-events.ts
 /**
  * Per-tick phases after commands, in SIM-001 order:
  *   1. commands (the kernel)
- *   2. production
+ *   2. production, then
+ *      `employees` (ADR 0025 decision 10: each employee's standing-order step,
+ *      then report deliveries; right after production, so a still whose batch
+ *      finished this tick restarts on the same tick)
  *   3. vehicles (movement and arrivals)
  *   4. due world events (the kernel, via world event handlers), then
  *      `resolution` (contract fulfillment, due payments), then
@@ -51,9 +56,11 @@ import type { WorldEventKind, WorldEventOfKind } from "../events/world-events.ts
  * The `founder` phase's hooks are registered only with `founderRules: true`;
  * with the flag off it does nothing (ADR 0023 decision 9). The `phones` phase has
  * no hooks yet (PH1); C1 (#179) registers them, and with the flag off it stays
- * idle (ADR 0024 decision 12).
+ * idle (ADR 0024 decision 12). Likewise the `employees` phase has no hooks yet
+ * (EM1); E1 (#180) registers them, and with the flag off it stays idle (ADR 0025
+ * decision 13).
  */
-export const PHASES = ["production", "vehicles", "resolution", "founder", "phones", "deadlines", "midnight"] as const;
+export const PHASES = ["production", "employees", "vehicles", "resolution", "founder", "phones", "deadlines", "midnight"] as const;
 export type Phase = (typeof PHASES)[number];
 
 /** What a hook knows about the tick being processed. `state.tick` is still the previous tick. */
@@ -67,8 +74,29 @@ export interface TickContext {
 export type PhaseHook = (state: GameState, ctx: TickContext) => GameState;
 
 export interface CommandContext extends TickContext {
-  /** The envelope being applied, with its kernel-assigned ID and sequence. */
-  readonly envelope: CommandEnvelope;
+  /**
+   * Who issued the command (ADR 0022 decision 5, ADR 0025 decision 6). Handlers
+   * read the issuer here, never from an envelope.
+   */
+  readonly issuer: CommandIssuer;
+  /**
+   * The envelope being applied, with its kernel-assigned ID and sequence. null
+   * for an employee command issued under a standing order (ADR 0025 decision 6):
+   * it has no envelope and no command identity, so its transactions and events
+   * have `causedBy: null`. E1 (#180) adds that path (`applyIssued`); until then
+   * every command the kernel applies is the founder's, with an envelope.
+   */
+  readonly envelope: CommandEnvelope | null;
+}
+
+/**
+ * The ID of the envelope a founder-only command is applied from. Throws for a
+ * context without one: only a standing order's employee command (E1) has none,
+ * and no standing order authorises these commands (ADR 0025 decision 5).
+ */
+export function founderCommandId(ctx: CommandContext): CommandId {
+  if (ctx.envelope === null) throw new RegistryError(`An employee (${ctx.issuer.kind}) can't issue this command: it needs the founder's envelope`);
+  return ctx.envelope.id;
 }
 
 export type CommandOutcome =

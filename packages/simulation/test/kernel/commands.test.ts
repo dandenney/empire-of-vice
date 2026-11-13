@@ -57,7 +57,7 @@ describe("immediate commands", () => {
           const dirty = emitEvent(
             { ...state, facilities: [] },
             { type: "WORKFORCE_CHANGED", facilityId: command.facilityId, from: 0, to: 1 },
-            { tick: ctx.tick, causedBy: ctx.envelope.id },
+            { tick: ctx.tick, causedBy: ctx.envelope?.id ?? null },
           ).state;
           void dirty;
           return { status: "rejected", reason: { code: "NO_EQUIPMENT_SLOT", facilityId: command.facilityId, equipmentId: command.equipmentId } };

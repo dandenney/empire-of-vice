@@ -273,7 +273,7 @@ export class KernelSimulation implements Simulation {
     | { readonly status: "applied"; readonly state: GameState; readonly eventIds: readonly EventId[] }
     | { readonly status: "rejected"; readonly state: GameState; readonly reason: RejectionReason } {
     const handler = this.#registry.commandHandler(envelope.command.type);
-    const commandCtx: CommandContext = { ...ctx, envelope };
+    const commandCtx: CommandContext = { ...ctx, issuer: envelope.issuer, envelope };
     const gates = this.#registry.commandGates();
     // ADR 0022 decision 1's gate order lives in each command's order validator
     // (`view/`), which its handler runs first; a command gate that rejects here
@@ -319,8 +319,9 @@ export class KernelSimulation implements Simulation {
     const ctx = this.#tickContext(tick(before.tick + 1));
     // 1. Due commands, in (scheduledTick, sequence) order.
     let s = this.#applyDue(before, { scheduledTick: ctx.tick, sequence: Number.POSITIVE_INFINITY }, ctx);
-    // 2–3. Production, then vehicles and arrivals.
+    // 2–3. Production, then employees (ADR 0025 decision 10), then vehicles and arrivals.
     s = this.#runPhase("production", s, ctx);
+    s = this.#runPhase("employees", s, ctx);
     s = this.#runPhase("vehicles", s, ctx);
     // 4. World events due now, then fulfillment and payments, then the
     //    founder's transitions (ADR 0023 decision 2a), then phones (ADR 0024

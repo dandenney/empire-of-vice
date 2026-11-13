@@ -10,7 +10,7 @@
 // lists are arrays sorted by ID (or by (tick, sequence) for queues). That makes
 // canonical serialization, and therefore state hashing, straightforward.
 
-import type { CommandEnvelope, DeliveryPurpose } from "./commands.ts";
+import type { CommandEnvelope, DeliveryPurpose, RejectionReason } from "./commands.ts";
 import type { GameEvent, InstallmentOutcome } from "./events.ts";
 import type { QualityTier } from "./goods.ts";
 import type {
@@ -32,12 +32,13 @@ import type {
   ReservationId,
   RouteId,
   ScenarioId,
+  StandingOrderId,
   SupplierId,
   TierId,
   UnlockId,
   VehicleId,
 } from "./ids.ts";
-import type { KnowledgeState } from "./knowledge.ts";
+import type { HoldReason, KnowledgeState, PendingReport } from "./knowledge.ts";
 import type { LedgerTransaction } from "./ledger.ts";
 import type { Money, Ratio } from "./money.ts";
 import type { GameOutcome, LocationOccupant } from "./snapshot.ts";
@@ -111,6 +112,18 @@ export interface GameState {
    * `founderRules: false` (decision 14).
    */
   readonly arrangements: readonly ArrangementState[];
+
+  /**
+   * The family's employees (ADR 0025 decision 1), sorted by `characterId` with
+   * `compareIds`. Empty with `founderRules: false` (decision 13).
+   */
+  readonly employees: readonly EmployeeState[];
+  /**
+   * People who worked for the family and were dismissed, with what they'd done,
+   * so a re-hire keeps their record (ADR 0025 decision 8). Sorted by
+   * `characterId`. An entry is removed when the person is re-hired.
+   */
+  readonly formerEmployees: readonly FormerEmployeeState[];
 }
 
 // ---------------------------------------------------------------------------
@@ -409,6 +422,9 @@ export const ACTIVITY_KINDS = [
   "INSTALL_PHONE",
   // ADR 0027 decision 4: renting a room at the desk.
   "CHECK_IN",
+  // ADR 0025 decisions 4 and 5: hiring someone, and briefing an employee in person.
+  "HIRE",
+  "BRIEF_EMPLOYEE",
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 
@@ -450,6 +466,106 @@ export interface ArrangementState {
   readonly dealingDays: number;
   /** The tick of the latest qualifying dealing. */
   readonly lastDealingAt: Tick;
+}
+
+// ---------------------------------------------------------------------------
+// Employees and standing orders (ADR 0025 decisions 1, 2 and 5; ADR 0028)
+// ---------------------------------------------------------------------------
+
+/** M002 roles. ADR 0026 adds "DRIVER" and "OFFICE_HAND". */
+export type EmployeeRole = "DISTILLER";
+export const EMPLOYEE_ROLES = ["DISTILLER"] as const satisfies readonly EmployeeRole[];
+
+/** What the founder was told about a candidate's competence: a range that contains the true value. */
+export interface CompetenceEstimate {
+  /** 0–100. */
+  readonly low: number;
+  /** 0–100, `low ≤ high`. */
+  readonly high: number;
+}
+
+/**
+ * One employee (ADR 0025 decision 1). The first block is agreements the founder
+ * made, always known (decision 2); the rest is world state, hidden except
+ * through channels.
+ */
+export interface EmployeeState {
+  // Agreements: always known (decision 2).
+  readonly characterId: CharacterId;
+  readonly role: EmployeeRole;
+  /** The family facility they work at. Their place for presence (ADR 0022 decision 5). */
+  readonly stationId: FacilityId;
+  readonly dailyWage: Money;
+  readonly hiredAt: Tick;
+  /** They're at the station and acting from this tick (`hiredAt + ROLE_TERMS.reportingDelayTicks`). */
+  readonly startsAt: Tick;
+  readonly competenceEstimate: CompetenceEstimate;
+  readonly standingOrder: StandingOrderState | null;
+
+  // World state: hidden from the founder except through channels.
+  /** The true competence, 0–100, drawn when the candidate was first generated (decision 3). */
+  readonly competence: number;
+  /** Reserved, inert in M002: no rule, projection or draw reads them (decision 11). 0–100. */
+  readonly reliability: number;
+  readonly loyalty: number;
+  readonly work: EmployeeWork;
+  /** What they'll tell the founder next (decision 7). */
+  readonly report: PendingReport;
+}
+
+/** An employee's own record of their work (ADR 0025 decision 6). World state. */
+export interface EmployeeWork {
+  /** The job this employee started that is still running, or null. */
+  readonly currentJobId: ProductionJobId | null;
+  /**
+   * Jobs this person has started for the family that have finished (completed or
+   * failed), over every stint: a re-hire starts from the count in
+   * `GameState.formerEmployees`. Drives EMPLOYEE_PERFORMANCE.
+   */
+  readonly batchesRun: number;
+  /** The last reason the policy couldn't act, so a hold is reported once, not every tick. */
+  readonly lastHold: HoldReason | null;
+  /** The last refusal of a command the policy issued, so a stuck refusal is reported once (decision 6). */
+  readonly lastRefusal: RejectionReason | null;
+  /** Spending against the standing order's cap, per SPENDING_PERIOD_TICKS window (`periodIndex = floor(t / SPENDING_PERIOD_TICKS)`). */
+  readonly spending: { readonly periodIndex: number; readonly spent: Money };
+}
+
+/** A dismissed employee's record (ADR 0025 decisions 4 and 8). */
+export interface FormerEmployeeState {
+  readonly characterId: CharacterId;
+  readonly batchesRun: number;
+}
+
+/** A standing order as given (ADR 0025 decision 5). An agreement: always known. */
+export interface StandingOrderState {
+  /** A new order always gets a new ID, from the StandingOrder counter. */
+  readonly id: StandingOrderId;
+  readonly givenAt: Tick;
+  readonly terms: StandingOrderTerms;
+}
+
+/** One variant per role. ADR 0026 adds the Driver's. */
+export type StandingOrderTerms = DistillOrderTerms;
+
+/**
+ * After GDD §21's example ("produce basic moonshine; keep at least 20 cases on
+ * hand; spend no more than $25 a week on supplies; report problems by phone").
+ * The Distiller doesn't buy supplies in M002 (ADR 0028 decision 9), so the cap is
+ * on what they do spend: the batch's conversion cost. The order form's defaults
+ * are DISTILL_ORDER_DEFAULTS (game-data); the simulation reads only these terms.
+ */
+export interface DistillOrderTerms {
+  readonly kind: "DISTILL";
+  readonly recipeId: RecipeId;
+  /** Start a batch only while unreserved cases of the recipe's product and quality at the station are below this. */
+  readonly keepOnHand: number;
+  /** The most cases in one batch. */
+  readonly batchSize: number;
+  /** The most conversion cost (ADR 0022 decision 7) they may spend per SPENDING_PERIOD_TICKS. */
+  readonly spendingCap: Money;
+  /** Whether they phone the family's numbers when something goes wrong (ADR 0025 decision 7). */
+  readonly callWhen: "NEVER" | "PROBLEMS";
 }
 
 /**

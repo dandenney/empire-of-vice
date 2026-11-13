@@ -20,7 +20,9 @@
 // → fnv1a64:e8f7a70e236e492d (PH1, #205: `arrangements`, `phoneLine` on each facility,
 // `founder.room`, `PRESENT.call` and `knowledge.pendingMessages` in day0Save, which also
 // gains Miller's first dealing day and its ARRANGEMENT_GRANTED activity item; the fake
-// systems never read or write any of them. Removing them gives 43ff79f6e9801b39 again).
+// systems never read or write any of them. Removing them gives 43ff79f6e9801b39 again)
+// → fnv1a64:51b2d190ea8e303b (EM1, #210: `employees: []`, `formerEmployees: []` and the
+// `StandingOrder` counter in day0Save; nothing hires. Removing them gives e8f7a70e236e492d again).
 
 import { tick } from "@eov/contracts";
 import { ids } from "@eov/contracts/fixtures";
@@ -52,7 +54,7 @@ describe("reference scenario", () => {
   });
 
   it("has a pinned state hash", () => {
-    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:e8f7a70e236e492d"`);
+    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:51b2d190ea8e303b"`);
   });
 
   it("replays from its command log to the same hash", () => {

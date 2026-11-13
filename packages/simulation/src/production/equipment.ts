@@ -33,7 +33,7 @@ import {
 } from "@eov/contracts";
 import type { GameData } from "@eov/game-data";
 import { assetSaleEntries, equipmentPurchaseEntries } from "../economy/ledger/postings.ts";
-import type { CommandHandler } from "../kernel/registry.ts";
+import { founderCommandId, type CommandHandler } from "../kernel/registry.ts";
 import { M001_RULES, type GameRules } from "../kernel/rules.ts";
 import type { IssuerView } from "../view/issuer-view.ts";
 import { judgeOrder, type OrderValidator } from "../view/order.ts";
@@ -109,9 +109,9 @@ export function purchaseEquipmentHandler(data: GameData, coordinator: Transactio
 
       const tx = coordinator.begin(state, {
         kind: "EQUIPMENT_PURCHASE",
-        idempotencyKey: purchaseKey(state, command, ctx.envelope.id),
+        idempotencyKey: purchaseKey(state, command, founderCommandId(ctx)),
         tick: ctx.tick,
-        causedBy: ctx.envelope.id,
+        causedBy: ctx.envelope?.id ?? null,
       });
       if (tx.status === "duplicate") return { status: "applied", state };
       tx.update((s) => ({
@@ -164,11 +164,12 @@ export function sellEquipmentHandler(data: GameData, coordinator: TransactionCoo
       const { bookValue } = state.facilities.find((f) => f.id === facilityId)!.equipment.find((e) => e.equipmentId === equipmentId)!;
       const proceeds = resaleValue(bookValue, data);
 
+      const commandId = founderCommandId(ctx);
       const tx = coordinator.begin(state, {
         kind: "ASSET_SALE",
-        idempotencyKey: idempotencyKey("ASSET_SALE", ctx.envelope.id),
+        idempotencyKey: idempotencyKey("ASSET_SALE", commandId),
         tick: ctx.tick,
-        causedBy: ctx.envelope.id,
+        causedBy: ctx.envelope?.id ?? null,
       });
       if (tx.status === "duplicate") return { status: "applied", state };
       tx.update((s) => ({

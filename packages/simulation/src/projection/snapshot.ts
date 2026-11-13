@@ -477,6 +477,8 @@ export function projectSnapshot(state: GameState, ctx: ProjectionContext, deps: 
     facilities: [...state.facilities].sort(byId).map((f) => projectFacility(state, f, deps, ctx)),
     productionJobs: projectJobs(state, data),
     vehicles: projectVehicles(state, data),
+    // The whole employee state, named, for the lab and the debug view (ADR 0025 decision 16).
+    employees: state.employees.map((e) => ({ ...e, name: named(data.personnel.candidatePool, e.characterId, "candidate").name })),
     market: projectMarket(state, data, ctx.clock),
     contracts: projectContracts(state, data),
     recentEvents: state.eventJournal.slice(-SNAPSHOT_RECENT_EVENTS),

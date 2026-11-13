@@ -102,6 +102,9 @@ export const TRANSACTION_KIND_COPY: Readonly<Record<TransactionKind, string>> = 
   // either kind until C1 (#179), so no screen shows them yet.
   TELEPHONE: "Telephone",
   LODGING: "Lodging",
+  // PLACEHOLDER (story decision): ADR 0025 (EM1, #210). Nothing posts it until E1
+  // (#180), so no screen shows it yet.
+  PERSONNEL: "Personnel",
 };
 
 export const ACCOUNT_COPY: Readonly<Record<LedgerAccount, string>> = {

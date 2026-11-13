@@ -15,7 +15,7 @@
 
 import type { WorldPoint } from "./geometry.ts";
 import type { QualityTier } from "./goods.ts";
-import type { BuyerId, ContractId, DealId, DeliveryId, LocationId, ProductId, RouteId, SupplierId } from "./ids.ts";
+import type { BuyerId, CharacterId, ContractId, DealId, DeliveryId, FacilityId, LocationId, ProductId, RouteId, SupplierId } from "./ids.ts";
 import type { ActivityItem, CatchUp, Known, KnowledgeValueOf } from "./knowledge.ts";
 import type { LedgerEntry, TransactionKind } from "./ledger.ts";
 import type { Money } from "./money.ts";
@@ -32,7 +32,7 @@ import type {
   VehicleSnapshot,
   VictoryProgress,
 } from "./snapshot.ts";
-import type { ArrangementPrivilege, FounderState } from "./state.ts";
+import type { ArrangementPrivilege, CompetenceEstimate, EmployeeRole, FounderState, StandingOrderState } from "./state.ts";
 import type { Tick } from "./time.ts";
 
 export interface PlayerSnapshot {
@@ -61,6 +61,62 @@ export interface PlayerSnapshot {
   readonly activity: readonly ActivityItem[];
   /** `knowledge.lastCatchUp`. */
   readonly catchUp: CatchUp | null;
+  /** Employees, sorted by `characterId` (ADR 0025 decision 2). Agreements, plus known performance. */
+  readonly employees: readonly PlayerEmployee[];
+  /** The candidates in front of the founder at an open hiring place, or null (ADR 0025 decision 3). */
+  readonly hiring: PlayerHiring | null;
+}
+
+// ---------------------------------------------------------------------------
+// Employees and hiring (ADR 0025 decisions 2 and 3, ADR 0028 decision 4)
+// ---------------------------------------------------------------------------
+
+/**
+ * How an estimate reads in the scene (ADR 0028 decision 4), computed by the
+ * projection from the estimate's shape and COMPETENCE_BANDS. UNCERTAIN: too wide to say.
+ */
+export type CompetenceBand = "LOW" | "MODERATE" | "HIGH" | "UNCERTAIN";
+export const COMPETENCE_BAND_KINDS = ["LOW", "MODERATE", "HIGH", "UNCERTAIN"] as const satisfies readonly CompetenceBand[];
+
+/** One employee as the founder knows them: the agreements, and what they've learned of the work. */
+export interface PlayerEmployee {
+  readonly characterId: CharacterId;
+  /** From the candidate pool (static). */
+  readonly name: string;
+  readonly role: EmployeeRole;
+  readonly stationId: FacilityId;
+  readonly dailyWage: Money;
+  readonly hiredAt: Tick;
+  readonly startsAt: Tick;
+  /** The estimate given at hire. */
+  readonly competenceEstimate: CompetenceEstimate;
+  /** The band of the estimate given at hire, so it doesn't change after hiring. */
+  readonly competenceBand: CompetenceBand;
+  readonly standingOrder: StandingOrderState | null;
+  readonly performance: Known<KnowledgeValueOf<"EMPLOYEE_PERFORMANCE">>;
+}
+
+/** The people available to meet at this place now (ADR 0028 decision 4). */
+export interface PlayerHiring {
+  readonly locationId: LocationId;
+  /** The tick the current slate is replaced. */
+  readonly slateEndsAt: Tick;
+  /** Every role this place hires for, sorted by role, then in slate order. */
+  readonly candidates: readonly PlayerCandidate[];
+}
+
+/** One candidate on the slate, with their terms as offered here and now. */
+export interface PlayerCandidate {
+  readonly characterId: CharacterId;
+  readonly name: string;
+  readonly role: EmployeeRole;
+  /** The range the founder is given; the true value lies inside it. */
+  readonly competenceEstimate: CompetenceEstimate;
+  readonly competenceBand: CompetenceBand;
+  /** The asking wage, per day. */
+  readonly dailyWage: Money;
+  /** The signing payment, once, in cash at hire. */
+  readonly signingCost: Money;
 }
 
 // ---------------------------------------------------------------------------

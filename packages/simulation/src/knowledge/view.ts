@@ -224,6 +224,11 @@ function subjectLocation(state: GameState, data: GameData, subject: KnowledgeSub
       return data.routes.find((r) => r.id === subject.routeId)?.fromLocationId ?? null;
     case "VEHICLE_WHEREABOUTS":
       return state.vehicles.find((v) => v.id === subject.vehicleId)?.parkedAt ?? null;
+    case "EMPLOYEE_PERFORMANCE": {
+      // A facility-party subject of the employee's station (ADR 0025 decision 8).
+      const employee = state.employees.find((e) => e.characterId === subject.characterId);
+      return employee ? facilityLocation(data, employee.stationId) : null;
+    }
     case "MARKET_PRICES":
     case "STANDING":
       return null;
@@ -277,6 +282,8 @@ function valueDeps(state: GameState, data: GameData, subject: KnowledgeSubject):
       return [state.vehicles, state.deliveries, data];
     case "STANDING":
       return [state.family, data];
+    case "EMPLOYEE_PERFORMANCE":
+      return [state.employees, data];
   }
 }
 
@@ -359,6 +366,14 @@ function computeWorldValue(state: GameState, data: GameData, subject: KnowledgeS
     }
     case "STANDING":
       return { kind: "STANDING", reputation: state.family.reputation, tierId: state.family.tierId, unlocked: [...state.family.unlocked] };
+    case "EMPLOYEE_PERFORMANCE": {
+      // ADR 0025 decision 8: the true competence once batchesRun reaches the reveal count.
+      const employee = state.employees.find((e) => e.characterId === subject.characterId);
+      if (!employee) throw new RangeError(`Knowledge: unknown employee ${subject.characterId}`);
+      const { batchesRun } = employee.work;
+      const revealed = batchesRun >= data.personnel.competenceRevealBatches;
+      return { kind: "EMPLOYEE_PERFORMANCE", characterId: employee.characterId, batchesRun, competence: revealed ? employee.competence : null };
+    }
   }
 }
 

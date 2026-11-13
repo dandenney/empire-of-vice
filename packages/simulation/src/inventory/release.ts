@@ -82,7 +82,7 @@ export function registerInventory(registry: SystemRegistry, data: GameData, coor
         kind: "RESERVATION",
         idempotencyKey: idempotencyKey("RESERVATION", reservationId, "RELEASE"),
         tick: ctx.tick,
-        causedBy: ctx.envelope.id,
+        causedBy: ctx.envelope?.id ?? null,
       });
       if (tx.status === "duplicate") return { status: "applied", state };
 

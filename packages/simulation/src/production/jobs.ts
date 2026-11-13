@@ -173,7 +173,7 @@ export function startProductionHandler(data: GameData, coordinator: TransactionC
         kind: "PRODUCTION_START",
         idempotencyKey: idempotencyKey("PRODUCTION_START", jobId),
         tick: ctx.tick,
-        causedBy: ctx.envelope.id,
+        causedBy: ctx.envelope?.id ?? null,
       });
       if (tx.status === "duplicate") return { status: "applied", state };
 

@@ -40,6 +40,9 @@ describe("presence tables (PLACEHOLDER values)", () => {
       PHONE_NO_ANSWER: 5,
       INSTALL_PHONE: 60,
       CHECK_IN: 15,
+      // ADR 0025 decisions 4 and 5 (EM1).
+      HIRE: 60,
+      BRIEF_EMPLOYEE: 15,
     });
   });
 
