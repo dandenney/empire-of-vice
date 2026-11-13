@@ -2,6 +2,8 @@
 
 Status: accepted (decided by the orchestrator while refreshing T02c, issue #7; implemented in T02c1 and T02c2)
 
+Amended by ADR 0029 (#241, two-stage production), under founder rules only: decisions 1, 2, 3, 5, 7 and 8. Production is a mash that ferments in barrels, then a distillation run that an operator is tied to. A run is the only kind of job, and workers and crew don't set its length. Storage counts wash in barrels, failure is drawn when a run ends, the conversion cost is paid at the mash, and the workforce check never applies. With `founderRules: false` this record is unchanged.
+
 ## Context
 
 GDD §6 (PROD-001) says a facility has equipment slots, recipes, workforce, capacity, storage, and operating costs. Starting a job reserves inputs and capacity, labor and overhead go into the cost basis, and purchases have to respect cash, slots, eligibility, and capacity. GDD §10 gives the founder and the foreman skill, loyalty, and a wage, and treats generic workers as abstract labor. SIM-001 settles recurring costs at midnight. GDD §14.3 leaves recipes, wages, durations, and throughput open.

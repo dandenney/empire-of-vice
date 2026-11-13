@@ -4,6 +4,8 @@ Status: accepted (decided by the orchestrator for M002 task D5c, issue #214, fro
 
 Amends: ADR 0024 decision 5 (clarified: a family line whose call-in attendant hook returns null doesn't answer, and the caller tries the next number; decision 6), ADR 0025 decisions 1, 2, 3, 5, 6, 7, 16 and 17 (approved names and hiring place, a band beside each estimate, an estimate width drawn per meeting, orders to an employee off duty, the policy only in working hours, what limited a short batch, who answers the still's phone and when an employee calls in, a report delivered on arrival, the contract list, R1's numbers), ADR 0026 decisions 1, 5, 10, 15, 16 and 17 (the estimate width for the Driver, the Driver's hours, `isAvailable` for both attendant hooks, a call that outlasts a shift, relayed orders, a regular run outside the Driver's hours, the contract list and the numbers).
 
+Amended by ADR 0029 (#241, two-stage production): decisions 2, 8, 11 and 12. A Distiller starts a distillation run only if it ends within their shift, so no run outlasts one. Fermentation runs whatever the hour. `BATCH_STARTED` is a mash set, `BATCH_FINISHED` a run settled, and the "still's running" status counts barrels as well as runs. ADR 0029 decisions 9 and 15 restate the policy and R1's numbers.
+
 ## Context
 
 The human answered #209 (hiring, the hiring scene, the Distiller). The answer is binding for story and gameplay feel, and it's a sign-off on direction, not permission to invent lore. The points this record has to turn into rules:
@@ -522,5 +524,6 @@ Story and visual direction (factory.md §8). #209 settled where people are hired
 - **An empty slate,** and Miller's line when only Office Hand candidates are showing.
 - **How working hours are shown:** whether the scene or the ledger tells the player when the Distiller is up, and in what words.
 - **Labels for the wage terms:** "asking wage" and "signing payment" from #209 §3, in their final form.
-- **Tuning (R1, PT2, PT3, T-LAB):** `workingHours` for each role, `estimateSpread` (20–50), `COMPETENCE_BANDS` (40 / 40 / 65), and ADR 0025's and 0026's numbers. #209 lists telephone hours and report triggers as needing implementation validation.
+- **Tuning (R1, PT2, PT3, T-LAB):** `workingHours` for each role, `estimateSpread` (20–50), `COMPETENCE_BANDS` (40 / 40 / 65), and ADR 0025's and 0026's numbers. #209 lists telephone hours and report triggers as needing implementation validation. Under ADR 0029, the Distiller's slowest distillation run must fit in their longest shift interval (load-validated), so `workingHours.DISTILLER`, `COMPETENCE_DURATION_PPM` and `ACTIVITY_DURATIONS.DISTILL` are tuned together.
+- **Report wording on two stages** (ADR 0029 decision 9): #224's approved lines map onto the mash and the run. `BATCH_STARTED`, now a mash set, still has no approved line.
 - **Later roles, not M002:** the Runner (purchasing agent), filed as a planned issue (decision 9).
