@@ -115,7 +115,7 @@ Agent PRs and orchestrator PRs follow the same review and merge rules: review, t
 Track these per merged task in the milestone doc:
 
 - Merged without rework? (y/n)
-- Number of review rounds: every review-agent verdict on the PR, the approving one included (a PR approved first time has 1). CI fix rounds aren't counted here; note them under what was caught. A locked test's planned step-1 lock (§7.3) isn't rework, and neither is taking a new screenshot's first baseline from CI actuals; a re-lock because a locked test was found defective is
+- Number of review rounds: every review-agent verdict on the PR, the approving one included (a PR approved first time has 1). CI fix rounds aren't counted here; note them under what was caught. A locked test's planned step-1 lock (§7.3) isn't rework, and neither is taking a new screenshot's first baseline from CI actuals. A re-lock because a locked test was found defective is rework, and so is refreshing an existing baseline that a change altered (counted from M002 on)
 - What a check or reviewer caught
 - Merged by: `auto` or `human`
 - Merged before review? (y/n), with a link to the follow-up issue if the review found something
