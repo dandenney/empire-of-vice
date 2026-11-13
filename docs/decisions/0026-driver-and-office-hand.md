@@ -6,6 +6,8 @@ Amends: ADR 0020 decision 10 (insolvency waits for takings riding home), ADR 002
 
 Defers to: ADR 0027 (#213, earned phone access and message-taking, from the human's decision on #203) and ADR 0028 (#214, the hiring scene and employees' hours, from the human's decision on #209). Both are written after this record and amend it. Where this record depends on them, it says so by issue number and doesn't decide the point itself.
 
+Amended by ADR 0027 (#213, earned phone access and message-taking): decisions 9 and 10. M002 has no calls from the road, with a binding rule for a later record (ADR 0027 decision 8); Miller's counts as a family number once it takes messages, and `CallInAttendant` gains a `tick` argument (ADR 0027 decision 9).
+
 ## Context
 
 GDD §21 (PERS-001): hiring removes a responsibility, not clicks, and the design test for any role is "what can now happen without the founder there?" The M002 roles table gives two more hires after the Distiller:
@@ -721,5 +723,5 @@ These are story and visual direction (factory.md §8). They stay PLACEHOLDER unt
 - **How an Office Hand candidate reads with no competence estimate** in the hiring scene (decision 1): ADR 0028 (#214), with the rest of the scene.
 - **Who at the still passes a message to whom:** whether a Distiller who answers should relay orders to the Driver (decision 10).
 - **The hand-over scene and copy:** giving a run order, the regular-run form, how a Driver's report reads ("Kessler took 15 of 20, paid $270; the back road was clear"), the hand-in line in the books.
-- **Calls from the road.** Settled in part by #203: a Driver never uses a buyer's private line (Kessler's) or a guest phone. Whether a Driver may call from a phone a stranger can use, during its hours and for its fee, is ADR 0027's (#213). This record defers road calls to it (decision 9).
+- **Calls from the road.** Settled by ADR 0027 (#213) decision 8: none in M002. A later record may add them only at a `PUBLIC` phone during its hours, never at a private line, a guest phone or under the founder's arrangement, and with the fee's own coverage row.
 - **Tuning (E2, E3, PT3, T-LAB):** every number in decision 17.
