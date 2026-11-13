@@ -2,7 +2,7 @@
 
 Status: accepted (decided by the orchestrator for M002 task D4, issue #171; implemented by the contract task it names and C1 #179)
 
-Amends: ADR 0021 decisions 5, 7 and 9 (the call view, held messages, older values), ADR 0023 decisions 1, 2a and 4 (the founder's call, the `phones` phase, orders on a call while busy).
+Amends: ADR 0021 decisions 5, 7, 8 and 9 (the call view, held messages, older values, a `PlayerPlace` for a place with no occupant), ADR 0023 decisions 1, 2a and 4 (the founder's call, the `phones` phase, orders on a call while busy).
 
 ## Context
 
@@ -56,10 +56,27 @@ Load validation: at most one entry per location, and every `locationId` exists.
 
 **Family phone lines are agreements** (decision 2), so they're always known too. **"The phone at L"** is the family's line if the family has one at L, otherwise L's `PHONES` entry, otherwise none. A party **has a phone** when its location's `PHONES` entry exists.
 
-**In the player snapshot,** each place gets `phone: PlacePhone | null`. A place with a phone but no occupant (the depot) must still appear in `PlayerSnapshot.places`. ADR 0021 decision 8 already lists every location, so K1's place entry carries `occupant: LocationOccupant | null`.
+**In the player snapshot,** each place gets `phone: PlacePhone | null`, on K1's shared `PlaceGeography` (`packages/contracts/src/player-snapshot.ts`).
+
+A place with a phone but no occupant (the depot, whose warehouse the family doesn't own) must still appear in `PlayerSnapshot.places`. Its contract says "every location", and ADR 0021 decision 8 says the same. But K1's `PlayerPlace` is the union `FacilityPlace | SupplierPlace | BuyerPlace`, which can't express such a place, so this record adds a fourth variant:
 
 ```ts
-// packages/contracts/src/player-snapshot.ts (extends K1's place entry)
+// packages/contracts/src/player-snapshot.ts (extends K1)
+interface PlaceGeography {
+  readonly id: LocationId;
+  readonly name: string;
+  readonly position: WorldPoint;
+  /** ADR 0024: the phone here, or null. Geography and agreements, always known. */
+  readonly phone: PlacePhone | null;
+}
+
+/** A location with nothing of the family's or the scenario's parties on it (ADR 0024). */
+export interface EmptyPlace extends PlaceGeography {
+  readonly kind: "NONE";
+}
+
+export type PlayerPlace = FacilityPlace | SupplierPlace | BuyerPlace | EmptyPlace;
+
 export interface PlacePhone {
   readonly public: boolean;         // PHONES[L].public, or true for a family line (the family can always use its own)
   readonly familyLine: boolean;     // FacilityState.phoneLine !== null at L
@@ -108,7 +125,11 @@ export const PHONE_LINE: PhoneLineDefinition;
 
 - **Presence:** the founder must be `PRESENT` at the facility, and not busy. It's a timed activity: `ACTIVITY_DURATIONS` gains `INSTALL_PHONE` (PLACEHOLDER 60 min: arranging the line with the exchange). The line works as soon as the command applies (PLACEHOLDER: an installation delay could later be a scheduled event).
 - **Any family facility** can have a line, including a slotless warehouse. A warehouse is a natural "office" later.
-- **Booking (FIN-001):** one transaction, kind `TELEPHONE` (new), key `idempotencyKey("TELEPHONE", "INSTALL", facilityId)`: Dr `EQUIPMENT` / Cr `CASH` at `PHONE_LINE.price`. That's a capital purchase, so net worth doesn't change, and the cash flow statement files it under `EQUIPMENT` through `EQUIPMENT`'s account category (ADR 0015). It emits `PHONE_INSTALLED { facilityId, price, transactionId }`. `phoneLine.bookValue` is the price, and `BalanceSheet.assets.equipment`, the `EQUIPMENT` account balance, includes it. Each facility has at most one line, so the key is unique.
+- **Booking (FIN-001):** one transaction, kind `TELEPHONE` (new), key `idempotencyKey("TELEPHONE", "INSTALL", facilityId)`: Dr `EQUIPMENT` / Cr `CASH` at `PHONE_LINE.price`. That's a capital purchase, so net worth doesn't change, and the cash flow statement files it under `EQUIPMENT` through `EQUIPMENT`'s account category (ADR 0015). It emits `PHONE_INSTALLED { facilityId, price, transactionId }`. `phoneLine.bookValue` is the price. Each facility has at most one line, so the key is unique.
+- **Where the line's value shows up:**
+  - `BalanceSheet.assets.equipment` is the `EQUIPMENT` account balance, so it includes the line.
+  - Known net worth's "owned assets" (ADR 0021 decision 8) includes it too, because it's an agreement.
+  - The **invariant "`EQUIPMENT` balance = Σ `facilities[].equipment[].bookValue`"** becomes "… + Σ `facilities[].phoneLine.bookValue`". That invariant is asserted in the unlocked `packages/simulation/test/production/asset-sale.test.ts` (`expectBooksBalance`, lines 163–164), and C1 updates it there.
 - **Not sellable in M002, and no running cost.** No line rental is charged (PLACEHOLDER: a rental would be a midnight charge depending only on an agreement, so it would be known at once under ADR 0021 rule 1). ADR 0020's restart analysis doesn't count the phone, because it can't be sold. Buying one with the last of the cash is a real choice, and it can be a bad one (locked decision #14). Selling a line is a later decision.
 - **Starting phones:** no scenario starts with one, so `ScenarioFacility` doesn't change, and new games set `phoneLine: null`. The M002 scenario says "no phone of your own" (milestone doc).
 
@@ -123,22 +144,25 @@ export interface PlaceCallCommand {
 }
 ```
 
-**Where the founder can call from.** The founder is `PRESENT` at a location F with a **usable phone**: a family line at F (always usable), or a `PHONES` entry at F with `public: true`, while F is open under `PLACE_HOURS` (ADR 0023 decision 6). A party's private line (`public: false`) isn't usable by the founder.
+**Where the founder can call from.** The founder is `PRESENT` at a location F that **has a phone the founder may use**: a family line at F, or a `PHONES` entry at F with `public: true`. A party's private line (`public: false`) isn't usable by the founder. That test ignores hours, and it's `NO_PHONE_HERE` when it fails. A public phone also needs F to be open under `PLACE_HOURS` (ADR 0023 decision 6), which is `PLACE_CLOSED` when it fails. A family line is always open.
 
-**Who answers at the called place L,** decided at the apply tick `t`:
+**Who answers at the called place L,** decided at the apply tick `t`. The rows are checked in order, and the first that matches decides. So at a `holdsMessages` phone that also has a party, the party answers (row 2), and the held messages are delivered when it does (below).
 
 | The phone at L | Answered by | When |
 |---|---|---|
-| A family line | A character stationed at L who answers phones: the **attendant hook** (decision 9) | Deterministic: answered iff `phoneAttendant(L)` is non-null. No draw |
+| A family line | A character stationed at L who answers phones: the **call-out attendant hook** (decision 9) | Answered iff `CallOutAttendant` returns a character. By its type it reads only the player view, the seed and the tick |
 | A `PHONES` entry, with a buyer or supplier at L | That party (`PARTY`) | Only while L is open (`PLACE_HOURS`). Then answered iff a keyed draw is below `CALL_ANSWER_PPM[partyKind]` (decision 7). Outside hours: no answer, and no draw |
 | A `PHONES` entry with `holdsMessages`, and no party | Whoever keeps the place (`PROPRIETOR`) | While L is open. Deterministic |
 | Anything else (the depot's bare public phone) | Nobody | Never |
 
 ```ts
 // packages/contracts/src/state.ts
+/** A party that can be on the other end of a call: never one of the family's facilities. */
+export type CallParty = Exclude<LocationOccupant, { readonly kind: "FACILITY" }>;
+
 export type CallAnswerer =
-  | { readonly kind: "PARTY"; readonly party: LocationOccupant }   // a BUYER or SUPPLIER
-  | { readonly kind: "EMPLOYEE"; readonly characterId: CharacterId } // the attendant hook (ADR 0026)
+  | { readonly kind: "PARTY"; readonly party: CallParty }
+  | { readonly kind: "EMPLOYEE"; readonly characterId: CharacterId } // the call-out attendant hook (ADR 0026)
   | { readonly kind: "PROPRIETOR" };                                  // a phone that holds messages
 ```
 
@@ -210,7 +234,7 @@ Identity still resolves through the issuer's view first (ADR 0022 gate 1). So an
 
 **Busy and time (amends ADR 0023 decision 4).**
 
-- **On-call orders pass the busy gate.** A by-phone `AGREE_DEAL` or `ACCEPT_CONTRACT` passes it when `busy.activity === "PHONE_CALL"` and the call is with that party, and it **doesn't change `busy`**. It takes the call's duration (ADR 0022 decision 3), and the founder may give several orders on one call.
+- **On-call orders pass the busy gate.** A by-phone `AGREE_DEAL` or `ACCEPT_CONTRACT` passes it when `busy.activity === "PHONE_CALL"` and the call is with that party, and it **doesn't change `busy`**. It takes the call's duration (ADR 0022 decision 3), and the founder may give several orders on one call. Orders to an **employee** on a call (`Reach = "PHONE"`, decision 9) need the same exemption. ADR 0025 and ADR 0026 define those commands, and they apply this rule to them.
 - **Every other timed command, `TRAVEL`, `REST` and `PLACE_CALL` are `FOUNDER_BUSY` during the call,** including an in-person order at the founder's own place. You're on the phone. Instant commands at the founder's place stay allowed (ADR 0023).
 - **On-call orders aren't hours-gated.** The call started in the party's hours, so `PLACE_CLOSED` isn't checked again. That's ADR 0023's "must be open when the activity starts", with the call as the activity.
 - **Same tick.** On-call orders are allowed at every apply tick `t ≤ busy.until`, matching the busy gate's `≥`. The founder phase ends the call later in tick `busy.until` (decision 8), so at `t = busy.until` the order is still on the call, and from `busy.until + 1` it's `NOT_PRESENT`. A new `PLACE_CALL` at `t = busy.until` is `FOUNDER_BUSY`, so the founder is free from the next tick, as for every activity.
@@ -228,7 +252,7 @@ export type CallInReason = "NEW_CONTRACT_OFFER" | "INSTALLMENT_DUE";
 // packages/game-data/src/phones.ts (ADR 0012: game-data's own definition type, from contract primitives)
 
 export interface CallInRule {
-  readonly partyKind: "BUYER" | "SUPPLIER";
+  readonly partyKind: Exclude<PartyKind, "FACILITY">;
   readonly reason: CallInReason;
   /** The subject the trigger reads. Validated: in KNOWLEDGE_VISIBILITY.PHONE[partyKind] and .MESSAGE[partyKind]. */
   readonly subjectKind: SubjectKind;
@@ -264,10 +288,10 @@ Suppliers have no rules in M002 (PLACEHOLDER). The table can add some, for examp
 **The family's numbers, and who answers.** The family's numbers are the locations with a family line, plus every `PHONES` entry with `holdsMessages`, excluding the caller's own place. A call reaches the first of these that answers:
 
 1. **The founder:** if the founder is `PRESENT` (busy or not) at a family line, or at a `holdsMessages` phone whose place is open, and that line isn't engaged, the founder answers. The founder's own presence comes first. That's always-known state, so it leaks nothing (decision 9 explains why it has to be first).
-2. Otherwise, the numbers in `compareIds` order. At a family line, the **attendant hook** (decision 9) takes a message (`takenBy: characterId`). At a `holdsMessages` phone whose place is open, the proprietor takes one (`takenBy: null`).
+2. Otherwise, the numbers that aren't engaged, in `compareIds` order. At a family line, the **call-in attendant hook** (decision 9) takes a message (`takenBy: characterId`). At a `holdsMessages` phone whose place is open, whoever keeps it (the party there, or the proprietor) takes one (`takenBy: null`).
 3. Otherwise it **rings out**.
 
-**A line is engaged** while the founder's active call uses it: the phone at the founder's place, and the line at `call.locationId`. A call to an engaged line gets the busy signal, which is treated the same as ringing out. A `RESTING` founder doesn't answer (they're asleep), and neither does one who is travelling or riding.
+**A line is engaged** while the founder's active call uses it: the phone at the founder's place, and the line at `call.locationId`. A caller who reaches an engaged number gets the busy signal and **moves on to the next number** in step 2. If every number is engaged or unanswered, the call rings out. A `RESTING` founder doesn't answer (they're asleep), and neither does one who is travelling or riding.
 
 **Outcomes:**
 
@@ -302,10 +326,17 @@ export interface HeldMessage {
   readonly values: readonly { readonly subject: KnowledgeSubject; readonly value: KnowledgeValue }[];
 }
 
+/** Messages waiting at one place, oldest first, at most MESSAGE_LIMIT (game-data). Like K1's PendingNews. */
+export interface PendingMessages {
+  readonly locationId: LocationId;
+  readonly items: readonly HeldMessage[];
+  readonly dropped: number;
+}
+
 export interface KnowledgeState {
-  // ADR 0021's fields, plus:
-  /** Messages waiting at each place, oldest first; at most MESSAGE_LIMIT per place. Sorted by locationId. */
-  readonly pendingMessages: readonly { readonly locationId: LocationId; readonly items: readonly HeldMessage[]; readonly dropped: number }[];
+  // K1's fields (records, pendingNews, pendingBooks, activity, lastCatchUp), plus:
+  /** One entry per place with messages waiting, sorted by `locationId` with `compareIds`. */
+  readonly pendingMessages: readonly PendingMessages[];
 }
 
 /** A delivered message as the player sees it: what it said, not the values (those go into records). */
@@ -333,16 +364,23 @@ export interface DeliveredMessage {
 
 **Delivery.** Messages held at L are delivered:
 
-- **on arrival or waking at L**, in ADR 0021's arrival catch-up, but only if L is open (own facilities always are). The catch-up gains `messages: DeliveredMessage[]` and `droppedMessages: number`.
-- **while the founder is `PRESENT` at L and L is open**, at the start of the `phones` phase (decision 8). That covers arriving before opening and waiting. Each message is an activity item `MESSAGE_DELIVERED`.
-- **on an answered call to L** whose phone holds messages (decision 3), inside the `PLACE_CALL` transaction, as `MESSAGE_DELIVERED` activity items.
+- **on arrival or waking at L**, in the same step as ADR 0021's arrival catch-up, but only if L is open (own facilities always are);
+- **while the founder is `PRESENT` at L and L is open**, at the start of the `phones` phase (decision 8). That covers arriving before opening and waiting;
+- **on an answered call to L** whose phone holds messages (decision 3), inside the `PLACE_CALL` transaction.
 
-Each delivery of one or more messages emits `MESSAGES_DELIVERED { locationId, count, dropped, via: "ARRIVAL" | "PRESENT" | "CALL" }`, then clears that place's entry. Messages are never taken where the founder is present, because the founder answers there (decision 5), so nothing piles up under their nose.
+**How a delivery is reported.** Every delivery, whichever way it happens, writes one `MESSAGE_DELIVERED` activity item per message. If the place's `dropped` count is above 0, it adds a single `MESSAGES_DROPPED { locationId, count }` item. It emits `MESSAGES_DELIVERED { locationId, count, dropped, via: "ARRIVAL" | "PRESENT" | "CALL" }`, then clears that place's entry. A place with no messages and nothing dropped emits nothing.
+
+**`CatchUp` and `KNOWLEDGE_CAUGHT_UP` don't change.** K1's `CatchUp` (`packages/contracts/src/knowledge.ts`), and the `KNOWLEDGE_CAUGHT_UP` payload derived from it (`Omit<CatchUp, "tick">`), stay as they are. Messages delivered on arrival are reported only through the activity items and `MESSAGES_DELIVERED { via: "ARRIVAL" }`, written in the same step. The UI can show them next to the arrival summary. This keeps a saved `knowledge.lastCatchUp`, and any `KNOWLEDGE_CAUGHT_UP` in `eventJournal`, valid without a migration (decision 13).
+
+Messages are never taken where the founder is present, because the founder answers there (decision 5), so nothing piles up under their nose.
 
 **Writing delivered values (clarifies ADR 0021 decision 4):**
 
-- **Older values never overwrite newer ones.** A message's values are written with `learnedAt = takenAt` and source `MESSAGE { takenAtLocationId, takenBy }`, and each one replaces the stored record only if `record.learnedAt ≤ takenAt`. A message is the only M002 source that delivers values older than the current tick. ADR 0025's reports may reuse this rule.
-- **Books.** A delivered value clears from `pendingBooks` only the entries concerning its subject whose transaction tick is **`< takenAt`**. Transactions posted at or after `takenAt` stay pending, so books never run ahead of the values the founder holds. A transaction posted earlier on the tick `takenAt` stays pending until the subject is next learned. That's a lag, never a wrong book (ADR 0021: "the books can lag, but they never stay wrong").
+- **Older values never overwrite newer ones.** A message's values are written with `learnedAt = takenAt` and source `MESSAGE { takenAtLocationId, takenBy }`. Each one replaces the stored record only if **`record.learnedAt < takenAt`** (strict), or if there's no record.
+  - **Why strict:** a message is copied in the `phones` phase of tick `takenAt`, but later phases of that same tick can write a newer value with the same `learnedAt`. For example, an `INSTALLMENT_SETTLEMENT` cash posting in `deadlines` writes `CONTRACT_PROGRESS` with `learnedAt = takenAt` (ADR 0021 decision 6). On a tie, the existing record stays.
+  - **The cost** is that a record learned earlier in tick `takenAt` (in `production`, `vehicles` or `resolution`) also stays. That's a lag of less than one tick, never a regression, and it matches the books clause below.
+  - A message is the only M002 source that delivers values older than the current tick. ADR 0025's reports may reuse this rule.
+- **Books.** A delivered value clears from `pendingBooks` only the entries concerning its subject whose transaction tick is **`< takenAt`**, and only when the value was actually written (the rule above). A value kept back by a tie clears nothing. Transactions posted at or after `takenAt` stay pending, so books never run ahead of the values the founder holds. A transaction posted earlier on the tick `takenAt` stays pending until the subject is next learned. That's a lag, never a wrong book (ADR 0021: "the books can lag, but they never stay wrong").
 
 ### 7. Randomness: keyed one-shot draws
 
@@ -364,7 +402,7 @@ If SK1c's per-trip helper (ADR 0022 decision 8) is already general enough, C1 re
 | Does the party answer a call out? `nextInt(rng, 1_000_000) < CALL_ANSWER_PPM[partyKind]` | `` `call-out:${locationId}` `` | the apply tick `t` |
 | Does the party call in this window? `nextInt(rng, 1_000_000) < rule.chancePpm` | `` `call-in:${callerLocationId}:${reason}` `` | `windowIndex` |
 
-`CALL_ANSWER_PPM` (game-data): PLACEHOLDER `{ BUYER: 850_000, SUPPLIER: 900_000 }`.
+`CALL_ANSWER_PPM: Readonly<Record<Exclude<PartyKind, "FACILITY">, number>>` (game-data): PLACEHOLDER `{ BUYER: 850_000, SUPPLIER: 900_000 }`.
 
 - **Every input is fixed by things hidden activity can't change:** `GameState.seed`, static location IDs, static reasons, and the tick. No draw is stored, so a call that rings out or never happens advances nothing.
 - **Phones draw from none of the four existing streams,** so M001's market, contract, route and production draws are untouched.
@@ -375,7 +413,7 @@ If SK1c's per-trip helper (ADR 0022 decision 8) is already general enough, C1 re
 `PHASES` becomes `production, vehicles, [world events], resolution, founder, phones, deadlines, midnight` (amends ADR 0023 decision 2a), followed by ADR 0021's persist step.
 
 - **Commands** (first in the tick): `PLACE_CALL`, `INSTALL_PHONE`, and by-phone orders apply here, under the busy rule in decision 4.
-- **`founder`, step 1 (busy ends):** if `busy.until ≤ tick` and the activity is `PHONE_CALL`, persist the call view into records, then clear `call` and `busy`. `PHONE_NO_ANSWER` and `INSTALL_PHONE` just clear `busy`. Arrival and waking (steps 2–4) deliver messages in the catch-up (decision 6).
+- **`founder`, step 1 (busy ends):** if `busy.until ≤ tick` and the activity is `PHONE_CALL`, persist the call view into records, then clear `call` and `busy`. `PHONE_NO_ANSWER` and `INSTALL_PHONE` just clear `busy`. Arrival and waking (steps 2–4) deliver messages in the same step as the catch-up (decision 6).
 - **`phones` (new, after `founder`):**
   1. Deliver messages at the founder's place if they're `PRESENT` and it's open.
   2. On a window tick, run calls in (decision 5).
@@ -388,15 +426,35 @@ If SK1c's per-trip helper (ADR 0022 decision 8) is already general enough, C1 re
 
 ### 9. The attendant hook and the communication gate
 
-**The attendant hook.** "Someone stationed at a place with a phone" is ADR 0026's Office Hand (D5b). This record defines only the interface it fills:
+**The attendant hooks.** "Someone stationed at a place with a phone" is ADR 0026's Office Hand (D5b). The two directions have different non-leak requirements, so there are **two hooks**, and the call-out hook's type enforces its requirement, as ADR 0022's `IssuerView` does for validators:
 
 ```ts
-// packages/simulation (internal; ADR 0026 implements it)
-/** The character who answers the family line at `locationId` now, or null. M002 before E3: always null. */
-type PhoneAttendant = (state: GameState, data: GameData, locationId: LocationId) => CharacterId | null;
+// packages/simulation (internal; ADR 0026 implements both. M002 before E3: both return null)
+
+/**
+ * Who answers the family line at `locationId` when the FOUNDER calls it. Its result decides
+ * the call's immediate outcome and the CALL_PLACED activity item, so it sees only the
+ * player view (knowledge, always-known state including agreements such as stations and
+ * hours, the live view) plus the game seed and the tick for a keyed draw (decision 7).
+ * It can't read GameState.
+ */
+type CallOutAttendant = (view: PlayerView, data: GameData, locationId: LocationId, seed: number, tick: Tick) => CharacterId | null;
+
+/**
+ * Who takes a message on the family line at `locationId` when a party calls in. It may read
+ * world state (an Office Hand away on an errand), because its only output is a held message,
+ * which is hidden until it's delivered (decision 10).
+ */
+type CallInAttendant = (state: GameState, data: GameData, locationId: LocationId) => CharacterId | null;
 ```
 
-**Requirement on ADR 0026:** whether the attendant answers a **call out from the founder** must depend only on agreements (who is stationed where, their hours) and always-known state, or on a keyed draw under decision 7. That call's immediate result and activity item depend on it. For **calls in**, the hook may depend on world state (an Office Hand away on an errand), because its only output is a held message, which is hidden until it's delivered (decision 10). That's also why the founder answers first in decision 5: if the founder came after an attendant whose answer could depend on hidden state, whether the founder hears a call would leak that state.
+**Requirements on ADR 0026:**
+
+- `CallOutAttendant` may not call `CallInAttendant`, or read anything outside its arguments.
+- The two may disagree. For example, an Office Hand on an errand misses a call in, but by the agreements they're "at the office" for the founder's call out.
+- Nothing player-visible may come from `CallInAttendant` except through a delivered message.
+
+The last rule is also why the founder answers calls in first in decision 5: if the founder came after an attendant whose answer could depend on hidden state, whether the founder hears a call would leak that state.
 
 **The communication gate (ADR 0022 decision 4).** An order for an employee reaches them:
 
@@ -441,7 +499,12 @@ The required fields `FacilityState.phoneLine`, `PRESENT.call` and `KnowledgeStat
 | `founder.whereabouts.call`, when `whereabouts.kind === "PRESENT"` | `null` | The save's own `founder.whereabouts.kind`. No earlier save can be on a call |
 | `knowledge.pendingMessages` | `[]` | None needed: no earlier save can hold a message |
 
-New `ActivityKind`, command, event, rejection and `TransactionKind` members are additive. Existing saves satisfy them, so they need no migration (ADR 0009). No existing command changes shape, because the by-phone context is derived (decision 4). The task adds the fixture save and migration test the persistence tests expect (ADR 0009), as K1 and its successors do.
+**Fields that don't change:**
+
+- **`knowledge.lastCatchUp`** and any `KNOWLEDGE_CAUGHT_UP` events in `eventJournal`: `CatchUp` doesn't change (decision 6), so a saved non-null `lastCatchUp` and journaled catch-up events still validate. No migration step reads them.
+- **New union members** (`ActivityKind`, `ActivityItem`, `PlayerPlace`, command, event, rejection and `TransactionKind`) are additive. Existing saves satisfy them, so they need no migration (ADR 0009). `PlayerPlace` isn't saved at all.
+
+No existing command changes shape, because the by-phone context is derived (decision 4). The task adds the fixture save and migration test the persistence tests expect (ADR 0009), as K1 and its successors do.
 
 ### 14. Rejection reasons
 
@@ -451,7 +514,7 @@ New `ActivityKind`, command, event, rejection and `TransactionKind` members are 
 |---|---|---|
 | 1 Shape, identity | `locationId` isn't a location | `UNKNOWN_ENTITY { kind: "Location", id }` (existing) |
 | 2 Presence | Travelling, riding or resting | `FOUNDER_AWAY { whereabouts }` (ADR 0023) |
-| 2 Presence | No usable phone where the founder stands | **`NO_PHONE_HERE { locationId }`** (new): `locationId` is the founder's place |
+| 2 Presence | No family line and no `public` `PHONES` entry where the founder stands, whatever the hours | **`NO_PHONE_HERE { locationId }`** (new): `locationId` is the founder's place |
 | 2 Presence | Busy, including on a call | `FOUNDER_BUSY { until }` (ADR 0022) |
 | 2 Presence | The public phone's place is closed (a family line never is) | `PLACE_CLOSED { locationId, opensAt }` (ADR 0022) |
 | 5 Validity | The target is the founder's own place | `ALREADY_THERE` (ADR 0023) |
@@ -488,10 +551,11 @@ One contract-change task, filed when this ADR merges, after O1b in the contract 
 - `ledger.ts`: `TransactionKind` `TELEPHONE`. `projection/finance.ts`'s `CASH_FLOW_CATEGORY` maps it to `OVERHEAD`. That's simulation code, C1's.
 - `knowledge.ts`:
   - `HeldMessage`, `DeliveredMessage` and `KnowledgeState.pendingMessages`;
-  - `CatchUp.messages` and `CatchUp.droppedMessages`;
-  - `ActivityItem` gains `CALL_PLACED { locationId, answered, answeredBy: CallAnswerer["kind"] | null }`, `CALL_RECEIVED { callerLocationId, phoneLocationId, reason }`, `MESSAGE_DELIVERED { message: DeliveredMessage }` and `PHONE_INSTALLED { facilityId }`;
+  - `PendingMessages`;
+  - `CatchUp` is **unchanged** (decision 6), and so is `KNOWLEDGE_CAUGHT_UP`;
+  - `ActivityItem` gains `CALL_PLACED { locationId, answered, answeredBy: CallAnswerer["kind"] | null }`, `CALL_RECEIVED { callerLocationId, phoneLocationId, reason }`, `MESSAGE_DELIVERED { message: DeliveredMessage }`, `MESSAGES_DROPPED { locationId, count }` and `PHONE_INSTALLED { facilityId }`, each with K1's `tick`;
   - `CallInReason` (defined here; game-data's `CallInRule` imports it, ADR 0012).
-- `player-snapshot.ts`: `PlacePhone` and the place's `phone` field. The place's `occupant` is nullable, if K1 didn't already make it so.
+- `player-snapshot.ts`: `PlacePhone`; `PlaceGeography.phone`; the `EmptyPlace` variant (`kind: "NONE"`) of `PlayerPlace`, for a location with no occupant in the scenario (decision 1).
 - `snapshot.ts` (world): `FacilitySnapshot.phoneLine: { bookValue: Money } | null`, for the debug view.
 - `schemas.ts`, `save.ts`: Zod for all of the above; the bump and the migration in decision 13, with an old-version fixture.
 - `packages/game-data/src/phones.ts` (new): `PhoneDefinition`, `PHONES`, `PhoneLineDefinition`, `PHONE_LINE`, `CALL_COST`, `CALL_ANSWER_PPM`, `CallInRule`, `CALL_IN_RULES`, `CALL_IN_INTERVAL_TICKS`, `MESSAGE_LIMIT`, with load validation (one entry per location; rule subjects in both the `PHONE` and `MESSAGE` rows).
@@ -509,7 +573,7 @@ C1 (#179) implements the behaviour:
 - the scheduler's pause on connect (`apps/game/src/workers/scheduler.ts`);
 - the producer coverage rows.
 
-ADR 0026 fills the attendant hook and the `FACILITY` rows.
+ADR 0026 fills both attendant hooks and the `FACILITY` rows.
 
 ## Design-record checklist (factory.md §1)
 
@@ -519,14 +583,14 @@ Inputs to every surface below are always-known state (founder whereabouts includ
 
 | Command or event | Immediate result | Activity item | Catch-up | Books row | Snapshot field |
 |---|---|---|---|---|---|
-| `PLACE_CALL` | Reasons in decision 14, all from always-known state. Applied whether or not anyone answers | `CALL_PLACED`: the answer comes from hours (known), a keyed draw, or the attendant hook (agreements or a keyed draw, decision 9) | None | `TELEPHONE` row with entries iff answered; known by rule 1 | `founder.call`; the call view (a channel); delivered messages |
+| `PLACE_CALL` | Reasons in decision 14, all from always-known state. Applied whether or not anyone answers | `CALL_PLACED`: the answer comes from hours (known), a keyed draw, or `CallOutAttendant`, which by its type reads only the player view, the seed and the tick (decision 9) | None | `TELEPHONE` row with entries iff answered; known by rule 1 | `founder.call`; the call view (a channel); delivered messages |
 | By-phone `AGREE_DEAL` | Validated against the call view only; no budget (ADR 0022 decision 6) | Inputs plus call-view values | None | None (a deal moves no cash) | The held deal (an agreement) |
 | By-phone `ACCEPT_CONTRACT` | `CONTRACT_OFFERS` and `STANDING` from the call view; world tier agrees (decision 4) | Inputs only (ADR 0022: not the reserved count) | None | Reservations with no entries never appear | Contract terms (an agreement) |
 | `INSTALL_PHONE` | Reasons in decision 14: presence, own facility, cash, live-view tier | `PHONE_INSTALLED` | None | `TELEPHONE` install row, rule 1 | `places[].phone`, `phoneLine` |
 | Call in, the founder answers | — | `CALL_RECEIVED`. The trigger reads only a subject the call delivers, plus knowledge (decision 6 validation), so a call that differs between runs delivers a subject in D_t | None | Entry-less; never in books | Records with source `PHONE` |
 | Call in, message taken | — | None until delivered | None until delivered | Entry-less | None. `pendingMessages` isn't projected |
 | Call in, rings out | — | None | None | None | None. No state changes at all |
-| Message delivery (arrival, present, call) | — | `MESSAGE_DELIVERED` (present or call) | `messages`, `droppedMessages` (arrival) | Clears only entries with tick `< takenAt` | Records with source `MESSAGE` |
+| Message delivery (arrival, present, call) | — | `MESSAGE_DELIVERED` per message, plus `MESSAGES_DROPPED` (all three ways) | Unchanged (K1's `CatchUp`); arrival delivery is reported through activity | Clears only entries with tick `< takenAt`, and only for values actually written | Records with source `MESSAGE` (only where `record.learnedAt < takenAt`) |
 | Call end (`founder` phase) | — | None | None | None | Call view persisted to records |
 
 ### 2. Coverage tables (ADR 0021 decisions 6 and 7)
@@ -537,11 +601,17 @@ Inputs to every surface below are always-known state (founder whereabouts includ
 | `TELEPHONE:INSTALL:<facilityId>` | Dr `EQUIPMENT` / Cr `CASH` | Rule 1. No row needed |
 | `TELEPHONE:IN:<caller>:<reason>:<window>` | None, ever | Rule 4: never in the books. No row needed |
 
-Phones add no producer that can post entries without a founder command, so neither table gains a row. The producer coverage test lists the three families with these classifications.
+Phones add no producer that can post entries without a founder command, so neither table gains a row. K1's `TRANSACTION_PRODUCERS` registry (`packages/contracts/src/knowledge.ts`) gains the three families, which the coverage test checks against the simulation's `idempotencyKey(...)` call sites:
+
+```ts
+"TELEPHONE:CALL": { trigger: "FOUNDER_COMMAND", legs: ["CASH", "NO_ENTRIES"] },
+"TELEPHONE:INSTALL": { trigger: "FOUNDER_COMMAND", legs: ["CASH"] },
+"TELEPHONE:IN": { trigger: "WORLD", legs: ["NO_ENTRIES"] },
+```
 
 ### 3. Migration
 
-From save fields only (decision 13): `phoneLine: null`, `call: null` (read from `whereabouts.kind`) and `pendingMessages: []`. No game-data reads.
+From save fields only (decision 13): `phoneLine: null`, `call: null` (read from `whereabouts.kind`) and `pendingMessages: []`. No game-data reads. `CatchUp` and `KNOWLEDGE_CAUGHT_UP` are deliberately left unchanged, so saved `lastCatchUp` values and journaled catch-up events need no step.
 
 ### 4. Re-locks
 
@@ -587,6 +657,7 @@ Keyed one-shot draws (decision 7), never a shared stream. Their seeds come from 
 These are story and visual direction (factory.md §8). They stay PLACEHOLDER until the human decides, and the orchestrator files or links `needs-design` issues for them (the milestone already lists "which places have public phones"):
 
 - **Which places have phones,** and which are public (`PHONES`). The table in decision 1 is a stand-in: the general store is Miller's Feed & Seed, there are public phones at the hotel lobby and the depot, Kessler has a private line, and the Crossroads has none.
+- **The hotel lobby phone's hours.** `LAKEVIEW` has one `PLACE_HOURS` entry, the back room's 20:00–02:00 (ADR 0023), so its lobby phone is only usable at night. Either that's the story, or the lobby needs its own hours (which would mean per-phone hours, a game-data change).
 - **Whether any place holds messages for the family before the founder owns a phone** (`holdsMessages`, all `false` for now).
 - **Names and copy:** call and message wording ("Tue 16:00 — Kessler wants 20 more by Thursday (via Ruth, at the office)"), the operator and party-line flavour, and the "no answer" line.
 - **The call scene and the pause-on-connect presentation.**
