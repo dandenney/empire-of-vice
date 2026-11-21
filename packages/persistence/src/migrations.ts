@@ -431,8 +431,97 @@ export const migrateV6ToV7: SaveMigration = {
   },
 };
 
+/** A v7 knowledge value with `washes: []` if it's a FACILITY_OPERATIONS value; any other kind unchanged. */
+function withWashes(value: Readonly<Record<string, unknown>>, where: string): Readonly<Record<string, unknown>> {
+  if (value["kind"] !== "FACILITY_OPERATIONS") return value;
+  if ("washes" in value) throw new Error(`${where} already has washes`);
+  return { ...value, washes: [] };
+}
+
+/** A v7 catch-up's `lines` with `washes: []` on every FACILITY_OPERATIONS `before` and `after`. */
+function linesWithWashes(lines: unknown, where: string): Record<string, unknown>[] {
+  return asArray(lines, where).map((l, i) => {
+    const line = asObject(l, `${where}[${i}]`);
+    const before = line["before"] === null ? null : withWashes(asObject(line["before"], `${where}[${i}].before`), `${where}[${i}].before`);
+    return { ...line, before, after: withWashes(asObject(line["after"], `${where}[${i}].after`), `${where}[${i}].after`) };
+  });
+}
+
+/**
+ * v7 → v8 (TS1, ADR 0029 decision 13), from the save's own fields only (ADR 0009):
+ * - `washes: []`: no earlier save can hold a wash, because no command could set a mash;
+ * - `washes: []` on every saved FACILITY_OPERATIONS value, for the same reason:
+ *   `knowledge.records[].value`, `knowledge.lastCatchUp.lines[].before`/`.after`,
+ *   `knowledge.pendingMessages[].items[].values[].value`, and the journaled
+ *   KNOWLEDGE_CAUGHT_UP events' `lines[].before`/`.after` (`eventJournal`, the one
+ *   place the decision's list leaves out: the event carries the catch-up's lines).
+ *   A delivered message (`knowledge.activity[]`) carries subjects, not values, and
+ *   a news item's events carry no knowledge values.
+ * Unchanged: production jobs (a saved single-stage job settles as before),
+ * reservations (no BARREL holder can exist), counters (washes have no IDs), the
+ * founder (no MASH or DISTILL busy can exist), employees, and standing orders.
+ * The new union members (commands, events, reasons, activity kinds, the holder)
+ * are additive.
+ */
+export const migrateV7ToV8: SaveMigration = {
+  fromVersion: 7,
+  toVersion: 8,
+  migrate: (save) => {
+    const state = asObject(save["state"], "save.state");
+    if ("washes" in state) throw new Error("save.state already has washes");
+    const knowledge = asObject(state["knowledge"], "save.state.knowledge");
+    const records = asArray(knowledge["records"], "save.state.knowledge.records").map((r, i) => {
+      const record = asObject(r, `save.state.knowledge.records[${i}]`);
+      const where = `save.state.knowledge.records[${i}].value`;
+      return { ...record, value: withWashes(asObject(record["value"], where), where) };
+    });
+    const lastCatchUp =
+      knowledge["lastCatchUp"] === null
+        ? null
+        : (() => {
+            const catchUp = asObject(knowledge["lastCatchUp"], "save.state.knowledge.lastCatchUp");
+            return { ...catchUp, lines: linesWithWashes(catchUp["lines"], "save.state.knowledge.lastCatchUp.lines") };
+          })();
+    const pendingMessages = asArray(knowledge["pendingMessages"], "save.state.knowledge.pendingMessages").map((p, i) => {
+      const place = asObject(p, `save.state.knowledge.pendingMessages[${i}]`);
+      const items = asArray(place["items"], `save.state.knowledge.pendingMessages[${i}].items`).map((m, j) => {
+        const message = asObject(m, `save.state.knowledge.pendingMessages[${i}].items[${j}]`);
+        const values = asArray(message["values"], `save.state.knowledge.pendingMessages[${i}].items[${j}].values`).map((v, k) => {
+          const where = `save.state.knowledge.pendingMessages[${i}].items[${j}].values[${k}]`;
+          const entry = asObject(v, where);
+          return { ...entry, value: withWashes(asObject(entry["value"], `${where}.value`), `${where}.value`) };
+        });
+        return { ...message, values };
+      });
+      return { ...place, items };
+    });
+    const eventJournal = asArray(state["eventJournal"], "save.state.eventJournal").map((e, i) => {
+      const event = asObject(e, `save.state.eventJournal[${i}]`);
+      if (event["type"] !== "KNOWLEDGE_CAUGHT_UP") return event;
+      return { ...event, lines: linesWithWashes(event["lines"], `save.state.eventJournal[${i}].lines`) };
+    });
+    return {
+      ...save,
+      state: {
+        ...state,
+        eventJournal,
+        knowledge: { ...knowledge, records, lastCatchUp, pendingMessages },
+        washes: [],
+      },
+    };
+  },
+};
+
 /** Every migration, oldest first. Add one per SAVE_SCHEMA_VERSION bump. */
-export const SAVE_MIGRATIONS: readonly SaveMigration[] = [migrateV1ToV2, migrateV2ToV3, migrateV3ToV4, migrateV4ToV5, migrateV5ToV6, migrateV6ToV7];
+export const SAVE_MIGRATIONS: readonly SaveMigration[] = [
+  migrateV1ToV2,
+  migrateV2ToV3,
+  migrateV3ToV4,
+  migrateV4ToV5,
+  migrateV5ToV6,
+  migrateV6ToV7,
+  migrateV7ToV8,
+];
 
 export type MigrationResult =
   | { readonly ok: true; readonly save: Record<string, unknown> }

@@ -95,4 +95,7 @@ export const COMMAND_COPY: Readonly<Record<GameCommandType, string>> = {
   HIRE_EMPLOYEE: "Hire",
   SET_STANDING_ORDER: "Give standing orders",
   DISMISS_EMPLOYEE: "Let go",
+  // ADR 0029 (TS1, #243). No-ops in M001 and until TS2 (#244). PLACEHOLDER copy.
+  SET_MASH: "Set a mash",
+  START_DISTILLATION: "Distill",
 };

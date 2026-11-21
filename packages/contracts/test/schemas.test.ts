@@ -98,6 +98,14 @@ import {
   type ReportVia,
   type StandingOrderState,
   type StandingOrderTerms,
+  reservationHolderSchema,
+  washStateSchema,
+  washSnapshotSchema,
+  recipeTwoStageOptionSchema,
+  type RecipeTwoStageOption,
+  type ReservationHolder,
+  type WashSnapshot,
+  type WashState,
 } from "../src/index.ts";
 
 /** Strips readonly all the way down, so a schema's (mutable) output can be compared to a readonly contract type. */
@@ -156,6 +164,11 @@ describe("schemas match the contract types exactly", () => {
     expectTypeOf<z.infer<typeof playerEmployeeSchema>>().toEqualTypeOf<DeepMutable<PlayerEmployee>>();
     expectTypeOf<z.infer<typeof playerCandidateSchema>>().toEqualTypeOf<DeepMutable<PlayerCandidate>>();
     expectTypeOf<z.infer<typeof playerHiringSchema>>().toEqualTypeOf<DeepMutable<PlayerHiring>>();
+    // ADR 0029 decision 16 (TS1).
+    expectTypeOf<z.infer<typeof washStateSchema>>().toEqualTypeOf<DeepMutable<WashState>>();
+    expectTypeOf<z.infer<typeof reservationHolderSchema>>().toEqualTypeOf<DeepMutable<ReservationHolder>>();
+    expectTypeOf<z.infer<typeof washSnapshotSchema>>().toEqualTypeOf<DeepMutable<WashSnapshot>>();
+    expectTypeOf<z.infer<typeof recipeTwoStageOptionSchema>>().toEqualTypeOf<DeepMutable<RecipeTwoStageOption>>();
   });
 
   it("and the comparison really detects drift", () => {
@@ -167,6 +180,8 @@ describe("schemas match the contract types exactly", () => {
     expectTypeOf<z.infer<typeof knowledgeValueSchema>>().not.toEqualTypeOf<DeepMutable<Exclude<KnowledgeValue, { kind: "STANDING" }>>>();
     expectTypeOf<z.infer<typeof callInReasonSchema>>().not.toEqualTypeOf<Exclude<CallInReason, "EMPLOYEE_REPORT">>();
     expectTypeOf<z.infer<typeof reportLineSchema>>().not.toEqualTypeOf<DeepMutable<Exclude<ReportLine, { kind: "HELD_BACK" }>>>();
+    expectTypeOf<z.infer<typeof reservationHolderSchema>>().not.toEqualTypeOf<DeepMutable<Exclude<ReservationHolder, { kind: "BARREL" }>>>();
+    expectTypeOf<z.infer<typeof washStateSchema>>().not.toEqualTypeOf<DeepMutable<Omit<WashState, "readyAt">>>();
     // Brands survive: schema output is Money, not a plain number.
     expectTypeOf<z.infer<typeof saveGameSchema>["state"]["materialPools"][number]["totalCost"]>().toEqualTypeOf<Money>();
     expectTypeOf<Money>().not.toEqualTypeOf<number>();

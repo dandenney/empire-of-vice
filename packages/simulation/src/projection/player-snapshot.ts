@@ -191,6 +191,8 @@ function knownRecipe(
     ticksPerCase: recipe.ticksPerCase,
     maxStartableQuantity,
     blockedBy,
+    // ADR 0029 decision 8: computed under founder rules by TS2 (#244); null until then.
+    twoStage: null,
   };
 }
 
@@ -229,6 +231,8 @@ function projectFacility(state: GameState, data: GameData, facility: GameState["
     equipmentOptions: knownEquipmentOptions(data, facility, gates),
     workforce: { workers: facility.workerCount, maximum: spec.maximumWorkers, dailyWagePerWorker: data.workforce.workerDailyWage },
     productionCapacityPerDay: productionCapacityPerDay(state, data, facility.id),
+    // Game-data, so always known (ADR 0029 decision 8).
+    barrels: spec.barrels,
     recipes: [...data.recipes].sort(byId).map((r) => knownRecipe(state, data, facility, r, stock?.value ?? null, operations?.value ?? null, gates)),
     storageCapacity: storageCapacity(state, data, facility.id),
     stock,

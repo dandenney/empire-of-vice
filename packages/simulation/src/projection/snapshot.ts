@@ -31,6 +31,7 @@ import {
   type MarketReport,
   type Money,
   type ProductionJobSnapshot,
+  type WashSnapshot,
   type ProgressionSnapshot,
   type PurchaseEquipmentCommand,
   type RecipeOption,
@@ -155,6 +156,8 @@ function recipeOption(state: GameState, facility: FacilityState, recipe: RecipeD
     ticksPerCase: recipe.ticksPerCase,
     maxStartableQuantity,
     blockedBy,
+    // ADR 0029 decision 8: computed under founder rules by TS2 (#244); null until then.
+    twoStage: null,
   };
 }
 
@@ -317,6 +320,7 @@ function projectFacility(state: GameState, facility: FacilityState, deps: Projec
     equipmentOptions: equipmentOptions(state, facility, deps, ctx),
     workforce: { workers: facility.workerCount, maximum: facilitySpec(data, facility.id).maximumWorkers, dailyWagePerWorker: data.workforce.workerDailyWage },
     storage: { used: products.reduce((n, p) => n + p.quantity, 0), capacity: storageCapacity(state, data, facility.id) },
+    barrels: facilitySpec(data, facility.id).barrels,
     productionCapacityPerDay: productionCapacityPerDay(state, data, facility.id),
     recipes: [...data.recipes].sort(byId).map((r) => recipeOption(state, facility, r, deps, ctx)),
     products,
@@ -338,6 +342,23 @@ export function projectJobs(state: GameState, data: GameData): readonly Producti
       quantity: j.quantity,
       startedAt: j.startedAt,
       completesAt: j.completesAt,
+    };
+  });
+}
+
+/** Every full barrel (ADR 0029 decision 8), in state order: sorted by (facilityId, barrel). */
+export function projectWashes(state: GameState, data: GameData): readonly WashSnapshot[] {
+  return state.washes.map((w) => {
+    const recipe = named(data.recipes, w.recipeId, "recipe");
+    return {
+      facilityId: w.facilityId,
+      barrel: w.barrel,
+      recipeId: w.recipeId,
+      productId: recipe.productId,
+      quality: recipe.quality,
+      quantity: w.quantity,
+      mashedAt: w.mashedAt,
+      readyAt: w.readyAt,
     };
   });
 }
@@ -476,6 +497,7 @@ export function projectSnapshot(state: GameState, ctx: ProjectionContext, deps: 
     routes: projectRoutes(state, data),
     facilities: [...state.facilities].sort(byId).map((f) => projectFacility(state, f, deps, ctx)),
     productionJobs: projectJobs(state, data),
+    washes: projectWashes(state, data),
     vehicles: projectVehicles(state, data),
     // The whole employee state, named, for the lab and the debug view (ADR 0025 decision 16).
     employees: state.employees.map((e) => ({ ...e, name: named(data.personnel.candidatePool, e.characterId, "candidate").name })),

@@ -95,6 +95,8 @@ export const REJECTION_FIELD_COPY: Readonly<Record<RejectionField, string>> = {
   role: "role",
   standingOrderId: "standingOrderId",
   limit: "limit",
+  // ADR 0029 two-stage reasons (TS1, #243). PLACEHOLDER: raw field names, like the rest.
+  readyAt: "readyAt",
 };
 
 /** The label for each quality tier. Placeholder: the raw tier. */
@@ -171,4 +173,10 @@ export const REJECTION_COPY: Readonly<Record<RejectionCode, string>> = {
   STATION_UNSUITABLE: "That place can't use them",
   POSITION_FILLED: "Someone already has that job there",
   OUTSIDE_AUTHORITY: "That's beyond what they were told to do",
+  // ADR 0029 two-stage reasons (TS1, #243). Neither can happen in M001 (founder
+  // rules off), nor before TS2 (#244): the commands are no-ops and START_PRODUCTION
+  // is unchanged. The UI shouldn't reach TWO_STAGE_RECIPE. PLACEHOLDER copy until
+  // the human decides the words (ADR 0029 "Needs design").
+  TWO_STAGE_RECIPE: "That's made by setting a mash, then distilling",
+  NO_READY_WASH: "No wash is ready to distill",
 };

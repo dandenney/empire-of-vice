@@ -27,9 +27,10 @@ import {
 import { PHONE_DATA, type PhoneData } from "./phones.ts";
 import { MATERIALS, PRODUCTS, type MaterialDefinition, type ProductDefinition } from "./products.ts";
 import { PROGRESSION, type ProgressionDefinition } from "./progression.ts";
-import { RECIPES, type RecipeDefinition } from "./recipes.ts";
+import { RECIPES, validateTwoStageRuns, type RecipeDefinition } from "./recipes.ts";
 import { ROUTES, type RouteDefinition } from "./routes.ts";
-import { parseScenario, type ScenarioDefinition } from "./scenario.ts";
+import { ACTIVITY_DURATIONS, TIRED_DURATION_PPM } from "./presence.ts";
+import { parseScenario, validateOpeningWashes, type ScenarioDefinition } from "./scenario.ts";
 import { SUPPLIERS, type SupplierDefinition } from "./suppliers.ts";
 import { VEHICLES, type VehicleDefinition } from "./vehicles.ts";
 
@@ -61,8 +62,10 @@ export * from "./vehicles.ts";
  * 0.9.0 (EM1, #210): the employee tables (ADR 0025, ADR 0028), the HIRE and
  * BRIEF_EMPLOYEE durations, the facility rows of the PHONE, MESSAGE and REPORT
  * visibility, and the scenarios' `firstCandidates`.
+ * 0.10.0 (TS1, #243): two-stage production (ADR 0029): each recipe's
+ * `twoStage` terms, the facilities' `barrels`, and the MASH and DISTILL durations.
  */
-export const GAME_DATA_VERSION = "0.9.0-em1-employees";
+export const GAME_DATA_VERSION = "0.10.0-ts1-two-stage";
 
 /** Every static definition, in one object the simulation's systems are built from. */
 export interface GameData {
@@ -94,6 +97,20 @@ export interface GameData {
   readonly personnel: PersonnelData;
 }
 
+/**
+ * ADR 0029 decision 2's checks that read more than one module (the recipes,
+ * ACTIVITY_DURATIONS.DISTILL, the tired and competence factors, the Distiller's
+ * hours and the order defaults), run once at load.
+ */
+validateTwoStageRuns({
+  recipes: RECIPES,
+  distillTicks: ACTIVITY_DURATIONS.DISTILL,
+  tiredDurationPpm: TIRED_DURATION_PPM,
+  competenceDurationPpm: PERSONNEL_DATA.competenceDurationPpm,
+  distillerWorkingHours: PERSONNEL_DATA.roleTerms.DISTILLER.workingHours,
+  orderDefaultBatchSize: PERSONNEL_DATA.distillOrderDefaults.batchSize,
+});
+
 export const GAME_DATA: GameData = {
   version: GAME_DATA_VERSION,
   products: PRODUCTS,
@@ -118,11 +135,11 @@ export const GAME_DATA: GameData = {
 };
 
 /** The First Shipment scenario (GDD §4; ADR 0020 decisions 1, 2, 12). */
-export const FIRST_SHIPMENT_SCENARIO: ScenarioDefinition = parseScenario(firstShipmentJson);
+export const FIRST_SHIPMENT_SCENARIO: ScenarioDefinition = validateOpeningWashes(parseScenario(firstShipmentJson), RECIPES, FACILITY_PRODUCTION);
 
 /**
  * The M002 scenario (milestone 002; ADR 0023): founder rules on, the founder
  * alone at Hollow Creek. Id and name PLACEHOLDER pending #232; every number is
  * PLACEHOLDER for R1 (#176).
  */
-export const THE_FIRST_HIRE_SCENARIO: ScenarioDefinition = parseScenario(theFirstHireJson);
+export const THE_FIRST_HIRE_SCENARIO: ScenarioDefinition = validateOpeningWashes(parseScenario(theFirstHireJson), RECIPES, FACILITY_PRODUCTION);

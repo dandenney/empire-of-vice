@@ -90,6 +90,7 @@ export const day0Save: SaveGame = {
     materialPools: [{ facilityId: ids.distillery, materialId: ids.corn, quantity: 40, totalCost: cents(10_000) }],
     reservations: [],
     productionJobs: [],
+    washes: [],
     vehicles: [{ id: ids.truck, parkedAt: ids.locDistillery, tripCount: 0, trip: null }],
     deliveries: [],
     heldDeals: [],

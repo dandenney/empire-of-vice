@@ -84,8 +84,12 @@ describe("sprint-zero runner", () => {
   // fnv1a64:347b65f830e27930 (EM1, issue #210, ADR 0025 decision 14: state gains `employees` ([]),
   // `formerEmployees` ([]) and the `StandingOrder` counter (1). With founder rules off nothing
   // writes any of them. Hashing the same final state without those three fields gives
-  // dd5dfccb2e28dad2 again, so nothing else moved).
+  // dd5dfccb2e28dad2 again, so nothing else moved);
+  // fnv1a64:0080bee2d4b54a0f (TS1, issue #243, ADR 0029 decision 13: state gains `washes` ([]),
+  // and every FACILITY_OPERATIONS value, in knowledge records and catch-ups, gains `washes` ([]).
+  // With founder rules off nothing writes any of them. Hashing the same final state without those
+  // empty arrays gives 347b65f830e27930 again, so nothing else moved).
   it("has a pinned replay hash", async () => {
-    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:347b65f830e27930"`);
+    expect((await runSprintZero()).stateHash).toMatchInlineSnapshot(`"fnv1a64:0080bee2d4b54a0f"`);
   });
 });

@@ -51,6 +51,8 @@ export interface GameSnapshot {
   // Operations
   readonly facilities: readonly FacilitySnapshot[];
   readonly productionJobs: readonly ProductionJobSnapshot[];
+  /** Full barrels (ADR 0029 decision 8), the whole world state, for the lab and the debug view. Sorted by (facilityId, barrel). */
+  readonly washes: readonly WashSnapshot[];
   readonly vehicles: readonly VehicleSnapshot[];
   /** The family's employees, the whole world state (ADR 0025 decision 16), for the lab and the debug view. Sorted by `characterId`. */
   readonly employees: readonly EmployeeSnapshot[];
@@ -276,6 +278,8 @@ export interface FacilitySnapshot {
   readonly equipmentOptions: readonly EquipmentOption[];
   readonly workforce: { readonly workers: number; readonly maximum: number; readonly dailyWagePerWorker: Money };
   readonly storage: { readonly used: number; readonly capacity: number };
+  /** Barrels for fermenting mash (ADR 0029 decision 8): game-data, so always known. */
+  readonly barrels: number;
   /** Cases per game day at current equipment and workforce. */
   readonly productionCapacityPerDay: number;
   readonly recipes: readonly RecipeOption[];
@@ -306,6 +310,20 @@ export interface RecipeOption {
   /** Largest quantity startable now (materials, capacity, storage, cash). 0 if blocked. */
   readonly maxStartableQuantity: number;
   readonly blockedBy: RejectionReason | null;
+  /** The founder-rules affordances (ADR 0029 decision 8). null with founder rules off. */
+  readonly twoStage: RecipeTwoStageOption | null;
+}
+
+/** RecipeOption's two-stage affordances (ADR 0029 decision 8), recomputed from known stock and the purse. */
+export interface RecipeTwoStageOption {
+  readonly casesPerBarrel: number;
+  readonly fermentTicks: number;
+  /** The most barrels SET_MASH accepts now (free barrels, storage, materials, cash). 0 if blocked. */
+  readonly maxMashBarrels: number;
+  readonly mashBlockedBy: RejectionReason | null;
+  /** Cases a START_DISTILLATION would take now: the ready washes of this recipe. */
+  readonly readyQuantity: number;
+  readonly distillBlockedBy: RejectionReason | null;
 }
 
 /** One weighted-average cost pool (FIN-001): product + quality at a facility. */
@@ -339,6 +357,22 @@ export interface ProductionJobSnapshot {
   readonly quantity: number;
   readonly startedAt: Tick;
   readonly completesAt: Tick;
+}
+
+/**
+ * One full barrel (ADR 0029 decision 8): `WashState` without its reservations and
+ * prepaid amount, plus the recipe's product and quality. Fermenting while the
+ * tick is below `readyAt`, ready from it on.
+ */
+export interface WashSnapshot {
+  readonly facilityId: FacilityId;
+  readonly barrel: number;
+  readonly recipeId: RecipeId;
+  readonly productId: ProductId;
+  readonly quality: QualityTier;
+  readonly quantity: number;
+  readonly mashedAt: Tick;
+  readonly readyAt: Tick;
 }
 
 // ---------------------------------------------------------------------------

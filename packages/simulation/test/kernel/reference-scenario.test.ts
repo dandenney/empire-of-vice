@@ -22,7 +22,9 @@
 // gains Miller's first dealing day and its ARRANGEMENT_GRANTED activity item; the fake
 // systems never read or write any of them. Removing them gives 43ff79f6e9801b39 again)
 // → fnv1a64:51b2d190ea8e303b (EM1, #210: `employees: []`, `formerEmployees: []` and the
-// `StandingOrder` counter in day0Save; nothing hires. Removing them gives e8f7a70e236e492d again).
+// `StandingOrder` counter in day0Save; nothing hires. Removing them gives e8f7a70e236e492d again)
+// → fnv1a64:1e781de9736a6ef4 (TS1, #243: `washes: []` in day0Save; nothing sets a mash.
+// Removing it gives 51b2d190ea8e303b again).
 
 import { tick } from "@eov/contracts";
 import { ids } from "@eov/contracts/fixtures";
@@ -54,7 +56,7 @@ describe("reference scenario", () => {
   });
 
   it("has a pinned state hash", () => {
-    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:51b2d190ea8e303b"`);
+    expect(runReferenceScenario().stateHash()).toMatchInlineSnapshot(`"fnv1a64:1e781de9736a6ef4"`);
   });
 
   it("replays from its command log to the same hash", () => {

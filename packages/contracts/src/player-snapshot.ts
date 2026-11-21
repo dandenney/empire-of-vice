@@ -228,12 +228,13 @@ export interface FacilityPlace extends PlaceGeography {
 /**
  * An owned facility. Equipment, workforce and capacity are agreements the
  * founder made (always known). `equipmentOptions` and `recipes` carry
- * affordances recomputed from known stock and the purse.
+ * affordances recomputed from known stock and the purse. `barrels` is
+ * game-data (ADR 0029 decision 8).
  */
 export interface PlayerFacility
   extends Pick<
     FacilitySnapshot,
-    "id" | "name" | "kind" | "equipment" | "equipmentSlots" | "equipmentOptions" | "workforce" | "productionCapacityPerDay" | "recipes"
+    "id" | "name" | "kind" | "equipment" | "equipmentSlots" | "equipmentOptions" | "workforce" | "productionCapacityPerDay" | "recipes" | "barrels"
   > {
   readonly storageCapacity: number;
   readonly stock: Known<KnowledgeValueOf<"FACILITY_STOCK">>;

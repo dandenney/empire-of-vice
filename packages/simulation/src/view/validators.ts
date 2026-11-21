@@ -15,6 +15,7 @@ import { dispatchDeliveryValidator } from "../logistics/logistics.ts";
 import { acceptEveryView } from "../personnel/personnel.ts";
 import { purchaseEquipmentValidator, sellEquipmentValidator } from "../production/equipment.ts";
 import { startProductionValidator } from "../production/jobs.ts";
+import { acceptEveryTwoStageView } from "../production/two-stage.ts";
 import { setWorkforceValidator } from "../production/workforce.ts";
 import type { IssuerView } from "./issuer-view.ts";
 import type { OrderValidator, OrderValidators } from "./order.ts";
@@ -56,6 +57,10 @@ export function orderValidators(data: GameData, rules: GameRules): OrderValidato
     HIRE_EMPLOYEE: acceptEveryView,
     SET_STANDING_ORDER: acceptEveryView,
     DISMISS_EMPLOYEE: acceptEveryView,
+    // TS1's accepted no-ops (ADR 0029 decision 16, with either flag until TS2,
+    // #244): their validators live with the handlers.
+    SET_MASH: acceptEveryTwoStageView,
+    START_DISTILLATION: acceptEveryTwoStageView,
   };
   const checked = (type: GameCommandType) => {
     const validate = validators[type] as OrderValidator<GameCommandType>;

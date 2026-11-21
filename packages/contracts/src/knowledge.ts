@@ -43,6 +43,7 @@ import type {
   RouteSnapshot,
   SupplierSnapshot,
   VehicleTrip,
+  WashSnapshot,
 } from "./snapshot.ts";
 import type { ArrangementPrivilege, CallAnswerer } from "./state.ts";
 import type { Tick } from "./time.ts";
@@ -115,6 +116,8 @@ export type KnowledgeValue =
       readonly facilityId: FacilityId;
       readonly jobs: readonly ProductionJobSnapshot[];
       readonly workersPresent: number;
+      /** Full barrels at the facility (ADR 0029 decision 8). Whether each is ready is readyAt against the tick. */
+      readonly washes: readonly WashSnapshot[];
     }
   | {
       readonly kind: "SUPPLIER_OFFER";
@@ -619,6 +622,11 @@ export interface TransactionProducerDefinition {
  * 0025's five `PERSONNEL` families and `PRODUCTION_START:EMPLOYEE` (with its
  * `CASH_POSTING_REVEALS` row) land with their call sites in E1 (#180): the
  * `PERSONNEL` kind exists from EM1 (#210).
+ *
+ * ADR 0029's founder families `PRODUCTION_START:MASH` and `:RUN` are registered
+ * here from TS1 (#243), with their call sites in TS2 (#244). Its employee families
+ * (`PRODUCTION_START:EMPLOYEE:MASH`, `:EMPLOYEE:RUN`, replacing ADR 0025's
+ * `PRODUCTION_START:EMPLOYEE`) land with their call sites in E1 (#180).
  */
 export const TRANSACTION_PRODUCERS = {
   // Game creation and founder commands (rule 1).
@@ -633,6 +641,17 @@ export const TRANSACTION_PRODUCERS = {
    * `RESERVATION:<jobId>`, which old ledgers still hold but nothing posts any more.
    */
   PRODUCTION_START: { trigger: "FOUNDER_COMMAND", legs: ["CASH", "NO_ENTRIES"] },
+  /**
+   * The founder's SET_MASH (ADR 0029 decisions 5 and 12): prepays the mash's
+   * conversion cost, Dr PRODUCTION_IN_PROGRESS / Cr CASH, no entries at 0. Its call
+   * site lands with TS2 (#244).
+   */
+  "PRODUCTION_START:MASH": { trigger: "FOUNDER_COMMAND", legs: ["CASH", "NO_ENTRIES"] },
+  /**
+   * The founder's START_DISTILLATION (ADR 0029 decisions 5 and 12): the run takes its
+   * washes' prepaid amount without a posting. Its call site lands with TS2 (#244).
+   */
+  "PRODUCTION_START:RUN": { trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] },
   "RESERVATION:ACCEPT": { trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] },
   "RESERVATION:RELEASE": { trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] },
   "DAILY_SETTLEMENT:WORKFORCE": { trigger: "FOUNDER_COMMAND", legs: ["NO_ENTRIES"] },
